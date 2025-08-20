@@ -1,0 +1,79 @@
+[build-system]
+requires = ["poetry", "setuptools"]
+build-backend = "poetry.masonry.api"
+
+[tool.poetry]
+name = "malva-client"
+version = "0.1.0"
+description = "Python client for Malva Index"
+license = "GPL-2.0"
+authors = [
+    "Daniel León-Periñán <daniel.leonperinan@mdc-berlin.de>",
+    "Nikos Karaiskos <nikolaos.karaiskos@mdc-berlin.de>",
+]
+maintainers = [
+    "Daniel León-Periñán <daniel.leonperinan@mdc-berlin.de>",
+    "Nikos Karaiskos <nikolaos.karaiskos@mdc-berlin.de>",
+]
+readme = "README.md"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Natural Language :: English",
+    "Operating System :: MacOS :: MacOS X",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+    "Topic :: Scientific/Engineering :: Visualization",
+]
+
+[tool.poetry.dependencies]
+python = ">=3.8,<3.13"
+requests = ">=2.25.0"
+pandas = ">=1.0"
+click = ">=8.0.0"
+rich = ">=13.0"
+pydantic = ">=1.8.0"
+keyring = ">=23.0.0"
+tqdm = ">=4.60.0"
+
+[tool.poetry.dev-dependencies]
+pytest = ">=7.0.0"
+pytest-cov = ">=4.0.0"
+coverage = ">=7.0.0"
+black = ">=22.0.0"
+flake8 = ">=4.0.0"
+
+[tool.poetry.urls]
+"Documentation" = "https://rajewsky-lab.github.io/malva-client"
+"Source" = "https://github.com/rajewsky-lab/malva-client"
+"Home-page" = "https://rajewsky-lab.github.io/malva-client"
+
+[tool.poetry.scripts]
+malva_client = 'malva_client.cli:main'
+
+[tool.coverage.run]
+source = ["malva_client"]
+parallel = true
+branch = true
+relative_files = true
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "pass",
+    "raise Import.*"
+]
+
+[tool.coverage.html]
+directory = "htmlcov"
