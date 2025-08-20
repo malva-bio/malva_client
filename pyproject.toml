@@ -6,7 +6,7 @@ build-backend = "poetry.masonry.api"
 name = "malva-client"
 version = "0.1.0"
 description = "Python client for Malva Index"
-license = "GPL-2.0"
+license = "BSD-3"
 authors = [
     "Daniel León-Periñán <daniel.leonperinan@mdc-berlin.de>",
     "Nikos Karaiskos <nikolaos.karaiskos@mdc-berlin.de>",
