@@ -889,3 +889,222 @@ def get_sequence_coverage(sequence: str, window_size: int = 64,
     """
     client = MalvaClient(base_url)
     return client.get_sequence_coverage(sequence, window_size=window_size)
+
+def submit_search(self, query: str, aggregate_expression: bool = True) -> str:
+    """
+    Submit search without waiting for completion
+    
+    Args:
+        query: Search query
+        aggregate_expression: Whether to aggregate expression by cell type
+        
+    Returns:
+        Job ID for tracking
+    """
+    from malva_client.storage import save_search, save_job_status
+    
+    data = {
+        'query': query,
+        'wait_for_completion': False,
+        'aggregate_expression': aggregate_expression
+    }
+    
+    response = self._request('POST', '/search', json=data)
+    job_id = response['job_id']
+    
+    # Save to local storage
+    search_id = save_search(
+        query=query,
+        job_id=job_id,
+        server_url=self.base_url,
+        status='submitted'
+    )
+    
+    save_job_status(
+        job_id=job_id,
+        status='pending',
+        query=query,
+        server_url=self.base_url
+    )
+    
+    logger.info(f"Search submitted with job ID: {job_id}")
+    return job_id
+
+def get_job_status(self, job_id: str) -> Dict[str, Any]:
+    """
+    Get status of an async job
+    
+    Args:
+        job_id: Job ID to check
+        
+    Returns:
+        Dictionary with job status information
+    """
+    from malva_client.storage import save_job_status
+    
+    try:
+        response = self._request('GET', f'/search/{job_id}')
+        
+        # Update local storage
+        save_job_status(
+            job_id=job_id,
+            status=response.get('status', 'unknown'),
+            server_url=self.base_url,
+            results_data=response.get('results') if response.get('status') == 'completed' else None,
+            error_message=response.get('error') if response.get('status') == 'error' else None
+        )
+        
+        return response
+        
+    except MalvaAPIError as e:
+        if "404" in str(e) or "not found" in str(e).lower():
+            # Job not found on server, check local storage
+            from malva_client.storage import get_job_status as get_local_status
+            local_status = get_local_status(job_id)
+            if local_status:
+                return {
+                    'job_id': job_id,
+                    'status': local_status['status'],
+                    'error': 'Job not found on server (may have expired)'
+                }
+            else:
+                return {
+                    'job_id': job_id,
+                    'status': 'not_found',
+                    'error': 'Job not found'
+                }
+        raise
+
+def get_job_results(self, job_id: str) -> 'SearchResult':
+    """
+    Get results of a completed job
+    
+    Args:
+        job_id: Job ID
+        
+    Returns:
+        SearchResult object
+    """
+    from malva_client.storage import get_job_status as get_local_status, save_job_status
+    
+    # First check if we have results cached locally
+    local_status = get_local_status(job_id)
+    if local_status and local_status.get('results_data'):
+        logger.info(f"Using cached results for job {job_id}")
+        return SearchResult(local_status['results_data'], self)
+    
+    # Otherwise fetch from server
+    status_response = self.get_job_status(job_id)
+    
+    if status_response['status'] == 'completed':
+        results_data = status_response.get('results', {})
+        
+        # Cache results locally
+        save_job_status(
+            job_id=job_id,
+            status='completed',
+            server_url=self.base_url,
+            results_data=results_data
+        )
+        
+        return SearchResult(results_data, self)
+        
+    elif status_response['status'] == 'error':
+        error_msg = status_response.get('error', 'Unknown error')
+        raise SearchError(f"Job {job_id} failed: {error_msg}")
+        
+    elif status_response['status'] in ['pending', 'running']:
+        raise SearchError(f"Job {job_id} is still {status_response['status']}. Use get_job_status() to check progress.")
+        
+    else:
+        raise SearchError(f"Job {job_id} has unexpected status: {status_response['status']}")
+
+def list_jobs(self, limit: int = 20) -> List[Dict[str, Any]]:
+    """
+    List recent jobs
+    
+    Args:
+        limit: Maximum number of jobs to return
+        
+    Returns:
+        List of job information
+    """
+    from malva_client.storage import get_storage
+    
+    storage = get_storage()
+    history = storage.get_search_history(limit=limit, server_url=self.base_url)
+    
+    jobs = []
+    for entry in history:
+        if entry.get('job_id'):
+            jobs.append({
+                'job_id': entry['job_id'],
+                'query': entry['query'],
+                'status': entry['status'],
+                'timestamp': entry['timestamp'],
+                'results_count': entry.get('results_count', 0),
+                'error': entry.get('error_message')
+            })
+    
+    return jobs
+
+def wait_for_job(self, job_id: str, poll_interval: int = 2, 
+                max_wait: int = 300) -> 'SearchResult':
+    """
+    Wait for a job to complete and return results
+    
+    Args:
+        job_id: Job ID to wait for
+        poll_interval: How often to check status (seconds)
+        max_wait: Maximum time to wait (seconds)
+        
+    Returns:
+        SearchResult object
+    """
+    start_time = time.time()
+    
+    while time.time() - start_time < max_wait:
+        status_response = self.get_job_status(job_id)
+        status = status_response.get('status')
+        
+        if status == 'completed':
+            return self.get_job_results(job_id)
+        elif status == 'error':
+            error_msg = status_response.get('error', 'Unknown error')
+            raise SearchError(f"Job {job_id} failed: {error_msg}")
+        elif status in ['pending', 'running']:
+            logger.info(f"Job {job_id} status: {status}")
+            time.sleep(poll_interval)
+        else:
+            raise SearchError(f"Job {job_id} has unexpected status: {status}")
+    
+    raise MalvaAPIError(f"Job {job_id} timed out after {max_wait} seconds")
+
+def cancel_job(self, job_id: str) -> bool:
+    """
+    Attempt to cancel a running job
+    
+    Args:
+        job_id: Job ID to cancel
+        
+    Returns:
+        True if cancellation was successful
+    """
+    try:
+        response = self._request('DELETE', f'/search/{job_id}')
+        
+        # Update local storage
+        from malva_client.storage import save_job_status
+        save_job_status(
+            job_id=job_id,
+            status='cancelled',
+            server_url=self.base_url
+        )
+        
+        return response.get('success', True)
+        
+    except MalvaAPIError as e:
+        if "404" in str(e):
+            logger.warning(f"Job {job_id} not found for cancellation")
+            return False
+        raise
