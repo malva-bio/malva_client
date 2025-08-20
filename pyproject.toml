@@ -3,7 +3,7 @@ requires = ["poetry", "setuptools"]
 build-backend = "poetry.masonry.api"
 
 [tool.poetry]
-name = "malva-client"
+name = "malva_client"
 version = "0.1.0"
 description = "Python client for Malva Index"
 license = "BSD-3"
@@ -52,9 +52,9 @@ black = ">=22.0.0"
 flake8 = ">=4.0.0"
 
 [tool.poetry.urls]
-"Documentation" = "https://rajewsky-lab.github.io/malva-client"
-"Source" = "https://github.com/rajewsky-lab/malva-client"
-"Home-page" = "https://rajewsky-lab.github.io/malva-client"
+"Documentation" = "https://rajewsky-lab.github.io/malva_client"
+"Source" = "https://github.com/rajewsky-lab/malva_client"
+"Home-page" = "https://rajewsky-lab.github.io/malva_client"
 
 [tool.poetry.scripts]
 malva_client = 'malva_client.cli:main'

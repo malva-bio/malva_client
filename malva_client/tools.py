@@ -12,16 +12,17 @@ from gprofiler import GProfiler
 def mask_sequence(sequence: str) -> str:
     """
     Apply repeat masking using dustmasker to the provided sequence.
-    
     The function writes the input sequence to a temporary FASTA file, then
-    calls dustmasker with:
-      - Input format: FASTA (-infmt fasta)
-      - Parse sequence IDs (-parse_seqids)
-      - Output format: FASTA (-outfmt fasta) so that the resulting 
-        masked sequence is easy to parse.
-      
-    If the dustmasker call fails, the original sequence is returned.
+    calls dustmasker with: FASTA (-infmt fasta), or Parse sequence IDs (-parse_seqids), and Output format: FASTA (-outfmt fasta) so that the resulting 
+    masked sequence is easy to parse. If the dustmasker call fails, the original sequence is returned.
+
+    Args:
+        sequence: DNA sequence string
+        
+    Returns:
+        Masked sequence with low complexity regions replaced
     """
+
     try:
         with tempfile.NamedTemporaryFile("w+", delete=False) as tmp_in:
             tmp_in.write(">seq\n" + sequence)

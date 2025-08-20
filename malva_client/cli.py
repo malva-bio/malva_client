@@ -67,7 +67,7 @@ def search(ctx, query, output, output_format, no_wait, max_wait):
             # Submit without waiting
             job_id = client.submit_search(query)
             console.print(f"Search submitted with job ID: [bold]{job_id}[/bold]")
-            console.print(f"Check status with: [bold]malva-client status {job_id}[/bold]")
+            console.print(f"Check status with: [bold]malva_client status {job_id}[/bold]")
             return
         
         # Search with waiting
@@ -89,7 +89,7 @@ def search(ctx, query, output, output_format, no_wait, max_wait):
             
     except AuthenticationError as e:
         console.print(f"[red]Authentication error: {e}[/red]")
-        console.print("Run [bold]malva-client login[/bold] or get an API token from your profile page.")
+        console.print("Run [bold]malva_client login[/bold] or get an API token from your profile page.")
         sys.exit(1)
     except QuotaExceededError as e:
         console.print(f"[red]Quota exceeded: {e}[/red]")
@@ -231,7 +231,7 @@ def status(ctx, job_id):
         console.print(table)
         
         if status_data.get('status') == 'completed':
-            console.print(f"\nGet results with: [bold]malva-client results {job_id}[/bold]")
+            console.print(f"\nGet results with: [bold]malva_client results {job_id}[/bold]")
         
     except AuthenticationError as e:
         console.print(f"[red]Authentication error: {e}[/red]")
@@ -371,7 +371,7 @@ def quota(ctx):
         
     except AuthenticationError as e:
         console.print(f"[red]Authentication error: {e}[/red]")
-        console.print("Run [bold]malva-client login[/bold] to authenticate.")
+        console.print("Run [bold]malva_client login[/bold] to authenticate.")
         sys.exit(1)
     except MalvaAPIError as e:
         console.print(f"[red]Error: {e}[/red]")

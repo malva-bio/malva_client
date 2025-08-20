@@ -27,7 +27,7 @@ except ImportError:
 class AuthManager:
     """Manages authentication and token storage"""
     
-    SERVICE_NAME = "malva-client"
+    SERVICE_NAME = "malva_client"
     USERNAME = "api-token"
     
     def __init__(self, server_url: str):

@@ -1,0 +1,7 @@
+sphinx>=4.0.0
+furo
+sphinx-autodoc-typehints
+myst-parser
+sphinx-click
+sphinx-design
+sphinx-copybutton
