@@ -11,10 +11,9 @@ import h5py
 import anndata as ad
 
 from malva_client.exceptions import MalvaAPIError, AuthenticationError, SearchError, QuotaExceededError
-from malva_client.models import SearchResult, CoverageResult, SingleCellResult
+from malva_client.models import SearchResult, SingleCellResult
 from malva_client.config import Config
 
-# Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -57,7 +56,6 @@ class MalvaClient:
         if api_token:
             self.session.headers.update({'Authorization': f'Bearer {api_token}'})
         
-        # Test connection and authentication
         self._test_connection()
 
     
@@ -76,7 +74,6 @@ class MalvaClient:
                     logger.warning("API token authentication failed")
                     raise
                 except MalvaAPIError as e:
-                    # If quota endpoint doesn't exist, that's ok for connection test
                     if "404" in str(e) or "not found" in str(e).lower():
                         logger.info("Connected but quota endpoint not available")
                     else:
@@ -108,17 +105,14 @@ class MalvaClient:
         try:
             response = self.session.request(method, url, timeout=self.timeout, **kwargs)
             
-            # Log response details for debugging
             logger.debug(f"{method} {url} -> {response.status_code}")
             logger.debug(f"Response content type: {response.headers.get('content-type', 'unknown')}")
             
-            # Handle different status codes before trying to parse JSON
             if response.status_code == 404:
                 content_type = response.headers.get('content-type', '')
                 if 'text/html' in content_type:
                     raise MalvaAPIError(f"Endpoint not found: {endpoint}. Check if the Malva API is running at {self.base_url}")
                 
-                # Try to parse JSON error if it's not HTML
                 try:
                     error_data = response.json()
                     error_msg = error_data.get('detail', error_data.get('error', 'Endpoint not found'))
@@ -141,7 +135,6 @@ class MalvaClient:
                 except json.JSONDecodeError:
                     raise QuotaExceededError("Search quota exceeded")
             
-            # Handle authentication errors
             elif response.status_code in [401, 403]:
                 try:
                     error_data = response.json()
@@ -150,7 +143,6 @@ class MalvaClient:
                     error_msg = "Authentication failed"
                 raise AuthenticationError(error_msg)
             
-            # For other error status codes, try to get JSON error message
             elif not response.ok:
                 try:
                     error_data = response.json()
@@ -159,11 +151,9 @@ class MalvaClient:
                 except json.JSONDecodeError:
                     raise MalvaAPIError(f"HTTP {response.status_code}: {response.text[:200]}")
             
-            # Success case - try to parse JSON
             try:
                 return response.json()
             except json.JSONDecodeError as e:
-                # If we can't parse JSON on a successful response, that's a problem
                 content_type = response.headers.get('content-type', 'unknown')
                 raise MalvaAPIError(f"Expected JSON response but got {content_type}. Content: {response.text[:200]}")
             
@@ -188,7 +178,7 @@ class MalvaClient:
         Returns:
             SearchResult object containing the results
         """
-        # Submit search using the /search endpoint
+
         data = {
             'query': query,
             'wait_for_completion': wait_for_completion,
@@ -199,24 +189,20 @@ class MalvaClient:
         
         response = self._request('POST', '/search', json=data)
         
-        # If wait_for_completion was True and search completed
         if response.get('status') == 'completed':
             logger.info(f"Search completed with job ID: {response['job_id']}")
             return SearchResult(response['results'], self)
         
-        # If search is still pending or we didn't wait
         job_id = response['job_id']
         logger.info(f"Search submitted with job ID: {job_id}")
         
         if not wait_for_completion or response.get('status') == 'pending':
             return SearchResult({'job_id': job_id, 'status': 'pending'}, self)
         
-        # If there was an error during submissionx
         if not response.get('success', True):
             error_msg = response.get('error', 'Unknown error')
             raise MalvaAPIError(f"Search failed: {error_msg}")
         
-        # Fallback: poll manually if the server-side waiting didn't work
         start_time = time.time()
         while time.time() - start_time < max_wait:
             try:
@@ -234,7 +220,6 @@ class MalvaClient:
                 
             except MalvaAPIError as e:
                 if "404" in str(e) or "not found" in str(e).lower():
-                    # Job not found yet, continue polling
                     pass
                 else:
                     raise
@@ -242,59 +227,84 @@ class MalvaClient:
             time.sleep(poll_interval)
         
         raise MalvaAPIError(f"Search timed out after {max_wait} seconds")
+    
+    def print_dict_summary(self, d, max_items=3, indent=0):
+        """
+        Print a summary of a dictionary structure, truncating large lists.
+        
+        Args:
+            d: The dictionary to summarize
+            max_items: Maximum number of items to show from lists (default 3)
+            indent: Current indentation level (used for recursion)
+        """
+        spacing = "  " * indent
+        
+        for key, value in d.items():
+            if isinstance(value, dict):
+                print(f"{spacing}{key}: {{")
+                self.print_dict_summary(value, max_items, indent + 1)
+                print(f"{spacing}}}")
+            elif isinstance(value, list):
+                if len(value) <= max_items:
+                    print(f"{spacing}{key}: {value}")
+                else:
+                    preview = value[:max_items]
+                    print(f"{spacing}{key}: {preview} ... ({len(value)} total items)")
+            else:
+                print(f"{spacing}{key}: {value}")
 
     def search_cells(self, query: str, wait_for_completion: bool = True,
                     poll_interval: int = 2, max_wait: int = 300) -> SingleCellResult:
         """
         Perform a natural language or gene search and returns individual cells
-        
-        Args:
-            query: Natural language query or gene symbol (e.g., "BRCA1 expression in cancer")
-            wait_for_completion: Whether to wait for results or return immediately
-            poll_interval: How often to check for completion (seconds)
-            max_wait: Maximum time to wait for completion (seconds)
-            
-        Returns:
-            SingleCellResult object containing the individual cell results
         """
-        # Submit search using the /search endpoint
         data = {
             'query': query,
             'wait_for_completion': wait_for_completion,
             'max_wait': max_wait,
             'poll_interval': poll_interval,
-            'aggregate_expression': False  # This is the key difference
+            'aggregate_expression': False
         }
         
         response = self._request('POST', '/search', json=data)
         
-        # If wait_for_completion was True and search completed
-        if response.get('status') == 'completed':
-            logger.info(f"Search completed with job ID: {response['job_id']}")
-            return SingleCellResult(response['results'], self)
+        if response.get('status') == 'completed' and 'results' in response:
+            logger.info(f"Search completed immediately with job ID: {response.get('job_id', 'unknown')}")
+            return SingleCellResult(response, self)
         
-        # If search is still pending or we didn't wait
-        job_id = response['job_id']
+        # If not completed immediately, get the job_id for polling
+        job_id = response.get('job_id')
+        if not job_id:
+            raise MalvaAPIError("No job_id received from server")
+        
         logger.info(f"Search submitted with job ID: {job_id}")
         
-        if not wait_for_completion or response.get('status') == 'pending':
+        if not wait_for_completion:
+            if response.get('status') == 'completed' and 'results' in response:
+                return SingleCellResult(response, self)
             return SingleCellResult({'job_id': job_id, 'status': 'pending'}, self)
         
-        # If there was an error during submission
-        if not response.get('success', True):
-            error_msg = response.get('error', 'Unknown error')
-            raise MalvaAPIError(f"Search failed: {error_msg}")
-        
-        # Fallback: poll manually if the server-side waiting didn't work
+        if response.get('status') == 'completed' and 'results' in response:
+            return SingleCellResult(response, self)
+
         start_time = time.time()
         while time.time() - start_time < max_wait:
             try:
                 results_response = self._request('GET', f'/search/{job_id}')
-                status = results_response.get('status')
                 
+                if not results_response:
+                    if response.get('status') == 'completed' and 'results' in response:
+                        logger.info(f"Using cached results for job {job_id}")
+                        return SingleCellResult(response, self)
+                    else:
+                        logger.warning(f"No results found for job {job_id}")
+                        time.sleep(poll_interval)
+                        continue
+                
+                status = results_response.get('status')
                 logger.info(f"Search status: {status}")
                 
-                if status == 'completed':
+                if status == 'completed' and 'results' in results_response:
                     logger.info(f"Search completed with job ID: {job_id}")
                     return SingleCellResult(results_response, self)
                 elif status == 'error':
@@ -303,12 +313,18 @@ class MalvaClient:
                     
             except MalvaAPIError as e:
                 if "404" in str(e) or "not found" in str(e).lower():
-                    # Job not found yet, continue polling
+                    if response.get('status') == 'completed' and 'results' in response:
+                        logger.info(f"Job {job_id} not found on server, but we have cached results")
+                        return SingleCellResult(response, self)
                     pass
                 else:
                     raise
             
             time.sleep(poll_interval)
+        
+        if response.get('status') == 'completed' and 'results' in response:
+            logger.warning(f"Polling timed out but returning initial results for job {job_id}")
+            return SingleCellResult(response, self)
         
         raise MalvaAPIError(f"Search timed out after {max_wait} seconds")
     
@@ -323,11 +339,9 @@ class MalvaClient:
         Returns:
             SearchResult object
         """
-        # Validate sequence length
-        if len(sequence) > 500000:  # 500kb limit
+        if len(sequence) > 500000:
             raise ValueError("Sequence length cannot exceed 500kb (500,000 nucleotides)")
         
-        # Validate sequence contains only valid nucleotides
         valid_nucleotides = set('ATGCUN')
         if not all(c.upper() in valid_nucleotides for c in sequence):
             raise ValueError("Sequence contains invalid nucleotides. Only A, T, G, C, U, N are allowed.")
@@ -345,228 +359,8 @@ class MalvaClient:
         Returns:
             SearchResult object
         """
-        # Join genes into a query
         gene_query = f"expression of {', '.join(genes)}"
         return self.search(gene_query, **kwargs)
-    
-    def get_coverage(self, chromosome: str, start: int, end: int, 
-                    strand: str = 'both', split_by_cell_type: bool = False,
-                    preserve_samples: bool = True,
-                    wait_for_completion: bool = True, max_wait: int = 300) -> 'CoverageResult':
-        """
-        Get expression coverage for a genomic region
-        
-        Args:
-            chromosome: Chromosome name (e.g., 'chr1', '1')
-            start: Start position
-            end: End position  
-            strand: Strand to analyze ('positive', 'negative', 'forward', 'reverse')
-            split_by_cell_type: Whether to split analysis by cell type
-            preserve_samples: Whether to preserve sample-level data (True for API clients)
-            wait_for_completion: Whether to wait for completion
-            max_wait: Maximum time to wait for completion
-            
-        Returns:
-            CoverageResult object
-        """
-        # Validate inputs
-        if end <= start:
-            raise ValueError("End position must be greater than start position")
-        
-        range_size = end - start
-        if range_size > 10_000_000:  # 10Mb limit
-            raise ValueError("Range cannot exceed 10Mb")
-        
-        if strand not in ['forward', 'reverse', 'positive', 'negative']:
-            raise ValueError("The strand has to be one of ['forward', 'reverse', 'positive', 'negative']")
-        
-        if strand == 'negative':
-            strand = 'reverse' # standardise name for server
-        
-        # Submit coverage request
-        data = {
-            'chromosome': chromosome,
-            'start': start,
-            'end': end,
-            'strand': strand,
-            'split_by_cell_type': split_by_cell_type,
-            'preserve_samples': preserve_samples
-        }
-        
-        response = self._request('POST', '/api/genome-browser/search', json=data)
-        job_id = response['job_id']
-        
-        logger.info(f"Coverage analysis submitted with job ID: {job_id}")
-        
-        if not wait_for_completion:
-            return CoverageResult({'job_id': job_id, 'status': 'pending'})
-        
-        # Poll for completion using the RAW endpoint
-        start_time = time.time()
-        poll_interval = 2
-        
-        while time.time() - start_time < max_wait:
-            try:
-                params = {'preserve_samples': 'true'} if preserve_samples else {}
-                coverage_response = self._request('GET', f'/api/genome-browser/coverage/{job_id}/raw', params=params)
-                
-                if coverage_response.get('status') == 'completed':
-                    result = CoverageResult(coverage_response)
-                    result.set_client(self)  # set client for metadata enrichment
-                    return result
-                elif coverage_response.get('status') == 'error':
-                    error_msg = coverage_response.get('error', 'Unknown error')
-                    raise MalvaAPIError(f"Coverage analysis failed: {error_msg}")
-                    
-            except MalvaAPIError as e:
-                if "404" in str(e) or "not found" in str(e).lower():
-                    # Still processing
-                    pass
-                else:
-                    raise
-            
-            time.sleep(poll_interval)
-        
-        raise MalvaAPIError(f"Coverage analysis timed out after {max_wait} seconds")
-    
-    def get_sequence_coverage(self, sequence: str, window_size: int = 64,
-                            split_by_cell_type: bool = False, preserve_samples: bool = True,
-                            wait_for_completion: bool = True, max_wait: int = 300) -> 'CoverageResult':
-        """
-        Get expression coverage for a DNA sequence
-        
-        Args:
-            sequence: DNA sequence to analyze (A, T, G, C, N only)
-            window_size: Size of sliding windows (default: 64)
-            split_by_cell_type: Whether to split analysis by cell type
-            preserve_samples: Whether to preserve sample-level data
-            wait_for_completion: Whether to wait for completion
-            max_wait: Maximum time to wait for completion
-            
-        Returns:
-            CoverageResult object with sequence positions instead of genomic coordinates
-        """
-        # Validate sequence
-        if not sequence:
-            raise ValueError("Sequence cannot be empty")
-        
-        sequence = sequence.upper().strip()
-        valid_nucleotides = set('ATGCN')
-        if not all(c in valid_nucleotides for c in sequence):
-            raise ValueError("Sequence contains invalid nucleotides. Only A, T, G, C, N are allowed.")
-        
-        if len(sequence) < window_size:
-            raise ValueError(f"Sequence too short: minimum {window_size} nucleotides required")
-        
-        if len(sequence) > 50000:  # 50kb limit
-            raise ValueError("Sequence too long: maximum 50,000 nucleotides allowed")
-        
-        # Submit sequence coverage request
-        data = {
-            'sequence': sequence,
-            'window_size': window_size,
-            'split_by_cell_type': split_by_cell_type,
-            'preserve_samples': preserve_samples
-        }
-        
-        response = self._request('POST', '/api/sequence-coverage/search', json=data)
-        job_id = response['job_id']
-        
-        logger.info(f"Sequence coverage analysis submitted with job ID: {job_id}")
-        
-        if not wait_for_completion:
-            return CoverageResult({'job_id': job_id, 'status': 'pending'})
-        
-        # Poll for completion using the sequence coverage endpoint
-        start_time = time.time()
-        poll_interval = 2
-        
-        while time.time() - start_time < max_wait:
-            try:
-                params = {'preserve_samples': 'true'} if preserve_samples else {}
-                coverage_response = self._request('GET', f'/api/sequence-coverage/coverage/{job_id}/raw', params=params)
-                
-                if coverage_response.get('status') == 'completed':
-                    result = CoverageResult(coverage_response)
-                    result.set_client(self)  # set client for metadata enrichment
-                    return result
-                elif coverage_response.get('status') == 'error':
-                    error_msg = coverage_response.get('error', 'Unknown error')
-                    raise MalvaAPIError(f"Sequence coverage analysis failed: {error_msg}")
-                    
-            except MalvaAPIError as e:
-                if "404" in str(e) or "not found" in str(e).lower():
-                    # Still processing
-                    pass
-                else:
-                    raise
-            
-            time.sleep(poll_interval)
-        
-        raise MalvaAPIError(f"Sequence coverage analysis timed out after {max_wait} seconds")
-
-    def download_sequence_coverage_data(self, job_id: str, output_path: Optional[str] = None,
-                                    cell_type: str = None, smoothing: int = 0, 
-                                    min_expression: float = 0.0) -> Union[str, pd.DataFrame]:
-        """
-        Download sequence coverage data as TSV file or DataFrame
-        
-        Args:
-            job_id: Job ID from sequence coverage analysis
-            output_path: Path to save TSV file. If None, returns as DataFrame
-            cell_type: Optional cell type filter
-            smoothing: Additional smoothing window size (0 = no additional smoothing)
-            min_expression: Minimum expression threshold
-            
-        Returns:
-            File path if saved to disk, or DataFrame if loaded in memory
-        """
-        # Build parameters for filtering
-        params = {}
-        if cell_type:
-            params['cell_type'] = cell_type
-        if smoothing > 0:
-            params['smoothing'] = smoothing
-        if min_expression > 0:
-            params['min_expression'] = min_expression
-        
-        # Get the TSV data
-        url = f'/api/sequence-coverage/coverage-file/{job_id}'
-        
-        try:
-            response = self.session.get(
-                urljoin(self.base_url, url.lstrip('/')), 
-                params=params,
-                timeout=self.timeout
-            )
-            response.raise_for_status()
-            
-            if output_path:
-                # Save to file
-                output_path = Path(output_path)
-                output_path.parent.mkdir(parents=True, exist_ok=True)
-                
-                with open(output_path, 'w') as f:
-                    f.write(response.text)
-                
-                logger.info(f"Sequence coverage data saved to {output_path}")
-                return str(output_path)
-            else:
-                # Load as DataFrame
-                try:
-                    import io
-                    df = pd.read_csv(io.StringIO(response.text), sep='\t')
-                    logger.info(f"Loaded sequence coverage data with {len(df)} positions")
-                    return df
-                except ImportError:
-                    raise ImportError("pandas is required to load TSV data into DataFrame. "
-                                    "Install with: pip install pandas")
-                    
-        except requests.exceptions.RequestException as e:
-            if "404" in str(e):
-                raise MalvaAPIError(f"Sequence coverage job {job_id} not found")
-            else:
-                raise MalvaAPIError(f"Failed to download sequence coverage data: {e}")
     
     def get_samples(self, page: int = 1, page_size: int = 50, 
                    filters: Dict[str, Any] = None, search_query: str = "") -> Dict[str, Any]:
@@ -588,7 +382,6 @@ class MalvaClient:
             'q': search_query
         }
         
-        # Add filters as query parameters
         if filters:
             for key, value in filters.items():
                 if isinstance(value, list):
@@ -856,39 +649,6 @@ def search_sequence(sequence: str, base_url: str = "https://malva.mdc-berlin.net
     """
     client = MalvaClient(base_url)
     return client.search_sequence(sequence)
-
-def get_coverage_for_region(chromosome: str, start: int, end: int, 
-                           base_url: str = "https://malva.mdc-berlin.net") -> CoverageResult:
-    """
-    Quick coverage analysis for a genomic region
-    
-    Args:
-        chromosome: Chromosome name
-        start: Start position
-        end: End position
-        base_url: Malva API base URL
-        
-    Returns:
-        CoverageResult object
-    """
-    client = MalvaClient(base_url)
-    return client.get_coverage(chromosome, start, end)
-
-def get_sequence_coverage(sequence: str, window_size: int = 64,
-                         base_url: str = "https://malva.mdc-berlin.net") -> 'CoverageResult':
-    """
-    Quick sequence coverage analysis
-    
-    Args:
-        sequence: DNA sequence to analyze
-        window_size: Size of sliding windows (default: 64)
-        base_url: Malva API base URL
-        
-    Returns:
-        CoverageResult object
-    """
-    client = MalvaClient(base_url)
-    return client.get_sequence_coverage(sequence, window_size=window_size)
 
 def submit_search(self, query: str, aggregate_expression: bool = True) -> str:
     """

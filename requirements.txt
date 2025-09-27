@@ -5,3 +5,9 @@ myst-parser
 sphinx-click
 sphinx-design
 sphinx-copybutton
+dnaio
+h5py
+anndata
+matplotlib
+gprofiler-official
+seaborn

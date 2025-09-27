@@ -74,6 +74,27 @@ class MalvaDataFrame:
             
             self._convert_to_categorical()
 
+        self._extract_celltype_sample_counts()
+
+    def _extract_celltype_sample_counts(self):
+        """Extract celltype_sample_counts from the raw data if available"""
+        try:
+            if hasattr(self, 'raw_data') and self.raw_data:
+                results = self.raw_data.get('results', {})
+                for gene_key, gene_data in results.items():
+                    if isinstance(gene_data, dict) and 'expression_data' in gene_data:
+                        expr_data = gene_data['expression_data']
+                        if 'celltype_sample_counts' in expr_data:
+                            self._celltype_sample_counts = expr_data['celltype_sample_counts']
+                            print(f"✓ Extracted sample counts per cell type: {len(self._celltype_sample_counts)} cell types")
+                            return
+            
+            # If we can't find it, we'll have to live with the fallback method
+            print("ℹ️  Could not extract true sample counts per cell type")
+            
+        except Exception as e:
+            print(f"⚠️  Error extracting sample counts: {e}")
+
     def _convert_to_categorical(self):
         """Convert string/object columns to categorical for faster filtering"""
         categorical_candidates = [
@@ -335,15 +356,6 @@ class MalvaDataFrame:
     
     def plot_expression_summary(self, group_by: str, limit: int = 10, 
                                 plot_type: str = 'box', **kwargs):
-        """
-        Create comprehensive expression plots with three visualizations
-        
-        Args:
-            group_by: Column to group by for plotting
-            limit: Maximum number of categories to show
-            plot_type: Type of plot for main plot ('box', 'violin', 'bar', 'strip')
-            **kwargs: Additional arguments
-        """
         try:
             import matplotlib.pyplot as plt
             import seaborn as sns
@@ -390,8 +402,10 @@ class MalvaDataFrame:
         axes[0].set_xlabel(group_by.replace('_', ' ').title())
         axes[0].set_ylabel('Normalized Expression')
         
-        # 2. Number of samples per category
-        sample_counts = plot_data.groupby(group_by)['sample_id'].nunique().reindex(top_categories)
+        # 2. Number of samples per category - FIXED TO USE SERVER DATA
+        sample_counts_per_category = self._get_true_sample_counts(group_by, top_categories)
+        sample_counts = pd.Series(sample_counts_per_category)
+        
         sample_counts.plot(kind='bar', ax=axes[1], color='lightcoral')
         axes[1].set_title('Number of Samples')
         axes[1].set_xlabel(group_by.replace('_', ' ').title())
@@ -404,13 +418,11 @@ class MalvaDataFrame:
                         ha='center', va='bottom', fontsize=9)
         
         # 3. Total number of cells per category
-        # Check if cell_count column exists, otherwise use observation count
         if 'cell_count' in plot_data.columns:
             cell_counts = plot_data.groupby(group_by)['cell_count'].sum().reindex(top_categories)
             ylabel = 'Total Cells'
             title = 'Number of Cells'
         else:
-            # Fallback: count observations (rows) as proxy for cells
             cell_counts = plot_data.groupby(group_by).size().reindex(top_categories)
             ylabel = 'Observations'
             title = 'Number of Observations'
@@ -436,17 +448,47 @@ class MalvaDataFrame:
         
         plt.tight_layout()
         
-        # Print summary statistics
+        # Print summary statistics - FIXED WITH CORRECT SAMPLE COUNTS
         print(f"\n📊 Summary for {group_by.replace('_', ' ').title()}:")
         print("-" * 50)
         for category in top_categories:
             cat_data = plot_data[plot_data[group_by] == category]
-            n_samples = cat_data['sample_id'].nunique()
+            n_samples = sample_counts_per_category.get(category, cat_data['sample_id'].nunique())
             n_cells = cat_data['cell_count'].sum() if 'cell_count' in cat_data.columns else len(cat_data)
             mean_expr = cat_data['norm_expr'].mean()
             print(f"{category}: {n_samples} samples, {n_cells:,} cells, μ={mean_expr:.3f}")
         
         return fig
+
+    def _get_true_sample_counts(self, group_by: str, categories: List[str]) -> Dict[str, int]:
+        """Extract true sample counts from server-provided data"""
+        
+        # Method 1: Check if we have celltype_sample_counts in the data structure
+        if hasattr(self, '_sample_metadata') and group_by == 'cell_type':
+            # Look for the celltype_sample_counts in the original search results
+            # This is a bit hacky but necessary given the current data structure
+            
+            # Try to find expression_data with celltype_sample_counts
+            sample_counts = {}
+            
+            # Check if any columns contain serialized data with our counts
+            for col in self._df.columns:
+                if 'expression_data' in str(col).lower():
+                    continue  # Skip for now, this is complex to extract
+            
+            # Alternative: Check if we stored this somewhere during enrichment
+            if hasattr(self, '_celltype_sample_counts'):
+                for category in categories:
+                    sample_counts[category] = self._celltype_sample_counts.get(category, 0)
+                return sample_counts
+        
+        # Method 2: Fallback - count unique samples per category (this gives wrong results but is better than nothing)
+        sample_counts = {}
+        for category in categories:
+            cat_data = self._df[self._df[group_by] == category]
+            sample_counts[category] = cat_data['sample_id'].nunique()
+        
+        return sample_counts
 
     def to_pandas(self) -> pd.DataFrame:
         """Convert to regular pandas DataFrame"""
@@ -573,7 +615,7 @@ class SearchResult(MalvaDataFrame):
         super().__init__(expr_df, client, sample_metadata={})
     
     def _convert_to_dataframe(self) -> pd.DataFrame:
-        """Convert raw search results to DataFrame"""
+        """Convert raw search results to DataFrame - keep sample-level aggregates"""
         if not self.raw_data or not isinstance(self.raw_data, dict):
             return pd.DataFrame()
         
@@ -586,11 +628,58 @@ class SearchResult(MalvaDataFrame):
             if gene_seq == "_sample_metadata":
                 continue
                 
+            # Handle the new compact expression_data format
+            if 'expression_data' in result:
+                expression_data = result['expression_data']
+                data = expression_data.get('data', [])
+                columns = expression_data.get('columns', [])
+                samples = expression_data.get('samples', [])
+                cell_types = expression_data.get('cell_types', [])
+                
+                if data and columns:
+                    # FIXED: Keep as sample-level aggregates, don't expand
+                    sample_rows = []
+                    for row in data:
+                        if len(row) >= 5:
+                            sample_idx = int(row[0])
+                            cell_type_idx = int(row[1]) 
+                            norm_expr = float(row[2])
+                            raw_expr = float(row[3]) if len(row) > 3 else norm_expr
+                            cell_count = int(row[4])  # This should be the actual cell count
+                            
+                            sample_rows.append({
+                                'sample_idx': sample_idx,
+                                'cell_type_idx': cell_type_idx,
+                                'norm_expr': norm_expr,
+                                'cell_count': cell_count,
+                                'raw_expr': raw_expr,
+                                'sample_id': samples[sample_idx] if sample_idx < len(samples) else f"sample_{sample_idx}",
+                                'cell_type': cell_types[cell_type_idx] if cell_type_idx < len(cell_types) else f"celltype_{cell_type_idx}",
+                                'cell_count': cell_count,  # Track how many cells this represents
+                                'gene_sequence': gene_seq,
+                                'sample_celltype_id': f"{samples[sample_idx] if sample_idx < len(samples) else sample_idx}_{cell_types[cell_type_idx] if cell_type_idx < len(cell_types) else cell_type_idx}"
+                            })
+                    
+                    if sample_rows:
+                        df = pd.DataFrame(sample_rows)
+                        all_data.append(df)
+                    continue
+            
+            # FALLBACK: Handle old format for backward compatibility
             expression_data = result.get('expression_data', {})
             if not expression_data:
+                # Try old direct format
+                if 'cell' in result and 'expression' in result and 'sample' in result:
+                    df = pd.DataFrame({
+                        'cell_id': result['cell'],
+                        'norm_expr': result['expression'],
+                        'sample_id': result['sample'],
+                        'gene_sequence': gene_seq
+                    })
+                    all_data.append(df)
                 continue
-                
-            # Convert compact format to DataFrame
+            
+            # Handle old expression_data format
             data = expression_data.get('data', [])
             columns = expression_data.get('columns', [])
             samples = expression_data.get('samples', [])
@@ -613,7 +702,6 @@ class SearchResult(MalvaDataFrame):
         
         if all_data:
             result_df = pd.concat(all_data, ignore_index=True)
-            # Convert cell_type to categorical for faster filtering
             if 'cell_type' in result_df.columns:
                 result_df['cell_type'] = result_df['cell_type'].astype('category')
             return result_df
@@ -638,7 +726,11 @@ class SearchResult(MalvaDataFrame):
     @property
     def total_cells(self) -> int:
         """Get total number of cells found"""
-        return sum(result.get('ncells', 0) for result in self.results.values())
+        if 'cell_count' in self._df.columns:
+            return int(self._df['cell_count'].sum())
+        else:
+            # Fallback to counting combinations
+            return len(self._df)
     
     def enrich_with_metadata(self) -> 'SearchResult':
         """
@@ -659,7 +751,8 @@ class SearchResult(MalvaDataFrame):
         # Fetch sample metadata
         try:
             sample_metadata = self.client.get_sample_metadata(sample_ids)
-            print(f"✓ Enriched with metadata for {len(sample_metadata)} samples")
+            total_cells = self._df['cell_count'].sum() if 'cell_count' in self._df.columns else len(self._df)
+            print(f"✓ Enriched with metadata for {len(sample_metadata)} samples ({total_cells:,} total cells)")
         except Exception as e:
             logging.warning(f"Could not fetch sample metadata: {e}")
             sample_metadata = {}
@@ -672,7 +765,6 @@ class SearchResult(MalvaDataFrame):
         return self
     
     def __repr__(self) -> str:
-        """Nice representation for Jupyter notebooks"""
         if self._df.empty:
             return "SearchResult: No data found"
         
@@ -680,13 +772,21 @@ class SearchResult(MalvaDataFrame):
         lines.append("🔬 Malva Search Results")
         lines.append("=" * 50)
         
-        # Basic stats
-        lines.append(f"📊 Total cells: {len(self._df):,}")
+        # FIXED: Always try to get actual cell count first
+        if 'cell_count' in self._df.columns and not self._df['cell_count'].isna().all():
+            total_cells = int(self._df['cell_count'].sum())
+            lines.append(f"📊 Total cells: {total_cells:,}")
+            lines.append(f"📊 Sample/cell_type combinations: {len(self._df)}")
+        else:
+            # Fallback: count rows but label correctly
+            lines.append(f"📊 Data points: {len(self._df)}")
+            lines.append("📊 Individual cell counts not available")
+            
         lines.append(f"🧬 Genes/sequences: {self._df['gene_sequence'].nunique() if 'gene_sequence' in self._df.columns else 'N/A'}")
         lines.append(f"🧪 Samples: {self._df['sample_id'].nunique() if 'sample_id' in self._df.columns else 'N/A'}")
         lines.append(f"🔬 Cell types: {self._df['cell_type'].nunique() if 'cell_type' in self._df.columns else 'N/A'}")
         
-        # Expression stats
+        # Expression stats remain the same (these are per sample/cell_type aggregate)
         if 'norm_expr' in self._df.columns:
             lines.append(f"📈 Expression range: {self._df['norm_expr'].min():.3f} - {self._df['norm_expr'].max():.3f}")
             lines.append(f"📊 Mean expression: {self._df['norm_expr'].mean():.3f}")
@@ -751,656 +851,6 @@ class SearchResult(MalvaDataFrame):
         html.append('</div>')
         return ''.join(html)
 
-class CoverageDataFrame(MalvaDataFrame):
-    """
-    Specialized MalvaDataFrame for coverage data with genomic position handling
-    """
-    
-    def __init__(self, coverage_df: pd.DataFrame, client: 'MalvaClient', sample_metadata: Dict[int, Dict] = None):
-        super().__init__(coverage_df, client, sample_metadata)
-        
-    def filter_by_position(self, start: int = None, end: int = None) -> 'CoverageDataFrame':
-        """
-        Filter coverage data by genomic position range
-        
-        Args:
-            start: Start position (inclusive)
-            end: End position (inclusive)
-            
-        Returns:
-            New CoverageDataFrame with filtered positions
-        """
-        filtered_df = self._df.copy()
-        
-        if 'genomic_position' in filtered_df.columns:
-            if start is not None:
-                filtered_df = filtered_df[filtered_df['genomic_position'] >= start]
-            if end is not None:
-                filtered_df = filtered_df[filtered_df['genomic_position'] <= end]
-        
-        return CoverageDataFrame(filtered_df, self.client, self._sample_metadata)
-
-    def filter_by(self, **kwargs) -> 'CoverageDataFrame':
-        """
-        Filter coverage data while preserving genomic positions
-        Uses simplified field names (e.g., 'organ' instead of 'specimen_from_organism.organ')
-        
-        Args:
-            **kwargs: Field=value pairs for filtering
-            
-        Returns:
-            New CoverageDataFrame with filtered data (preserves genomic positions)
-        """
-        if not kwargs:
-            return CoverageDataFrame(self._df.copy(), self.client, self._sample_metadata)
-        
-        # Start with all rows as True
-        mask = pd.Series(True, index=self._df.index)
-        
-        # Create reverse mapping for convenience
-        reverse_mapping = {v: k for k, v in self.FIELD_MAPPING.items()}
-        
-        for field, value in kwargs.items():
-            # Check if field exists directly
-            actual_field = field
-            if field not in self._df.columns:
-                # Try mapped field
-                if field in reverse_mapping and reverse_mapping[field] in self._df.columns:
-                    actual_field = reverse_mapping[field]
-                else:
-                    logging.warning(f"Field '{field}' not found. Available fields: {self.available_filter_fields()}")
-                    continue
-            
-            # Apply filter using boolean indexing
-            if isinstance(value, (list, tuple)):
-                field_mask = self._df[actual_field].isin(value)
-            else:
-                field_mask = self._df[actual_field] == value
-            
-            mask = mask & field_mask
-        
-        # Apply the final mask in one operation
-        filtered_df = self._df[mask].copy()
-        
-        return CoverageDataFrame(filtered_df, self.client, self._sample_metadata)
-    
-    def aggregate_by(self, group_by: Union[str, List[str]], 
-                    agg_func: str = 'mean',
-                    expr_column: str = 'coverage') -> 'CoverageDataFrame':
-        """
-        Aggregate coverage data by specified grouping variables while preserving genomic positions
-        
-        Args:
-            group_by: Column name(s) to group by
-            agg_func: Aggregation function ('mean', 'median', 'sum', 'count', 'std')
-            expr_column: Expression column to aggregate (default: 'coverage')
-            
-        Returns:
-            New CoverageDataFrame with aggregated results that can still be plotted
-            
-        Example:
-            df.aggregate_by('cell_type')  # Returns aggregated coverage by position and cell_type
-            df.aggregate_by(['organ', 'cell_type'])
-        """
-        if expr_column not in self._df.columns:
-            raise ValueError(f"Expression column '{expr_column}' not found")
-        
-        group_cols = [group_by] if isinstance(group_by, str) else group_by
-        
-        # Resolve field names
-        resolved_group_cols = []
-        reverse_mapping = {v: k for k, v in self.FIELD_MAPPING.items()}
-        
-        for col in group_cols:
-            if col in self._df.columns:
-                resolved_group_cols.append(col)
-            elif col in reverse_mapping and reverse_mapping[col] in self._df.columns:
-                resolved_group_cols.append(reverse_mapping[col])
-            else:
-                raise ValueError(f"Grouping column '{col}' not found")
-        
-        # IMPORTANT: Always include genomic_position in grouping for coverage data
-        if 'genomic_position' in self._df.columns and 'genomic_position' not in resolved_group_cols:
-            final_group_cols = ['genomic_position'] + resolved_group_cols
-        else:
-            final_group_cols = resolved_group_cols
-        
-        # Simple aggregation approach
-        grouped = self._df.groupby(final_group_cols)
-        
-        # Create result DataFrame step by step
-        if agg_func == 'mean':
-            expr_agg = grouped[expr_column].mean()
-        elif agg_func == 'median':
-            expr_agg = grouped[expr_column].median()
-        elif agg_func == 'sum':
-            expr_agg = grouped[expr_column].sum()
-        elif agg_func == 'count':
-            expr_agg = grouped[expr_column].count()
-        elif agg_func == 'std':
-            expr_agg = grouped[expr_column].std()
-        elif agg_func == 'min':
-            expr_agg = grouped[expr_column].min()
-        elif agg_func == 'max':
-            expr_agg = grouped[expr_column].max()
-        else:
-            raise ValueError(f"Unsupported aggregation function: {agg_func}")
-        
-        # Build result DataFrame with coverage-specific structure
-        result_data = {
-            'coverage': expr_agg,  # Always name it 'coverage' for plotting compatibility
-            'n_observations': grouped.size(),
-        }
-        
-        # Add additional metrics if columns exist
-        if 'cell_count' in self._df.columns:
-            result_data['total_cells'] = grouped['cell_count'].sum()
-        
-        if 'sample_id' in self._df.columns:
-            result_data['n_samples'] = grouped['sample_id'].nunique()
-        
-        result_df = pd.DataFrame(result_data).reset_index()
-        
-        # Ensure genomic_position is preserved and coverage column exists for plotting
-        if 'genomic_position' not in result_df.columns:
-            logging.warning("genomic_position not preserved in aggregation - plotting may not work")
-        
-        # Don't pass sample_metadata to aggregated data
-        # Convert to CoverageDataFrame to maintain plotting capabilities but without sample metadata
-        return CoverageDataFrame(result_df, self.client, sample_metadata={})
-    
-    def available_fields(self) -> Dict[str, List[str]]:
-        """
-        Get categorized list of available fields for filtering/grouping (coverage-specific)
-        
-        Returns:
-            Dictionary with categorized field names
-        """
-        all_columns = list(self._df.columns)
-        
-        # Categorize fields with coverage-specific categories
-        categories = {
-            'coverage': [col for col in all_columns if col in ['coverage', 'cell_type_coverage', 'genomic_position']],
-            'basic': [col for col in all_columns if col in ['sample_id', 'cell_type', 'cell_count']],
-            'biological': [col for col in all_columns if col in ['organ', 'organ_part', 'disease', 'species', 'development_stage', 'sex', 'age']],
-            'study': [col for col in all_columns if col in ['study', 'study_title', 'laboratory', 'protocol']],
-            'technical': [col for col in all_columns if col in ['chunk_id', 'internal_sample_id', 'num_cells', 'num_data', 'num_kmers', 'sample_uuid']],
-            'original_fields': [col for col in all_columns if '.' in col]
-        }
-        
-        # Remove empty categories
-        return {k: v for k, v in categories.items() if v}
-    
-    def plot_coverage_profile(self, group_by: str = None, limit: int = 10, **kwargs):
-        """
-        Plot coverage profile across genomic positions
-        
-        Args:
-            group_by: Group coverage by field ('sample_id', 'cell_type', etc.)
-            limit: Maximum number of groups to plot
-            **kwargs: Additional matplotlib arguments
-        """
-        try:
-            import matplotlib.pyplot as plt
-            import seaborn as sns
-        except ImportError:
-            raise ImportError("matplotlib and seaborn required for plotting")
-        
-        if 'genomic_position' not in self._df.columns or 'coverage' not in self._df.columns:
-            raise ValueError("genomic_position and coverage columns required")
-        
-        plt.figure(figsize=kwargs.get('figsize', (15, 6)))
-        
-        if group_by and group_by in self._df.columns:
-            # Plot by groups
-            top_groups = self._df.groupby(group_by)['coverage'].mean().nlargest(limit).index
-            
-            for group in top_groups:
-                group_data = self._df[self._df[group_by] == group]
-                if not group_data.empty:
-                    # Check if data is already aggregated by position
-                    if group_data.groupby('genomic_position').size().max() == 1:
-                        # Data is already aggregated - plot directly
-                        group_data = group_data.sort_values('genomic_position')
-                        plt.plot(group_data['genomic_position'], group_data['coverage'], 
-                            alpha=0.7, label=f'{group_by}: {group}')
-                    else:
-                        # Aggregate by position to reduce noise
-                        agg_data = group_data.groupby('genomic_position')['coverage'].mean().reset_index()
-                        plt.plot(agg_data['genomic_position'], agg_data['coverage'], 
-                            alpha=0.7, label=f'{group_by}: {group}')
-        else:
-            # Plot overall coverage
-            if self._df.groupby('genomic_position').size().max() == 1:
-                # Data is already aggregated
-                plot_data = self._df.sort_values('genomic_position')
-                plt.plot(plot_data['genomic_position'], plot_data['coverage'], alpha=0.8)
-            else:
-                # Aggregate by position first
-                agg_data = self._df.groupby('genomic_position')['coverage'].mean().reset_index()
-                plt.plot(agg_data['genomic_position'], agg_data['coverage'], alpha=0.8)
-        
-        plt.xlabel('Genomic Position')
-        plt.ylabel('Coverage')
-        plt.title('Coverage Profile')
-        
-        if group_by:
-            plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
-        
-        plt.grid(True, alpha=0.3)
-        plt.tight_layout()
-        
-        return plt.gcf()
-
-class CoverageResult(CoverageDataFrame):
-    """Container for genome browser coverage results that extends CoverageDataFrame for direct analysis"""
-    
-    def __init__(self, raw_data: Dict[str, Any]):
-        self.raw_data = raw_data
-        self._enriched = False
-        self._client = None
-        self._sample_metadata = {}
-        
-        # Convert to DataFrame immediately
-        coverage_df = self._convert_to_dataframe()
-        
-        # Initialize as CoverageDataFrame (without metadata initially)
-        super().__init__(coverage_df, client=None, sample_metadata={})
-        
-    def _convert_to_dataframe(self) -> pd.DataFrame:
-        """Convert raw coverage results to DataFrame"""
-        if not self.raw_data or not isinstance(self.raw_data, dict):
-            return pd.DataFrame()
-        
-        coverage_data = self.raw_data.get('coverage_data', {})
-        if not coverage_data:
-            return pd.DataFrame()
-        
-        # Check if we have sample-level data
-        if self._has_sample_data():
-            return self._convert_sample_level_data()
-        else:
-            return self._convert_aggregated_data()
-    
-    def _has_sample_data(self) -> bool:
-        """Check if sample-level data is available"""
-        coverage_data = self.raw_data.get('coverage_data', {})
-        window_info = coverage_data.get('window_info', {})
-        return window_info.get('mode', 'aggregated') == 'sample_preserved'
-    
-    def _convert_sample_level_data(self) -> pd.DataFrame:
-        """Convert sample-level coverage data to long-format DataFrame"""
-        coverage_data = self.raw_data.get('coverage_data', {})
-        sample_coverage_matrix = coverage_data.get('sample_coverage_matrix', [])
-        positions = coverage_data.get('positions', [])
-        samples = coverage_data.get('samples', [])
-        cell_type_data = coverage_data.get('cell_type_data', {})
-        
-        if not sample_coverage_matrix or not positions:
-            return pd.DataFrame()
-        
-        # Create long-format DataFrame efficiently
-        rows = []
-        
-        # Pre-process cell type data for efficiency
-        sample_cell_type_info = {}
-        for sample_id, ct_data in cell_type_data.items():
-            sample_id_int = int(sample_id)
-            sample_cell_type_info[sample_id_int] = {}
-            
-            for cell_type, expressions in ct_data.items():
-                if expressions:
-                    total_expr = sum(expr['expression'] * expr['cell_count'] for expr in expressions)
-                    total_cells = sum(expr['cell_count'] for expr in expressions)
-                    avg_expr = total_expr / total_cells if total_cells > 0 else 0
-                    sample_cell_type_info[sample_id_int][cell_type] = {
-                        'cell_type_coverage': avg_expr,
-                        'cell_count': total_cells
-                    }
-        
-        # Build rows efficiently
-        for i, sample_id in enumerate(samples):
-            sample_coverage = sample_coverage_matrix[i] if i < len(sample_coverage_matrix) else [0] * len(positions)
-            
-            # Check if this sample has cell type data
-            if sample_id in sample_cell_type_info and sample_cell_type_info[sample_id]:
-                # Create one row per cell type
-                for cell_type, ct_info in sample_cell_type_info[sample_id].items():
-                    for j, position in enumerate(positions):
-                        coverage = sample_coverage[j] if j < len(sample_coverage) else 0
-                        
-                        rows.append({
-                            'sample_id': sample_id,
-                            'genomic_position': position,
-                            'coverage': coverage,
-                            'cell_type': cell_type,
-                            'cell_type_coverage': ct_info['cell_type_coverage'],
-                            'cell_count': ct_info['cell_count']
-                        })
-            else:
-                # No cell type data, create basic rows
-                for j, position in enumerate(positions):
-                    coverage = sample_coverage[j] if j < len(sample_coverage) else 0
-                    
-                    rows.append({
-                        'sample_id': sample_id,
-                        'genomic_position': position,
-                        'coverage': coverage
-                    })
-        
-        df = pd.DataFrame(rows)
-        # Convert cell_type to categorical for faster filtering
-        if 'cell_type' in df.columns and not df.empty:
-            df['cell_type'] = df['cell_type'].astype('category')
-        return df
-    
-    def _convert_aggregated_data(self) -> pd.DataFrame:
-        """Convert aggregated coverage data to DataFrame"""
-        coverage_data = self.raw_data.get('coverage_data', {})
-        positions = coverage_data.get('positions', [])
-        coverage_matrix = coverage_data.get('coverage_matrix', [])
-        cell_types = coverage_data.get('cell_types', [])
-        
-        rows = []
-        for i, cell_type in enumerate(cell_types):
-            if i < len(coverage_matrix):
-                for j, position in enumerate(positions):
-                    if j < len(coverage_matrix[i]):
-                        rows.append({
-                            'cell_type': cell_type,
-                            'genomic_position': position,
-                            'coverage': coverage_matrix[i][j]
-                        })
-        
-        return pd.DataFrame(rows)
-    
-    def set_client(self, client: 'MalvaClient'):
-        """Set the client for metadata enrichment"""
-        self._client = client
-        self.client = client  # Update the inherited client reference
-    
-    @property
-    def coverage_data(self) -> Dict[str, Any]:
-        """Get the coverage data"""
-        return self.raw_data.get('coverage_data', {})
-    
-    @property
-    def mode(self) -> str:
-        """Get the data mode (aggregated or sample_preserved)"""
-        return self.coverage_data.get('window_info', {}).get('mode', 'aggregated')
-    
-    @property
-    def has_sample_data(self) -> bool:
-        """Check if sample-level data is available"""
-        return self.mode == 'sample_preserved'
-    
-    @property
-    def samples(self) -> List[int]:
-        """Get sample IDs (only available if preserve_samples=True)"""
-        return self.coverage_data.get('samples', [])
-    
-    @property
-    def positions(self) -> List[int]:
-        """Get genomic positions"""
-        return self.coverage_data.get('positions', [])
-    
-    @property
-    def region_info(self) -> Dict[str, Any]:
-        """Get genomic region information"""
-        return self.coverage_data.get('window_info', {}).get('region', {})
-    
-    def get_sample_coverage_dataframe(self) -> pd.DataFrame:
-        """
-        Get sample-level coverage data as DataFrame
-        Returns: DataFrame with samples as rows, positions as columns
-        """
-        if not self.has_sample_data:
-            raise ValueError("Sample-level data not available. Use preserve_samples=True when calling get_coverage()")
-        
-        sample_coverage_matrix = self.coverage_data.get('sample_coverage_matrix', [])
-        positions = self.positions
-        samples = self.samples
-        
-        if not sample_coverage_matrix or not positions:
-            return pd.DataFrame()
-        
-        df = pd.DataFrame(sample_coverage_matrix, index=samples, columns=positions)
-        df.index.name = 'sample_id'
-        df.columns.name = 'genomic_position'
-        return df
-    
-    def get_coverage_dataframe(self) -> 'CoverageDataFrame':
-        """
-        Get coverage data as a CoverageDataFrame for analysis
-        This method is kept for backward compatibility, but now the CoverageResult itself is a CoverageDataFrame
-        """
-        return self
-    
-    def enrich_with_metadata(self) -> 'CoverageResult':
-        """
-        Enrich the coverage results with sample metadata
-        
-        Returns:
-            Self with enriched metadata
-        """
-        if self._enriched or not self._client or not self.has_sample_data:
-            return self
-        
-        try:
-            sample_metadata = self._client.get_sample_metadata(self.samples)
-            self._sample_metadata = sample_metadata
-            
-            # Re-enrich the DataFrame with new metadata
-            self._enrich_with_metadata()
-            self._enriched = True
-            
-            print(f"✓ Enriched with metadata for {len(sample_metadata)} samples")
-        except Exception as e:
-            logging.warning(f"Could not fetch sample metadata: {e}")
-        
-        return self
-    
-    # Remove the old filter_by, aggregate_by, plot_coverage_by methods since they're now inherited
-    
-    def plot_coverage_summary(self, group_by: str = 'cell_type', limit: int = 10, **kwargs):
-        """
-        Create comprehensive coverage plots
-        
-        Args:
-            group_by: Field to group by
-            limit: Maximum number of groups to show
-            **kwargs: Additional arguments
-        """
-        try:
-            import matplotlib.pyplot as plt
-            import seaborn as sns
-        except ImportError:
-            raise ImportError("matplotlib and seaborn required for plotting")
-        
-        # Ensure we have enriched data for biological grouping
-        biological_fields = {'organ', 'disease', 'species', 'study', 'laboratory', 'development_stage', 'sex', 'age'}
-        if not self._enriched and group_by in biological_fields:
-            self.enrich_with_metadata()
-        
-        # Create 1x3 subplot layout
-        fig, axes = plt.subplots(1, 3, figsize=(18, 6))
-        fig.suptitle(f'Coverage Analysis by {group_by.replace("_", " ").title()}', fontsize=16)
-        
-        if group_by not in self._df.columns:
-            available_fields = self.available_filter_fields()
-            print(f"Warning: {group_by} not found. Available fields: {available_fields}")
-            return fig
-        
-        # Get top groups by mean coverage
-        top_groups = self._df.groupby(group_by)['coverage'].mean().nlargest(limit).index.tolist()
-        plot_data = self._df[self._df[group_by].isin(top_groups)]
-        
-        # 1. Coverage distribution box plot
-        sns.boxplot(data=plot_data, x=group_by, y='coverage', order=top_groups, ax=axes[0])
-        axes[0].set_title('Coverage Distribution')
-        axes[0].tick_params(axis='x', rotation=45)
-        axes[0].set_ylabel('Coverage')
-        
-        # 2. Number of samples per group
-        if 'sample_id' in plot_data.columns:
-            sample_counts = plot_data.groupby(group_by)['sample_id'].nunique().reindex(top_groups)
-            sample_counts.plot(kind='bar', ax=axes[1], color='lightcoral')
-            axes[1].set_title('Number of Samples')
-            axes[1].set_ylabel('Sample Count')
-            axes[1].tick_params(axis='x', rotation=45)
-            
-            # Add value labels on bars
-            for i, v in enumerate(sample_counts.values):
-                axes[1].text(i, v + 0.01 * max(sample_counts.values), str(v), 
-                            ha='center', va='bottom', fontsize=9)
-        else:
-            axes[1].text(0.5, 0.5, 'Sample data\nnot available', 
-                        ha='center', va='center', transform=axes[1].transAxes)
-        
-        # 3. Average coverage by group
-        avg_coverage = plot_data.groupby(group_by)['coverage'].mean().reindex(top_groups)
-        avg_coverage.plot(kind='bar', ax=axes[2], color='lightgreen')
-        axes[2].set_title('Average Coverage')
-        axes[2].set_ylabel('Mean Coverage')
-        axes[2].tick_params(axis='x', rotation=45)
-        
-        # Add value labels
-        for i, v in enumerate(avg_coverage.values):
-            axes[2].text(i, v + 0.01 * max(avg_coverage.values), f'{v:.3f}', 
-                        ha='center', va='bottom', fontsize=9)
-        
-        plt.tight_layout()
-        
-        # Print summary
-        print(f"\n📊 Coverage Summary by {group_by.replace('_', ' ').title()}:")
-        print("-" * 50)
-        for group in top_groups:
-            group_data = plot_data[plot_data[group_by] == group]
-            mean_cov = group_data['coverage'].mean()
-            n_samples = group_data['sample_id'].nunique() if 'sample_id' in group_data.columns else len(group_data)
-            n_positions = group_data['genomic_position'].nunique()
-            print(f"{group}: {n_samples} samples, {n_positions} positions, μ={mean_cov:.3f}")
-        
-        return fig
-    
-    def __repr__(self) -> str:
-        """Nice representation for Jupyter notebooks"""
-        lines = []
-        lines.append("🧬 Malva Coverage Results")
-        lines.append("=" * 50)
-        
-        # Basic stats
-        region = self.region_info
-        chromosome = region.get('chromosome', 'Unknown')
-        start = region.get('start', 0)
-        end = region.get('end', 0)
-        span = region.get('span', end - start)
-        
-        lines.append(f"📍 Region: {chromosome}:{start:,}-{end:,} ({span:,} bp)")
-        lines.append(f"📊 Positions: {len(self.positions):,}")
-        lines.append(f"🧪 Samples: {len(self.samples):,}")
-        
-        # Data info
-        if not self._df.empty:
-            lines.append(f"📈 Coverage range: {self._df['coverage'].min():.3f} - {self._df['coverage'].max():.3f}")
-            lines.append(f"📊 Mean coverage: {self._df['coverage'].mean():.3f}")
-            lines.append(f"🔬 Cell types: {self._df['cell_type'].nunique() if 'cell_type' in self._df.columns else 'N/A'}")
-        
-        # Mode and data type
-        if self.has_sample_data:
-            lines.append("✅ Sample-level data available")
-            
-            # Cell type info
-            cell_type_data = self.coverage_data.get('cell_type_data', {})
-            all_cell_types = set()
-            for sample_ct_data in cell_type_data.values():
-                all_cell_types.update(sample_ct_data.keys())
-            
-            if all_cell_types:
-                lines.append(f"🔬 Cell types detected: {len(all_cell_types)}")
-        else:
-            lines.append("ℹ️  Aggregated data only")
-        
-        lines.append("")
-        
-        # Metadata status
-        if self._enriched:
-            lines.append("✅ Enriched with sample metadata")
-            # Show available metadata fields
-            biological_fields = [f for f in ['organ', 'disease', 'species', 'study'] if f in self._df.columns]
-            if biological_fields:
-                lines.append(f"🏷️  Available metadata: {', '.join(biological_fields)}")
-        else:
-            lines.append("ℹ️  Basic coverage data only")
-            lines.append("💡 Run .enrich_with_metadata() to add sample metadata for filtering by:")
-            lines.append("   • Organ, disease, species")
-            lines.append("   • Study, laboratory, protocol")
-            lines.append("   • Age, sex, development stage")
-        
-        lines.append("")
-        lines.append("🔍 Available methods (inherited from CoverageDataFrame):")
-        lines.append("   • .filter_by(organ='brain', cell_type='neuron')")
-        lines.append("   • .aggregate_by('cell_type')")
-        lines.append("   • .plot_expression_by('cell_type')  # plots coverage")
-        lines.append("   • .plot_coverage_summary('organ')")
-        lines.append("   • .available_fields()  # see all available fields")
-        lines.append("   • .available_filter_fields()  # see filterable fields")
-        lines.append("   • .filter_by_position(start=1000, end=2000)")
-        
-        return "\n".join(lines)
-    
-    def __str__(self) -> str:
-        """String representation"""
-        return self.__repr__()
-    
-    def _repr_html_(self) -> str:
-        """HTML representation for Jupyter notebooks"""
-        region = self.region_info
-        chromosome = region.get('chromosome', 'Unknown')
-        start = region.get('start', 0)
-        end = region.get('end', 0)
-        span = region.get('span', end - start)
-        
-        html = []
-        html.append('<div style="border: 1px solid #ddd; padding: 10px; border-radius: 5px; font-family: monospace;">')
-        html.append('<h3 style="margin-top: 0;">🧬 Malva Coverage Results</h3>')
-        
-        # Stats table
-        html.append('<table style="border-collapse: collapse; margin: 10px 0;">')
-        html.append(f'<tr><td><strong>Region:</strong></td><td>{chromosome}:{start:,}-{end:,} ({span:,} bp)</td></tr>')
-        html.append(f'<tr><td><strong>Positions:</strong></td><td>{len(self.positions):,}</td></tr>')
-        html.append(f'<tr><td><strong>Samples:</strong></td><td>{len(self.samples):,}</td></tr>')
-        
-        if not self._df.empty:
-            html.append(f'<tr><td><strong>Coverage range:</strong></td><td>{self._df["coverage"].min():.3f} - {self._df["coverage"].max():.3f}</td></tr>')
-            html.append(f'<tr><td><strong>Mean coverage:</strong></td><td>{self._df["coverage"].mean():.3f}</td></tr>')
-            html.append(f'<tr><td><strong>Cell types:</strong></td><td>{self._df["cell_type"].nunique() if "cell_type" in self._df.columns else "N/A"}</td></tr>')
-        
-        if self.has_sample_data:
-            html.append('<tr><td><strong>Data type:</strong></td><td>Sample-level data available</td></tr>')
-        else:
-            html.append('<tr><td><strong>Data type:</strong></td><td>Aggregated data only</td></tr>')
-        
-        html.append('</table>')
-        
-        # Metadata status
-        if self._enriched:
-            html.append('<div style="color: green;">✅ <strong>Enriched with sample metadata</strong></div>')
-            biological_fields = [f for f in ['organ', 'disease', 'species', 'study'] if f in self._df.columns]
-            if biological_fields:
-                html.append(f'<div style="margin: 5px 0; font-size: 0.9em;">Available metadata: {", ".join(biological_fields)}</div>')
-        else:
-            html.append('<div style="color: orange;">ℹ️ <strong>Basic coverage data only</strong></div>')
-            html.append('<div style="margin: 5px 0; font-size: 0.9em;">Run <code>.enrich_with_metadata()</code> to add sample metadata for advanced filtering</div>')
-        
-        html.append('<div style="margin-top: 10px; font-size: 0.9em; color: #666;">')
-        html.append('<strong>Available methods:</strong> filter_by(), aggregate_by(), available_fields(), plot_coverage_summary(), and more...')
-        html.append('</div>')
-        
-        html.append('</div>')
-        return ''.join(html)
-
-
 import pandas as pd
 import numpy as np
 from typing import Dict, List, Any, Optional, Union, TYPE_CHECKING
@@ -1411,12 +861,6 @@ if TYPE_CHECKING:
 class SingleCellResult:
     """
     Represents search results at the single cell level (not aggregated by cell type)
-    
-    This class provides access to individual cell data including:
-    - Cell IDs
-    - Expression values
-    - Sample information
-    - Metadata enrichment capabilities
     """
     
     def __init__(self, results_data: Dict[str, Any], client: Optional['MalvaClient'] = None):
@@ -1429,51 +873,92 @@ class SingleCellResult:
         """
         self.raw_data = results_data
         self.client = client
-        self._processed_data = None
+        self._processed_data = None  # <-- This starts as None
         
         # Extract basic info
-        if 'job_id' in results_data:
-            self.job_id = results_data['job_id']
-            self.status = results_data.get('status', 'unknown')
-        else:
-            self.job_id = None
-            self.status = 'completed'
+        self.job_id = results_data.get('job_id')
+        self.status = results_data.get('status', 'unknown')
         
-        # Process results if available
-        if 'results' in results_data and results_data['results']:
+        # Process results if available and completed
+        if self.status == 'completed' and 'results' in results_data:
             self._process_results()
     
     def _process_results(self):
         """Process raw results into structured data"""
-        results = self.raw_data['results']
+        # Check if we have a nested results structure
+        if 'results' in self.raw_data and 'results' in self.raw_data['results']:
+            # We have nested results - this is the actual data
+            results = self.raw_data['results']['results']
+            print(f"DEBUG: Found nested results structure")
+        elif 'results' in self.raw_data:
+            # Try the direct results first
+            results = self.raw_data.get('results', {})
+            print(f"DEBUG: Using direct results structure")
+        else:
+            results = {}
+            print(f"DEBUG: No results found")
         
-        # Get the first (and typically only) result key
-        result_keys = list(results.keys())
+        # Now look for seq_1 or similar keys
+        result_keys = [k for k in results.keys() if k.startswith('seq') and not k.startswith('_')]
+        
         if not result_keys:
+            # Try to find any dict with 'cell' key
+            for key, value in results.items():
+                if isinstance(value, dict) and 'cell' in value:
+                    result_keys = [key]
+                    break
+        
+        if not result_keys:
+            print(f"DEBUG: No valid result keys found in: {list(results.keys())}")
             self._processed_data = {
                 'cells': [],
                 'expression': [],
                 'samples': [],
-                'metadata': {}
+                'query_gene': None,
+                'metadata': {'error': 'No sequence data found'}
             }
             return
         
         first_key = result_keys[0]
         result_data = results[first_key]
         
+        print(f"DEBUG: Processing key '{first_key}' with type {type(result_data)}")
+        
+        if not isinstance(result_data, dict):
+            print(f"DEBUG: Result data is not a dict: {type(result_data)}")
+            self._processed_data = {
+                'cells': [],
+                'expression': [],
+                'samples': [],
+                'query_gene': None,
+                'metadata': {'error': f'Invalid result data type: {type(result_data)}'}
+            }
+            return
+        
+        # Extract the arrays
+        cells = result_data.get('cell', [])
+        expressions = result_data.get('expression', [])
+        samples = result_data.get('sample', [])
+        
+        print(f"DEBUG: Found {len(cells)} cells, {len(expressions)} expressions, {len(samples)} samples")
+        
+        # Store processed data
         self._processed_data = {
-            'cells': result_data.get('cell', []),
-            'expression': result_data.get('expression', []),
-            'samples': result_data.get('sample', []),
-            'query_gene': first_key,
+            'cells': cells,
+            'expression': expressions,
+            'samples': samples,
+            'query_gene': result_data.get('sequence', first_key),
             'metadata': {
-                'total_cells': len(result_data.get('cell', [])),
-                'unique_samples': len(set(result_data.get('sample', []))),
-                'query_info': self.raw_data.get('query_info', {}),
-                'search_params': self.raw_data.get('search_params', {})
+                'total_cells': result_data.get('ncells', len(cells)),
+                'unique_samples': len(set(samples)) if samples else 0,
+                'sequence_length': result_data.get('sequence_length'),
+                'query_info': self.raw_data.get('query', {}),
+                'searches_remaining': self.raw_data.get('searches_remaining')
             }
         }
-    
+        
+        print(f"✓ Processed {len(cells)} cells from {len(set(samples))} samples")
+
     @property
     def is_completed(self) -> bool:
         """Check if the search is completed"""
@@ -1492,25 +977,25 @@ class SingleCellResult:
     @property
     def cell_count(self) -> int:
         """Get total number of cells in results"""
-        if not self.has_results:
+        if not self._processed_data:
             return 0
         return len(self._processed_data['cells'])
     
     @property
     def sample_count(self) -> int:
         """Get number of unique samples in results"""
-        if not self.has_results:
+        if not self._processed_data:
             return 0
         return len(set(self._processed_data['samples']))
     
     @property
     def query_gene(self) -> Optional[str]:
-        """Get the queried gene symbol"""
-        if not self.has_results:
+        """Get the queried gene symbol or sequence"""
+        if not self._processed_data:
             return None
         return self._processed_data.get('query_gene')
     
-    def get_cell_ids(self) -> List[str]:
+    def get_cell_ids(self) -> List[int]:
         """Get list of all cell IDs"""
         if not self.has_results:
             return []
@@ -1522,7 +1007,7 @@ class SingleCellResult:
             return []
         return self._processed_data['expression']
     
-    def get_sample_ids(self) -> List[Union[str, int]]:
+    def get_sample_ids(self) -> List[int]:
         """Get list of all sample IDs"""
         if not self.has_results:
             return []
@@ -1563,18 +1048,20 @@ class SingleCellResult:
         
         # Create new result object with filtered data
         filtered_data = {
+            'status': 'completed',
             'results': {
-                self.query_gene: {
+                'seq_1': {
                     'cell': filtered_df['cell_id'].tolist(),
                     'expression': filtered_df['expression'].tolist(),
-                    'sample': filtered_df['sample_id'].tolist()
+                    'sample': filtered_df['sample_id'].tolist(),
+                    'ncells': len(filtered_df)
                 }
             }
         }
         
         return SingleCellResult(filtered_data, self.client)
     
-    def filter_by_samples(self, sample_ids: List[Union[str, int]]) -> 'SingleCellResult':
+    def filter_by_samples(self, sample_ids: List[int]) -> 'SingleCellResult':
         """
         Filter results to specific samples
         
@@ -1592,11 +1079,13 @@ class SingleCellResult:
         
         # Create new result object with filtered data
         filtered_data = {
+            'status': 'completed',
             'results': {
-                self.query_gene: {
+                'seq_1': {
                     'cell': filtered_df['cell_id'].tolist(),
                     'expression': filtered_df['expression'].tolist(),
-                    'sample': filtered_df['sample_id'].tolist()
+                    'sample': filtered_df['sample_id'].tolist(),
+                    'ncells': len(filtered_df)
                 }
             }
         }
@@ -1621,11 +1110,13 @@ class SingleCellResult:
         
         # Create new result object with top cells
         filtered_data = {
+            'status': 'completed',
             'results': {
-                self.query_gene: {
+                'seq_1': {
                     'cell': top_df['cell_id'].tolist(),
                     'expression': top_df['expression'].tolist(),
-                    'sample': top_df['sample_id'].tolist()
+                    'sample': top_df['sample_id'].tolist(),
+                    'ncells': len(top_df)
                 }
             }
         }
@@ -1679,13 +1170,12 @@ class SingleCellResult:
             'total_cells': len(expression_values)
         }
     
-    def enrich_with_metadata(self, sample_metadata: bool = True, cell_metadata: bool = False) -> pd.DataFrame:
+    def enrich_with_metadata(self, sample_metadata: bool = True) -> pd.DataFrame:
         """
         Enrich results with metadata from the client
         
         Args:
             sample_metadata: Whether to include sample metadata
-            cell_metadata: Whether to include cell metadata
             
         Returns:
             DataFrame with enriched metadata
@@ -1704,20 +1194,17 @@ class SingleCellResult:
                 sample_meta = self.client.get_sample_metadata(unique_samples)
                 
                 # Create sample metadata DataFrame
-                sample_df = pd.DataFrame.from_dict(sample_meta, orient='index')
-                sample_df.index.name = 'sample_id'
-                sample_df = sample_df.reset_index()
+                meta_records = []
+                for sample_id, metadata in sample_meta.items():
+                    record = {'sample_id': int(sample_id)}
+                    record.update(metadata)
+                    meta_records.append(record)
                 
-                # Merge with results
-                df = df.merge(sample_df, on='sample_id', how='left')
-            
-            if cell_metadata:
-                # Get cell metadata (this is more complex as we need sample_id, cell_id pairs)
-                cell_sample_pairs = [(row['sample_id'], row['cell_id']) for _, row in df.iterrows()]
-                
-                # This would require the client to support cell metadata retrieval
-                # Implementation depends on your specific API
-                pass
+                if meta_records:
+                    sample_df = pd.DataFrame(meta_records)
+                    # Merge with results
+                    df = df.merge(sample_df, on='sample_id', how='left')
+                    print(f"✓ Enriched with metadata for {len(sample_df)} samples")
                 
         except Exception as e:
             print(f"Warning: Could not enrich with metadata: {e}")
@@ -1738,14 +1225,16 @@ class SingleCellResult:
             df = self.to_dataframe()
         
         df.to_csv(filename, index=False)
-        print(f"Results saved to {filename} ({len(df)} cells)")
+        print(f"✓ Results saved to {filename} ({len(df)} cells)")
     
     def __repr__(self) -> str:
         if not self.has_results:
-            return f"SingleCellResult(status='{self.status}', cells=0)"
+            if self.status == 'pending':
+                return f"SingleCellResult(status='pending', job_id='{self.job_id}')"
+            return "SingleCellResult(status='no results', cells=0)"
         
-        return (f"SingleCellResult(gene='{self.query_gene}', "
-                f"cells={self.cell_count}, samples={self.sample_count})")
+        return (f"SingleCellResult(sequence_length={self._processed_data['metadata'].get('sequence_length', 'N/A')}, "
+                f"cells={self.cell_count:,}, samples={self.sample_count})")
     
     def __len__(self) -> int:
         return self.cell_count

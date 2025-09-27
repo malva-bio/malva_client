@@ -1,97 +1,173 @@
 # Malva Client
 
-Python client for the Malva genomic search platform, enabling programmatic access to harmonized single-cell and spatial transcriptomics data.
+Remote client for the [Malva](https://malva.mdc-berlin.de) search platform.
+
+## System Requirements
+
+### Software Dependencies
+See `requirements.txt` or `pyproject.toml`
+
+### Operating Systems
+- Linux (Ubuntu 18.04+, CentOS 7+)
+- macOS 10.15+
+- Windows 10+
+
+### Hardware Requirements
+- Internet connection required
+- No special hardware requirements
+- Standard desktop computer sufficient for API queries
 
 ## Installation
 
+Installation time: <1 minute on a standard desktop computer
+
 ```bash
-pip install malva_client
+cd <this folder>
+pip install .
 ```
 
-## Quick Start
+For full functionality including single-cell analysis:
+```bash
+pip install scanpy
+```
 
-### Authentication
+## Authentication
 
-Get your API token from [malva.mdc-berlin.de](https://malva.mdc-berlin.de) → Profile → Generate API Token
+The Malva platform provides two complementary interfaces:
+1. **Web Interface**: Browser-based access at https://malva.mdc-berlin.de for interactive exploration
+2. **API/Command Line**: Programmatic access for automated analyses and integration into computational workflows
+
+### Generating Your API Token
+
+To access Malva programmatically, you have two options:
+
+**Option A**: Use a token provided by the Malva team
+
+**Option B**: Generate your own token via ORCID authentication:
+1. Navigate to [https://malva.mdc-berlin.de](https://malva.mdc-berlin.de)
+2. Login with your ORCID account
+3. Click the menu button (⋯) in the upper left corner
+4. Select "Profile" from the dropdown
+5. Click "Generate API Token"
+6. Copy the generated token
+
+### Configure the Client
 
 ```bash
-# Configure client
+# Configure client with your API token
 malva_client config --server https://malva.mdc-berlin.net --token YOUR_API_TOKEN
 ```
 
-### Python API
+**Note**: The platform is currently in beta phase. Users receive 20 queries per day (extensible upon request).
+
+## Quick Start (CLI)
+
+### Basic Usage Examples
+
+```bash
+# Gene search (runtime: 1-5 seconds)
+malva_client search "CD3D" --output results.csv
+
+# Sequence search (runtime: 1-5 seconds)
+malva_client search "ATCGATCGATCGATCGATCGATCG" --format json
+
+# Circular RNA search (runtime: 1-5 seconds)
+# the results from this search query are provided as an example, see cdr1as_results.csv
+malva_client search "CDR1as" -o cdr1as_results.csv --format csv
+
+# Natural language query (runtime: 5-10 seconds)
+malva_client search "CD4 T cells in brain tissue"
+```
+
+### Output Formats
+
+- CSV: `--format csv` (tabular data)
+- JSON: `--format json` (structured data)
+- Excel: `--format excel` (spreadsheet format)
+- Table: `--format table` (default, console display)
+
+### Expected Output
+
+- **Gene searches**: Cell counts and expression levels across cell types and tissues
+- **Sequence searches**: Matching cells with pseudocount quantification
+- **Results include**: Cell type annotations, tissue origin, disease status, technology metadata
+
+## Quick Start (Python)
+
+### Basic Usage
 
 ```python
 from malva_client import MalvaClient
 
 # Initialize client
-client = MalvaClient("https://malva.mdc-berlin.net", "YOUR_API_TOKEN")
+API_TOKEN = "YOUR_API_TOKEN"  # Place your token here
+client = MalvaClient("https://malva.mdc-berlin.net", API_TOKEN)
 
-# Search for genes or sequences
-results = client.search("BRCA1")
-results = client.search("find cells with hallmarks of neurodegeneration")
-results = client.search("ATCGATCGATCG")  # DNA sequence
+# Search for genes
+results = client.search("CD3D")
+print(results)
 
-# Get coverage data
-coverage = client.get_coverage("chr1", 1000000, 2000000)
+# Search for sequences
+results = client.search("ATCGATCGATCGCCACATGGACTTGAC")
 
-# Download samples
-sample = client.download_sample("sample-uuid")
+# Natural language queries
+results = client.search("cells expressing markers of neurodegeneration")
 ```
 
-### Command Line Interface
+### Working with Results
 
-```bash
-# Search operations
-malva_client search "BRCA1 expression"
-malva_client search "CD4 T cells" --output results.csv --format csv
+```python
+# Enrich results with metadata
+results.enrich_with_metadata()
 
-# Async operations
-malva_client search "FOXP3" --no-wait  # Returns job ID
-malva_client status <job_id>
-malva_client results <job_id> --output results.xlsx
+# Visualize expression patterns
+fig = results.plot_expression_summary("cell_type")
 
-# Account management
-malva_client quota
-malva_client history
-malva_client config # shows the current configuration
+# Filter and aggregate
+filtered = results.filter_by(disease='normal', organ='brain')
+aggregated = filtered.aggregate_by('cell_type', agg_func='mean')
 ```
 
-## Query Types
+### Advanced Features
 
-- **Gene symbols**: `"BRCA1"`, `"TP53"`
-- **Natural language**: `"find cells with hallmarks of neurodegeneration"`
-- **DNA sequences**: `"ATCGATCGATCG"`
+```python
+import dnaio
+from malva_client.tools import mask_sequence
 
-## Output Formats
+# Load sequence from file
+with dnaio.open("sequence.fna") as f_in:
+    for s in f_in:
+        seq = s.sequence
+        break
 
-- CSV: `--format csv`
-- JSON: `--format json`
-- Excel: `--format excel`
-- Table: `--format table` (default)
+# Optional: mask low-complexity regions (requires BLAST)
+# seq = mask_sequence(seq)
 
-## Configuration
+# Search with cell-level resolution
+results = client.search_cells(seq)
+df_cells = results.enrich_with_metadata()
 
-Configuration via file (`~/.malva/config.json`), environment variables, or command line:
-
-```bash
-# Environment variables
-export MALVA_API_URL="https://malva.mdc-berlin.net"
-export MALVA_API_TOKEN="your_token"
-
-# Command line
-malva_client config --server URL --token TOKEN
+# Download complete sample for downstream analysis
+sample_uuid = df_cells['uuid'].unique()[0]
+sample = client.download_sample(sample_uuid)
 ```
 
-## Requirements
+## Use Cases
 
-- Python 3.8+
-- pandas, requests, click, rich
+The Malva client enables sequence searches across a harmonized index of >7,000 single-cell and spatial transcriptomics samples:
 
-## Documentation
+- **Cross-study comparisons**: Identify expression patterns across experimental conditions
+- **Rare event detection**: Find low-frequency sequences missed in individual studies  
+- **Viral/bacterial detection**: Quantify pathogen transcripts in tissue samples
+- **Circular RNA analysis**: Detect back-splicing events
+- **Novel junction discovery**: Identify rare splicing events or fusion transcripts
 
-Full documentation and examples: [Link to documentation]
+## Expected Runtime
+
+- Individual gene/sequence queries: 1-20 seconds
+- Metadata enrichment: 1-5 seconds
+- Sample download: 10-60 seconds (depending on sample size)
 
 ## License
 
-Copyright 2025 Malva
+The Clear BSD License - Copyright (c) 2025 Malva

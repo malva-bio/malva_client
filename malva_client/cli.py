@@ -26,10 +26,8 @@ def main(ctx, config, server, token, no_ssl_verify):
     
     ctx.ensure_object(dict)
     
-    # Load configuration
     config_obj = Config.load(config_path=config)
-    
-    # Override config with CLI arguments
+
     if server:
         config_obj.server_url = server
     if token:
@@ -46,8 +44,9 @@ def main(ctx, config, server, token, no_ssl_verify):
               default='table', help='Output format')
 @click.option('--no-wait', is_flag=True, help='Submit search without waiting for completion')
 @click.option('--max-wait', default=300, help='Maximum time to wait for completion (seconds)')
+@click.option('--no-enrich', is_flag=True, help='Skip metadata enrichment')
 @click.pass_context
-def search(ctx, query, output, output_format, no_wait, max_wait):
+def search(ctx, query, output, output_format, no_wait, max_wait, no_enrich):
     """Search genomic datasets."""
     config = ctx.obj['config']
     from malva_client.client import MalvaClient
@@ -64,13 +63,11 @@ def search(ctx, query, output, output_format, no_wait, max_wait):
         console.print(f"Searching for: [bold]{query}[/bold]")
         
         if no_wait:
-            # Submit without waiting
             job_id = client.submit_search(query)
             console.print(f"Search submitted with job ID: [bold]{job_id}[/bold]")
             console.print(f"Check status with: [bold]malva_client status {job_id}[/bold]")
             return
         
-        # Search with waiting
         with Progress(
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
@@ -78,12 +75,19 @@ def search(ctx, query, output, output_format, no_wait, max_wait):
         ) as progress:
             task = progress.add_task("Searching...", total=None)
             results = client.search(query, max_wait=max_wait)
-        
-        # Display results based on format
+
+        if not no_enrich and hasattr(results, 'enrich_with_metadata'):
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                console=console
+            ) as progress:
+                task = progress.add_task("Enriching with metadata...", total=None)
+                results.enrich_with_metadata()
+
         if output_format == 'table':
             _display_results_table(results)
-        
-        # Save results to file if requested
+
         if output:
             _save_results_to_file(results, output, output_format)
             
@@ -154,8 +158,7 @@ def config_cmd(ctx, key, value, server, token, show, reset):
     if show or (not key and not server and not token):
         _show_config(config)
         return
-    
-    # Set individual values
+
     changed = False
     
     if server:
@@ -188,7 +191,6 @@ def config_cmd(ctx, key, value, server, token, show, reset):
         for error in errors:
             console.print(f"  - {error}")
 
-# Fix the naming conflict by renaming the command
 main.add_command(config_cmd, name='config')
 
 @main.command()
@@ -208,8 +210,7 @@ def status(ctx, job_id):
         )
         
         status_data = client.get_job_status(job_id)
-        
-        # Create status table
+
         table = Table(title=f"Job Status: {job_id}")
         table.add_column("Property", style="cyan")
         table.add_column("Value", style="white")
@@ -262,15 +263,12 @@ def results(ctx, job_id, output, output_format):
         console.print(f"Retrieving results for job: [bold]{job_id}[/bold]")
         results = client.get_job_results(job_id)
         
-        # Display results
         if output_format == 'table' and not output:
             _display_results_table(results)
         
-        # Save to file
         if output:
             _save_results_to_file(results, output, output_format)
         elif output_format != 'table':
-            # Generate filename based on job_id
             extension = 'csv' if output_format == 'csv' else 'json' if output_format == 'json' else 'xlsx'
             output = f"malva_results_{job_id}.{extension}"
             _save_results_to_file(results, output, output_format)
@@ -302,7 +300,6 @@ def history(ctx, limit, export):
             console.print("[yellow]No search history found[/yellow]")
             return
         
-        # Create history table
         table = Table(title="Search History")
         table.add_column("Date", style="cyan")
         table.add_column("Query", style="white", max_width=40)
@@ -348,7 +345,6 @@ def quota(ctx):
         
         quota_data = client.get_quota_status()
         
-        # Create quota table
         table = Table(title="API Quota Status")
         table.add_column("Property", style="cyan")
         table.add_column("Value", style="white")
@@ -364,8 +360,7 @@ def quota(ctx):
             table.add_row("Reset Time", quota_data['reset_time'])
         
         console.print(table)
-        
-        # Warning if quota is low
+
         if remaining <= 2:
             console.print("[yellow]Warning: Low quota remaining![/yellow]")
         
@@ -403,7 +398,6 @@ def cleanup(ctx, days):
         cleanup_old_data(days)
         console.print(f"[green]Cleaned up data older than {days} days[/green]")
 
-# Helper functions
 def _display_results_table(results):
     """Display search results in a table"""
     if hasattr(results, 'results') and results.results:
@@ -460,8 +454,7 @@ def _show_config(config):
         table.add_row(key.replace('_', ' ').title(), str(value) if value else "[dim]Not set[/dim]")
     
     console.print(table)
-    
-    # Show validation errors
+
     errors = config.validate()
     if errors:
         console.print("\n[red]Configuration Issues:[/red]")

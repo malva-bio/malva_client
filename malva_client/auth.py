@@ -1,8 +1,3 @@
-"""
-Authentication module for Malva client
-Handles interactive login and secure token storage
-"""
-
 import getpass
 import sys
 from typing import Optional

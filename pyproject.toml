@@ -43,6 +43,11 @@ rich = ">=13.0"
 pydantic = ">=1.8.0"
 keyring = ">=23.0.0"
 tqdm = ">=4.60.0"
+gprofiler-official = ">=1.0.0"
+matplotlib = ">=3.10.6"
+anndata = ">=0.12.2"
+seaborn = ">=0.13.2"
+dnaio= ">=1.2.3"
 
 [tool.poetry.dev-dependencies]
 pytest = ">=7.0.0"

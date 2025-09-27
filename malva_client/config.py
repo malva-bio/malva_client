@@ -17,7 +17,6 @@ class Config:
         """Load configuration from file or environment"""
         config = cls(config_path)
         
-        # Load from file if exists
         if config.config_path.exists():
             try:
                 with open(config.config_path) as f:
@@ -28,7 +27,6 @@ class Config:
             except Exception:
                 pass
         
-        # Override with environment variables
         config.server_url = os.environ.get('MALVA_API_URL', config.server_url)
         config.api_token = os.environ.get('MALVA_API_TOKEN', config.api_token)
         if 'MALVA_VERIFY_SSL' in os.environ:
