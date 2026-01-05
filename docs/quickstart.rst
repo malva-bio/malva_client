@@ -9,7 +9,7 @@ Get your API token from malva.mdc-berlin.de → Profile → Generate API Token
 .. code-block:: bash
 
    # Configure client
-   malva_client config --server https://malva.mdc-berlin.net --token YOUR_API_TOKEN
+   malva_client config --server https://malva.mdc-berlin.de --token YOUR_API_TOKEN
 
    # Or login interactively
    malva_client login
@@ -22,7 +22,7 @@ Python API
    from malva_client import MalvaClient
 
    # Initialize client
-   client = MalvaClient("https://malva.mdc-berlin.net", "YOUR_API_TOKEN")
+   client = MalvaClient("https://malva.mdc-berlin.de", "YOUR_API_TOKEN")
 
    # Search for genes or sequences
    results = client.search("BRCA1")

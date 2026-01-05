@@ -55,7 +55,7 @@ To access Malva programmatically, you have two options:
 
 ```bash
 # Configure client with your API token
-malva_client config --server https://malva.mdc-berlin.net --token YOUR_API_TOKEN
+malva_client config --server https://malva.mdc-berlin.de --token YOUR_API_TOKEN
 ```
 
 **Note**: The platform is currently in beta phase. Users receive 20 queries per day (extensible upon request).
@@ -101,7 +101,7 @@ from malva_client import MalvaClient
 
 # Initialize client
 API_TOKEN = "YOUR_API_TOKEN"  # Place your token here
-client = MalvaClient("https://malva.mdc-berlin.net", API_TOKEN)
+client = MalvaClient("https://malva.mdc-berlin.de", API_TOKEN)
 
 # Search for genes
 results = client.search("CD3D")

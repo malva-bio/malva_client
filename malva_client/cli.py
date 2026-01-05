@@ -116,7 +116,7 @@ def login(ctx):
         if not config.server_url:
             server_url = Prompt.ask(
                 "Enter Malva server URL",
-                default="https://malva.mdc-berlin.net"
+                default="https://malva.mdc-berlin.de"
             )
             config.server_url = server_url
         

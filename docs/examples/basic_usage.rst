@@ -8,7 +8,7 @@ Quick Start
 
     from malva_client import MalvaClient
     
-    client = MalvaClient("https://malva.mdc-berlin.net", "YOUR_TOKEN")
+    client = MalvaClient("https://malva.mdc-berlin.de", "YOUR_TOKEN")
     results = client.search("BRCA1")
 
 Search Examples

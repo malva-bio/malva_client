@@ -621,7 +621,7 @@ class MalvaClient:
 
 
 # Convenience functions for common operations
-def search_gene(gene: str, base_url: str = "https://malva.mdc-berlin.net") -> SearchResult:
+def search_gene(gene: str, base_url: str = "https://malva.mdc-berlin.de") -> SearchResult:
     """
     Quick gene search
     
@@ -636,7 +636,7 @@ def search_gene(gene: str, base_url: str = "https://malva.mdc-berlin.net") -> Se
     return client.search(gene)
 
 
-def search_sequence(sequence: str, base_url: str = "https://malva.mdc-berlin.net") -> SearchResult:
+def search_sequence(sequence: str, base_url: str = "https://malva.mdc-berlin.de") -> SearchResult:
     """
     Quick sequence search
     
