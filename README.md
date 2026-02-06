@@ -24,7 +24,7 @@ pip install malva-client scanpy
 Generate an API token at [malva.bio](https://malva.bio) (login with ORCID, then go to Profile > Generate API Token), then configure the client:
 
 ```bash
-malva_client config --server https://malva.bio --token YOUR_API_TOKEN
+malva_client config --server https://malva.mdc-berlin.de --token YOUR_API_TOKEN
 ```
 
 ## Quick Start (CLI)
@@ -40,7 +40,7 @@ malva_client search "CD4 T cells in brain tissue"
 ```python
 from malva_client import MalvaClient
 
-client = MalvaClient("https://malva.bio", "YOUR_API_TOKEN")
+client = MalvaClient("https://malva.mdc-berlin.de", "YOUR_API_TOKEN")
 
 # Search for genes, sequences, or natural language queries
 results = client.search("CD3D")

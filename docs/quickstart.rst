@@ -12,7 +12,7 @@ Get your API token from `malva.bio <https://malva.bio>`_ → Profile → Generat
 
       .. code-block:: bash
 
-         malva_client config --server https://malva.bio --token YOUR_API_TOKEN
+         malva_client config --server https://malva.mdc-berlin.de --token YOUR_API_TOKEN
 
    .. tab-item:: Environment Variable
 
@@ -39,7 +39,7 @@ Connecting
    client = MalvaClient()
 
    # Or pass credentials explicitly
-   client = MalvaClient("https://malva.bio", "YOUR_API_TOKEN")
+   client = MalvaClient("https://malva.mdc-berlin.de", "YOUR_API_TOKEN")
 
 Search Query Types
 ------------------
