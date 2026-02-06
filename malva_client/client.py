@@ -1019,8 +1019,10 @@ class MalvaClient:
             status = response.get('status')
 
             if status == 'completed':
-                response['region'] = region
-                return CoverageResult(response, self)
+                coverage_data = response.get('coverage_data', response)
+                coverage_data['job_id'] = job_id
+                coverage_data['region'] = region
+                return CoverageResult(coverage_data, self)
             elif status == 'error':
                 error_msg = response.get('error', 'Unknown error')
                 raise MalvaAPIError(f"Coverage job failed: {error_msg}")
@@ -1050,7 +1052,9 @@ class MalvaClient:
                     params[key] = [value] if value else []
 
         response = self._request('GET', f'/api/genome-browser/coverage/{job_id}', params=params)
-        return CoverageResult(response, self)
+        coverage_data = response.get('coverage_data', response)
+        coverage_data['job_id'] = job_id
+        return CoverageResult(coverage_data, self)
 
     def download_coverage_wig(self, job_id: str, output_path: str,
                               poll_interval: int = 2, max_wait: int = 120,
