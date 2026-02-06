@@ -55,18 +55,13 @@ Running a Search
 ----------------
 
 Malva accepts four kinds of queries.  Every search returns a
-:class:`~malva_client.models.SearchResult` object that wraps a pandas
-DataFrame, so you can filter, aggregate, and plot straight away.
+:class:`~malva_client.models.SearchResult` that wraps a pandas DataFrame,
+so you can filter, aggregate, and plot straight away.
 
-.. grid:: 2
-   :gutter: 3
+.. tab-set::
 
-   .. grid-item-card::
-      :class-card: sd-border-primary sd-rounded-3
-      :class-header: sd-bg-primary sd-text-white
+   .. tab-item:: Gene symbol
 
-      Gene Symbol
-      ^^^
       Search by gene name.  Malva resolves the symbol to its transcriptomic
       sequence and returns expression across all indexed samples.
 
@@ -76,12 +71,8 @@ DataFrame, so you can filter, aggregate, and plot straight away.
          result.enrich_with_metadata()
          result.plot_expression_summary("cell_type")
 
-   .. grid-item-card::
-      :class-card: sd-border-success sd-rounded-3
-      :class-header: sd-bg-success sd-text-white
+   .. tab-item:: Natural language
 
-      Natural Language
-      ^^^
       Free-text queries interpreted by Malva's query engine.  Describe the
       biology you are looking for.
 
@@ -91,14 +82,10 @@ DataFrame, so you can filter, aggregate, and plot straight away.
              "find cells with hallmarks of neurodegeneration"
          )
 
-   .. grid-item-card::
-      :class-card: sd-border-info sd-rounded-3
-      :class-header: sd-bg-info sd-text-white
+   .. tab-item:: DNA sequence
 
-      DNA Sequence
-      ^^^
-      Raw nucleotide sequences up to 500 kb.  Useful for probes, junctions,
-      viral sequences, or any arbitrary DNA.
+      Raw nucleotide sequences up to 500 kb.  Useful for probes, splice
+      junctions, viral sequences, or any arbitrary DNA.
 
       .. code-block:: python
 
@@ -106,13 +93,10 @@ DataFrame, so you can filter, aggregate, and plot straight away.
              "ATCGATCGATCGATCGATCGATCG"
          )
 
-   .. grid-item-card::
-      :class-card: sd-border-warning sd-rounded-3
-      :class-header: sd-bg-warning sd-text-dark
+   .. tab-item:: Batch
 
-      Batch Search
-      ^^^
-      Query multiple sequences or genes in a single API call.
+      Query multiple sequences or genes in a single API call.  See
+      :ref:`batch-searches` below for details on working with the results.
 
       .. code-block:: python
 
@@ -122,6 +106,9 @@ DataFrame, so you can filter, aggregate, and plot straight away.
          ])
 
          result = client.search_genes(["BRCA1", "TP53"])
+
+
+.. _batch-searches:
 
 Batch Searches
 --------------
@@ -256,7 +243,13 @@ By default, Malva aggregates expression per sample and cell type.  Use
 Coverage Analysis
 -----------------
 
-Visualize k-mer coverage across a genomic region or an arbitrary sequence:
+The coverage API returns k-mer match density across a genomic region or
+an arbitrary sequence, broken down by cell type.  The result is a
+**position x cell-type matrix** that you can plot, convert to a DataFrame,
+or export as a WIG file.
+
+Basic usage
+^^^^^^^^^^^
 
 .. code-block:: python
 
@@ -269,8 +262,71 @@ Visualize k-mer coverage across a genomic region or an arbitrary sequence:
        "ATCGATCG" * 10, sequence_name="my_probe"
    )
    df = seq_cov.to_dataframe()
+   print(df.head())  # columns = cell types, index = positions
 
-   # Download as WIG for a genome browser
+Filtering by metadata
+^^^^^^^^^^^^^^^^^^^^^
+
+By default, coverage is aggregated across **all** samples in the
+database.  To restrict the analysis to a subset -- for example, only
+heart samples or a specific study -- pass ``metadata_filters`` at search
+time:
+
+.. code-block:: python
+
+   # Only heart samples
+   heart_cov = client.get_coverage(
+       "chr1", 1000000, 2000000,
+       metadata_filters={"organs": ["Heart"]}
+   )
+   heart_cov.plot()
+
+   # Only samples from a specific study
+   study_cov = client.get_coverage(
+       "chr1", 1000000, 2000000,
+       metadata_filters={"studies": ["Roussos-Human-10x3pv3"]}
+   )
+
+   # Combine filters
+   filtered_cov = client.get_coverage(
+       "chr1", 1000000, 2000000,
+       metadata_filters={
+           "organs": ["Brain"],
+           "disease": ["Normal"],
+       }
+   )
+
+.. note::
+
+   Metadata filters are applied **before** cell-type aggregation on the
+   server, so only matching samples contribute to the coverage matrix.
+   To discover which filter values are available for an existing job, use
+   ``coverage.get_filter_options()``.
+
+Plotting specific cell types
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Once you have a :class:`~malva_client.models.CoverageResult`, you can
+select which cell types to display:
+
+.. code-block:: python
+
+   coverage = client.get_coverage("chr1", 1000000, 2000000)
+
+   # Plot only selected cell types
+   coverage.plot(cell_types=["Neuron", "Astrocyte"])
+
+   # Convert to DataFrame for custom analysis
+   df = coverage.to_dataframe()
+   df[["Neuron", "Astrocyte"]].plot(title="Coverage comparison")
+
+Exporting as WIG
+^^^^^^^^^^^^^^^^
+
+Download coverage tracks for viewing in a genome browser:
+
+.. code-block:: python
+
    coverage.download_wig("coverage.wig")
 
 Dataset Discovery
