@@ -14,7 +14,7 @@ __email__ = "hello@malva.bio"
 __all__ = [
     'MalvaClient',
     'MalvaAPIError',
-    'AuthenticationError', 
+    'AuthenticationError',
     'SearchError',
     'QuotaExceededError',
     'ValidationError',
@@ -37,19 +37,19 @@ def __getattr__(name):
     if name == 'MalvaClient':
         from .client import MalvaClient
         return MalvaClient
-    
-    elif name in ('MalvaAPIError', 'AuthenticationError', 'SearchError', 
+
+    elif name in ('MalvaAPIError', 'AuthenticationError', 'SearchError',
                   'QuotaExceededError', 'ValidationError', 'ConfigurationError'):
         from .exceptions import (
-            MalvaAPIError, AuthenticationError, SearchError, 
+            MalvaAPIError, AuthenticationError, SearchError,
             QuotaExceededError, ValidationError, ConfigurationError
         )
         return locals()[name]
-    
+
     elif name in ('SearchResult', 'CoverageResult', 'SingleCellResult'):
         from .models import SearchResult, CoverageResult, SingleCellResult
         return locals()[name]
-    
+
     elif name == 'Config':
         from .config import Config
         return Config
@@ -57,11 +57,11 @@ def __getattr__(name):
     elif name in ('search_gene', 'search_sequence'):
         from .client import search_gene, search_sequence
         return locals()[name]
-    
+
     elif name in ('login', 'logout', 'get_stored_token'):
         from .auth import login, logout, get_stored_token
         return locals()[name]
-    
+
     else:
         raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
 
