@@ -1,41 +1,35 @@
 Installation
 ============
 
-Requirements
-------------
+Requires **Python 3.8+**.
 
-* Python 3.8+
-* pandas, requests, click, rich
+.. grid:: 2
 
-Install from PyPI
------------------
+   .. grid-item-card:: From PyPI
 
-.. code-block:: bash
+      .. code-block:: bash
 
-   pip install malva_client
+         pip install malva_client
 
-Install from source
+   .. grid-item-card:: From Source
+
+      .. code-block:: bash
+
+         git clone https://github.com/malva-bio/malva_client
+         cd malva_client
+         pip install -e .
+
+Verify Installation
 -------------------
 
 .. code-block:: bash
 
-   git clone https://github.com/malva-bio/malva_client
-   cd malva_client
-   pip install -e .
+   python -c "import malva_client; print(malva_client.__version__)"
 
-Dependencies
-------------
+.. grid:: 1
 
-Required dependencies:
+   .. grid-item-card:: Next Steps
+      :link: quickstart
+      :link-type: doc
 
-- requests>=2.25.0
-- pandas>=1.3.0
-- click>=8.0.0
-- rich>=10.0.0
-- keyring>=23.0.0
-
-Optional dependencies for full functionality:
-
-- openpyxl>=3.0.0 (Excel export)
-- anndata>=0.8.0 (sample downloads)
-- h5py>=3.0.0 (H5AD files)
+      Head to the :doc:`quickstart` guide to configure authentication and run your first search.

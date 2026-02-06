@@ -1,34 +1,52 @@
 About Malva
 ===========
 
-Overview
---------
-
 Malva is a genomic search platform that provides access to harmonized single-cell and spatial transcriptomics data. The platform enables researchers to search across thousands of samples for gene expression patterns, sequences, and biological signatures.
 
 Key Features
 ------------
 
-**Large Scale Data Access**
-   Access to over 7,000 single-cell samples across diverse tissues and conditions.
+.. grid:: 2
 
-**Real-time Search**
-   Instantaneous results without reprocessing raw data.
+   .. grid-item-card:: Large-Scale Data
+      :text-align: center
 
-**Multiple Query Types**
-   Support for gene symbols, natural language queries, and DNA sequences.
+      Access to over 7,000 single-cell samples across diverse tissues and conditions.
 
-**Harmonized Metadata**
-   Standardized metadata across studies for consistent analysis.
+   .. grid-item-card:: Real-time Search
+      :text-align: center
+
+      Instantaneous results without reprocessing raw data, powered by a k-mer index.
+
+   .. grid-item-card:: Multiple Query Types
+      :text-align: center
+
+      Gene symbols, natural language queries, DNA sequences, and batch search.
+
+   .. grid-item-card:: Harmonized Metadata
+      :text-align: center
+
+      Standardized metadata across studies for consistent cross-dataset analysis.
 
 Use Cases
 ---------
 
-- Gene expression analysis across studies
-- Biomarker discovery and validation
-- Cell type characterization
-- Disease signature identification
-- Comparative genomics research
+.. grid:: 3
+
+   .. grid-item-card:: Expression & Biomarkers
+      :text-align: center
+
+      Gene expression analysis, biomarker discovery, and cell-type characterization across studies.
+
+   .. grid-item-card:: Sequence Events
+      :text-align: center
+
+      Circular RNA detection, splice-junction discovery, SNV screening, and fusion transcript identification.
+
+   .. grid-item-card:: Pathogen & Rare Events
+      :text-align: center
+
+      Viral/bacterial transcript quantification and low-frequency sequence detection missed in individual studies.
 
 Data Sources
 ------------

@@ -17,11 +17,11 @@ Python client for the `Malva <https://malva.bio>`_ genomic search platform, enab
 
       Step-by-step Jupyter notebooks for common workflows.
 
-   .. grid-item-card:: Examples
-      :link: examples/index
+   .. grid-item-card:: Query Parameters
+      :link: query_parameters
       :link-type: doc
 
-      Code examples for search, coverage, and data access.
+      Tune window size, threshold, and strandedness for your use case.
 
    .. grid-item-card:: API Reference
       :link: api/modules
@@ -78,6 +78,7 @@ Quick Example
    about
    installation
    quickstart
+   query_parameters
 
 .. toctree::
    :maxdepth: 2
@@ -85,13 +86,6 @@ Quick Example
    :hidden:
 
    tutorials/index
-
-.. toctree::
-   :maxdepth: 2
-   :caption: Examples
-   :hidden:
-
-   examples/index
 
 .. toctree::
    :maxdepth: 2
