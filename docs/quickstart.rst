@@ -6,16 +6,27 @@ Authentication
 
 Get your API token from `malva.bio <https://malva.bio>`_ → Profile → Generate API Token.
 
-.. code-block:: bash
+.. tab-set::
 
-   # Configure via CLI
-   malva_client config --server https://malva.bio --token YOUR_API_TOKEN
+   .. tab-item:: CLI Config
 
-   # Or set an environment variable
-   export MALVA_API_TOKEN=YOUR_API_TOKEN
+      .. code-block:: bash
 
-   # Or login interactively (opens browser for ORCID authentication)
-   malva_client login
+         malva_client config --server https://malva.bio --token YOUR_API_TOKEN
+
+   .. tab-item:: Environment Variable
+
+      .. code-block:: bash
+
+         export MALVA_API_TOKEN=YOUR_API_TOKEN
+
+   .. tab-item:: Interactive Login
+
+      .. code-block:: bash
+
+         malva_client login
+
+      Opens a browser window for ORCID authentication.
 
 Connecting
 ----------
@@ -34,72 +45,74 @@ Search Query Types
 ------------------
 
 .. grid:: 2
+   :gutter: 3
 
-   .. grid-item-card:: Gene Symbol
-      :text-align: center
+   .. grid-item-card::
+      :class-card: sd-border-primary sd-rounded-3
+      :class-header: sd-bg-primary sd-text-white
 
-      Search by gene name — ``"BRCA1"``, ``"TP53"``
+      Gene Symbol
+      ^^^
+      Search by gene name. Malva resolves the symbol to its transcriptomic
+      sequence and returns expression across all indexed samples.
 
-   .. grid-item-card:: Natural Language
-      :text-align: center
+      .. code-block:: python
 
-      Free-text queries — ``"CD4 T cells in brain tissue"``
+         results = client.search("BRCA1")
+         results.enrich_with_metadata()
+         results.plot_expression_summary("cell_type")
 
-   .. grid-item-card:: DNA Sequence
-      :text-align: center
+   .. grid-item-card::
+      :class-card: sd-border-success sd-rounded-3
+      :class-header: sd-bg-success sd-text-white
 
-      Raw nucleotide sequences up to 500 kb
+      Natural Language
+      ^^^
+      Free-text queries interpreted by Malva's query engine. Describe the
+      biology you are looking for.
 
-   .. grid-item-card:: Batch Search
-      :text-align: center
+      .. code-block:: python
 
-      Multiple sequences in a single call via ``search_sequences()``
+         results = client.search(
+             "find cells with hallmarks of neurodegeneration"
+         )
 
-Gene Search
-^^^^^^^^^^^
+   .. grid-item-card::
+      :class-card: sd-border-info sd-rounded-3
+      :class-header: sd-bg-info sd-text-white
 
-.. code-block:: python
+      DNA Sequence
+      ^^^
+      Raw nucleotide sequences up to 500 kb. Useful for probes, junctions,
+      viral sequences, or any arbitrary DNA.
 
-   results = client.search("BRCA1")
-   results.enrich_with_metadata()
-   results.plot_expression_summary("cell_type")
+      .. code-block:: python
 
-Natural Language Search
-^^^^^^^^^^^^^^^^^^^^^^^
+         results = client.search_sequence(
+             "ATCGATCGATCGATCGATCGATCG"
+         )
 
-.. code-block:: python
+   .. grid-item-card::
+      :class-card: sd-border-warning sd-rounded-3
+      :class-header: sd-bg-warning sd-text-dark
 
-   results = client.search("find cells with hallmarks of neurodegeneration")
+      Batch Search
+      ^^^
+      Query multiple sequences or genes at once. Each sequence counts as one
+      API query against your quota.
 
-Sequence Search
-^^^^^^^^^^^^^^^
+      .. code-block:: python
 
-.. code-block:: python
+         # Multiple genes
+         results = client.search_genes(["BRCA1", "TP53"])
 
-   results = client.search_sequence("ATCGATCGATCGATCGATCGATCG")
-
-Multi-gene Search
-^^^^^^^^^^^^^^^^^
-
-.. code-block:: python
-
-   results = client.search_genes(["BRCA1", "TP53"])
-
-Batch Sequence Search
-^^^^^^^^^^^^^^^^^^^^^
-
-Each sequence counts as one API query.
-
-.. code-block:: python
-
-   seqs = [
-       "ATCGATCGATCGATCGATCGATCG",
-       "GCTAGCTAGCTAGCTAGCTAGCTA",
-   ]
-   batch = client.search_sequences(seqs)
-
-   for seq, result in batch.items():
-       print(seq[:20], "→", result)
+         # Multiple sequences
+         batch = client.search_sequences([
+             "ATCGATCGATCGATCGATCGATCG",
+             "GCTAGCTAGCTAGCTAGCTAGCTA",
+         ])
+         for seq, result in batch.items():
+             print(seq[:20], result)
 
 Tuning Search Parameters
 -------------------------
@@ -108,20 +121,31 @@ Malva's index uses fixed-length k-mers (k = 24).  Two parameters let you
 control the sensitivity/specificity trade-off:
 
 * **window_size** — number of consecutive k-mers evaluated per sliding window
-* **threshold** — fraction of k-mers in a window that must match (0.0–1.0)
+* **threshold** — fraction of k-mers in a window that must match (0.0--1.0)
 
 See :doc:`query_parameters` for recommended values per use case.
 
-.. code-block:: python
+.. tab-set::
 
-   # Transcript expression (default-like, permissive)
-   results = client.search("BRCA1", window_size=96, threshold=0.55)
+   .. tab-item:: Expression (permissive)
 
-   # Splice junction / exact match
-   results = client.search_sequence(junction_seq, window_size=24, threshold=1.0)
+      .. code-block:: python
 
-   # Strand-specific search
-   results = client.search_sequence(probe, stranded=True)
+         results = client.search("BRCA1", window_size=96, threshold=0.55)
+
+   .. tab-item:: Exact match (junctions / SNVs)
+
+      .. code-block:: python
+
+         results = client.search_sequence(
+             junction_seq, window_size=24, threshold=1.0
+         )
+
+   .. tab-item:: Strand-specific
+
+      .. code-block:: python
+
+         results = client.search_sequence(probe, stranded=True)
 
 Working with Results
 --------------------
@@ -169,7 +193,9 @@ Visualize k-mer coverage across a genomic region or arbitrary sequence.
    coverage.plot()
 
    # Arbitrary sequence
-   seq_cov = client.get_sequence_coverage("ATCGATCG" * 10, sequence_name="my_probe")
+   seq_cov = client.get_sequence_coverage(
+       "ATCGATCG" * 10, sequence_name="my_probe"
+   )
    df = seq_cov.to_dataframe()
 
    # Download as WIG for genome browser
@@ -199,7 +225,7 @@ Submit a search without blocking, then retrieve results later.
 
    job_id = client.submit_search("FOXP3")
 
-   # … do other work …
+   # ... do other work ...
 
    status = client.get_job_status(job_id)
    if status["status"] == "completed":

@@ -19,59 +19,62 @@ control this sensitivity/specificity trade-off.
 Parameters
 ----------
 
-Window Size (w)
-^^^^^^^^^^^^^^^
+.. grid:: 3
+   :gutter: 3
 
-The number of consecutive k-mers evaluated per sliding window.  Because each
-k-mer is 24 nt, a window of *w* k-mers covers a stretch of *w + 23*
-nucleotides.
+   .. grid-item-card::
+      :class-card: sd-border-primary sd-rounded-3
+      :class-header: sd-bg-primary sd-text-white
 
-* **Larger windows** (64–120) integrate signal over longer regions, making the
-  search more robust to sequencing errors and local mismatches. Best for
-  transcript-level expression queries.
-* **Smaller windows** (24) require every k-mer in the window to originate from
-  a contiguous short region.  Best for detecting exact events such as splice
-  junctions, back-splice junctions (circRNAs), or single-nucleotide variants.
+      Window Size (w)
+      ^^^
+      Number of consecutive k-mers per sliding window.  A window of *w* k-mers
+      covers *w + 23* nucleotides.
 
-Threshold (tau)
-^^^^^^^^^^^^^^^
+      * **Larger** (64--120) — robust to mismatches, best for expression
+      * **Smaller** (24) — contiguous region, best for junctions/SNVs
 
-The minimum fraction of k-mers in a window that must match (0.0–1.0).
+   .. grid-item-card::
+      :class-card: sd-border-success sd-rounded-3
+      :class-header: sd-bg-success sd-text-white
 
-* **Lower thresholds** (0.5–0.65) tolerate mismatches and are suitable for
-  expression-level quantification where partial matches still indicate
-  transcript presence.
-* **Higher thresholds** (0.9–1.0) demand near-exact or exact matches,
-  appropriate for junction detection, SNV screening, and other cases where
-  sequence identity is critical.
+      Threshold (tau)
+      ^^^
+      Minimum fraction of k-mers in a window that must match (0.0--1.0).
 
-Strandedness
-^^^^^^^^^^^^
+      * **Lower** (0.5--0.65) — tolerates mismatches, expression queries
+      * **Higher** (0.9--1.0) — near-exact, junctions/SNV screening
 
-By default, Malva searches both the forward and reverse-complement strands.
-Set ``stranded=True`` to restrict the search to the forward strand only.
-This is useful when:
+   .. grid-item-card::
+      :class-card: sd-border-info sd-rounded-3
+      :class-header: sd-bg-info sd-text-white
 
-* Your probe or query is strand-specific (e.g., antisense oligos).
-* You want to distinguish sense vs. antisense transcription.
+      Strandedness
+      ^^^
+      By default both strands are searched.  Set ``stranded=True`` to restrict
+      to the forward strand only.
+
+      Useful for antisense oligos or distinguishing sense vs. antisense
+      transcription.
 
 Recommended Parameters
 ----------------------
 
-The table below summarizes recommended settings for common use cases
+The table below summarises recommended settings for common use cases
 (based on Supplementary Table 2 of the Malva manuscript).
 
 .. list-table::
    :header-rows: 1
    :widths: 30 20 20 30
+   :class: sd-table-hover
 
    * - Use Case
      - Window Size (w)
      - Threshold (tau)
      - Notes
    * - Transcript expression
-     - 64–120
-     - 0.50–0.65
+     - 64--120
+     - 0.50--0.65
      - Default-like; tolerant of mismatches
    * - Splice junction detection
      - 24
@@ -84,59 +87,63 @@ The table below summarizes recommended settings for common use cases
    * - SNV / short variant detection
      - 24
      - 1.0
-     - Probe covers variant ± 12 nt
+     - Probe covers variant +/- 12 nt
    * - Isoform-level analysis
-     - 64–96
-     - 0.50–0.65
+     - 64--96
+     - 0.50--0.65
      - Use isoform-specific exon sequences
 
 Probe Design Guidelines
 -----------------------
 
-Transcript Expression
-^^^^^^^^^^^^^^^^^^^^^
+.. tab-set::
 
-Use the full coding sequence or a representative exon.  Larger windows
-average over local noise.
+   .. tab-item:: Transcript Expression
 
-.. code-block:: python
+      Use the full coding sequence or a representative exon.  Larger windows
+      average over local noise.
 
-   results = client.search("BRCA1", window_size=96, threshold=0.55)
+      .. code-block:: python
 
-Splice Junction Detection
-^^^^^^^^^^^^^^^^^^^^^^^^^^
+         results = client.search("BRCA1", window_size=96, threshold=0.55)
 
-Design a probe of ~48 nt centred on the junction (24 nt from each exon).
-Use ``window_size=24`` and ``threshold=1.0`` so only reads spanning the
-exact junction are counted.
+   .. tab-item:: Splice Junction
 
-.. code-block:: python
+      Design a probe of ~48 nt centred on the junction (24 nt from each exon).
+      Use ``window_size=24`` and ``threshold=1.0`` so only reads spanning the
+      exact junction are counted.
 
-   junction = "ACGTACGT" * 6  # 48 nt spanning junction
-   results = client.search_sequence(junction, window_size=24, threshold=1.0)
+      .. code-block:: python
 
-Circular RNA (Back-Splice Junction)
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+         junction = "ACGTACGT" * 6  # 48 nt spanning junction
+         results = client.search_sequence(
+             junction, window_size=24, threshold=1.0
+         )
 
-Same principle: design a probe that spans the back-splice junction and use
-exact matching.
+   .. tab-item:: Circular RNA (BSJ)
 
-.. code-block:: python
+      Same principle: design a probe that spans the back-splice junction and
+      use exact matching.
 
-   bsj_probe = "CTAG" * 12  # 48 nt across BSJ
-   results = client.search_sequence(bsj_probe, window_size=24, threshold=1.0)
+      .. code-block:: python
 
-SNV Detection
-^^^^^^^^^^^^^
+         bsj_probe = "CTAG" * 12  # 48 nt across BSJ
+         results = client.search_sequence(
+             bsj_probe, window_size=24, threshold=1.0
+         )
 
-Centre a 48 nt probe on the variant position.  The variant must fall within
-the window so that exact matching distinguishes reference from alternative
-alleles.
+   .. tab-item:: SNV Detection
 
-.. code-block:: python
+      Centre a 48 nt probe on the variant position.  The variant must fall
+      within the window so that exact matching distinguishes reference from
+      alternative alleles.
 
-   snv_probe = ref_context[:24] + alt_base + ref_context[25:48]
-   results = client.search_sequence(snv_probe, window_size=24, threshold=1.0)
+      .. code-block:: python
+
+         snv_probe = ref_context[:24] + alt_base + ref_context[25:48]
+         results = client.search_sequence(
+             snv_probe, window_size=24, threshold=1.0
+         )
 
 .. warning::
 

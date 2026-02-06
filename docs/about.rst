@@ -7,46 +7,82 @@ Key Features
 ------------
 
 .. grid:: 2
+   :gutter: 3
 
-   .. grid-item-card:: Large-Scale Data
-      :text-align: center
+   .. grid-item-card::
+      :class-card: sd-border-primary sd-rounded-3
+      :class-header: sd-bg-primary sd-text-white
 
-      Access to over 7,000 single-cell samples across diverse tissues and conditions.
+      Large-Scale Data
+      ^^^
+      Access to over 7,000 single-cell samples across diverse tissues,
+      conditions, and species — all queryable through a single API.
 
-   .. grid-item-card:: Real-time Search
-      :text-align: center
+   .. grid-item-card::
+      :class-card: sd-border-success sd-rounded-3
+      :class-header: sd-bg-success sd-text-white
 
-      Instantaneous results without reprocessing raw data, powered by a k-mer index.
+      Real-time Search
+      ^^^
+      Instantaneous results powered by a k-mer index.  No reprocessing of raw
+      data — just query and get answers.
 
-   .. grid-item-card:: Multiple Query Types
-      :text-align: center
+   .. grid-item-card::
+      :class-card: sd-border-info sd-rounded-3
+      :class-header: sd-bg-info sd-text-white
 
+      Multiple Query Types
+      ^^^
       Gene symbols, natural language queries, DNA sequences, and batch search.
+      From single genes to genome-scale probes.
 
-   .. grid-item-card:: Harmonized Metadata
-      :text-align: center
+   .. grid-item-card::
+      :class-card: sd-border-warning sd-rounded-3
+      :class-header: sd-bg-warning sd-text-dark
 
-      Standardized metadata across studies for consistent cross-dataset analysis.
+      Harmonized Metadata
+      ^^^
+      Standardized metadata across studies for consistent cross-dataset
+      analysis — cell types, organs, diseases, and more.
 
 Use Cases
 ---------
 
 .. grid:: 3
+   :gutter: 2
 
    .. grid-item-card:: Expression & Biomarkers
       :text-align: center
+      :class-card: sd-rounded-3 sd-shadow-sm
 
-      Gene expression analysis, biomarker discovery, and cell-type characterization across studies.
+      .. raw:: html
+
+         <div style="font-size: 2rem; margin-bottom: 0.5rem;">&#x1F9EC;</div>
+
+      Gene expression analysis, biomarker discovery, and cell-type
+      characterization across studies.
 
    .. grid-item-card:: Sequence Events
       :text-align: center
+      :class-card: sd-rounded-3 sd-shadow-sm
 
-      Circular RNA detection, splice-junction discovery, SNV screening, and fusion transcript identification.
+      .. raw:: html
+
+         <div style="font-size: 2rem; margin-bottom: 0.5rem;">&#x1F52C;</div>
+
+      Circular RNA detection, splice-junction discovery, SNV screening,
+      and fusion transcript identification.
 
    .. grid-item-card:: Pathogen & Rare Events
       :text-align: center
+      :class-card: sd-rounded-3 sd-shadow-sm
 
-      Viral/bacterial transcript quantification and low-frequency sequence detection missed in individual studies.
+      .. raw:: html
+
+         <div style="font-size: 2rem; margin-bottom: 0.5rem;">&#x1F9A0;</div>
+
+      Viral/bacterial transcript quantification and low-frequency sequence
+      detection missed in individual studies.
 
 Data Sources
 ------------
