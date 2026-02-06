@@ -1276,8 +1276,14 @@ class CoverageResult:
         if not self.coverage_matrix or not self.cell_types:
             return pd.DataFrame()
 
+        # Server returns coverage_matrix as (cell_types x positions);
+        # transpose to (positions x cell_types) for the DataFrame
+        matrix = np.array(self.coverage_matrix)
+        if matrix.ndim == 2 and matrix.shape[1] != len(self.cell_types):
+            matrix = matrix.T
+
         df = pd.DataFrame(
-            self.coverage_matrix,
+            matrix,
             columns=self.cell_types
         )
 
