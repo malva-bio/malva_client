@@ -395,41 +395,186 @@ class MalvaClient:
         
         return self.search(sequence, **kwargs)
 
-    def search_sequences(self, sequences: List[str], **kwargs) -> Dict[str, SearchResult]:
+    def search_sequences(self, sequences: List[str],
+                         wait_for_completion: bool = True,
+                         poll_interval: int = 2, max_wait: int = 300,
+                         aggregate_expression: bool = True) -> SearchResult:
         """
-        Search for multiple DNA sequences in batch
+        Search for multiple DNA sequences in a single batch request
 
-        Performs one search per sequence and returns a dictionary keyed by
-        each input sequence string.  Each query counts against your API quota.
+        Sends all sequences as FASTA content in one API call using the
+        ``fasta_sequences`` field. Only one search quota slot is consumed.
 
         Args:
             sequences: List of DNA sequences to search for
-            **kwargs: Additional arguments passed to search_sequence(), including
-                ``window_size``, ``threshold``, and ``stranded``
+            wait_for_completion: Whether to wait for results or return immediately
+            poll_interval: How often to check for completion (seconds)
+            max_wait: Maximum time to wait for completion (seconds)
+            aggregate_expression: Whether to aggregate expression by cell type
 
         Returns:
-            Dictionary mapping each sequence to its SearchResult
+            SearchResult object containing results for all sequences
         """
-        results: Dict[str, SearchResult] = {}
-        for i, seq in enumerate(sequences, 1):
-            logger.info(f"Searching sequence {i}/{len(sequences)} ({len(seq)} nt)")
-            results[seq] = self.search_sequence(seq, **kwargs)
-        return results
+        if not sequences:
+            raise ValueError("At least one sequence is required")
 
-    def search_genes(self, genes: List[str], **kwargs) -> SearchResult:
+        valid_nucleotides = set('ATGCUN')
+        total_nt = 0
+        for i, seq in enumerate(sequences):
+            if not seq:
+                raise ValueError(f"Sequence {i + 1} is empty")
+            if not all(c.upper() in valid_nucleotides for c in seq):
+                raise ValueError(
+                    f"Sequence {i + 1} contains invalid nucleotides. "
+                    "Only A, T, G, C, U, N are allowed."
+                )
+            total_nt += len(seq)
+
+        if total_nt > 100_000:
+            raise ValueError(
+                f"Total nucleotides ({total_nt:,}) exceed the 100,000 limit"
+            )
+
+        # Build FASTA content
+        fasta_lines = []
+        for i, seq in enumerate(sequences, 1):
+            fasta_lines.append(f">seq_{i}")
+            fasta_lines.append(seq)
+        fasta_content = "\n".join(fasta_lines) + "\n"
+
+        data = {
+            'query': 'batch sequence search',
+            'fasta_sequences': fasta_content,
+            'wait_for_completion': wait_for_completion,
+            'max_wait': max_wait,
+            'poll_interval': poll_interval,
+            'aggregate_expression': aggregate_expression,
+        }
+
+        logger.info(
+            f"Submitting batch search: {len(sequences)} sequences, "
+            f"{total_nt:,} total nucleotides"
+        )
+
+        response = self._request('POST', '/search', json=data)
+
+        if response.get('status') == 'completed':
+            logger.info(f"Batch search completed with job ID: {response['job_id']}")
+            return SearchResult(response['results'], self)
+
+        job_id = response['job_id']
+        logger.info(f"Batch search submitted with job ID: {job_id}")
+
+        if not wait_for_completion or response.get('status') == 'pending':
+            return SearchResult({'job_id': job_id, 'status': 'pending'}, self)
+
+        if not response.get('success', True):
+            error_msg = response.get('error', 'Unknown error')
+            raise MalvaAPIError(f"Batch search failed: {error_msg}")
+
+        start_time = time.time()
+        while time.time() - start_time < max_wait:
+            try:
+                results_response = self._request('GET', f'/search/{job_id}')
+                status = results_response.get('status')
+
+                logger.info(f"Batch search status: {status}")
+
+                if status == 'completed':
+                    logger.info(f"Batch search completed with job ID: {job_id}")
+                    return SearchResult(results_response.get('results', results_response), self)
+                elif status == 'error':
+                    error_msg = results_response.get('error', 'Unknown error')
+                    raise MalvaAPIError(f"Batch search failed: {error_msg}")
+
+            except MalvaAPIError as e:
+                if "404" in str(e) or "not found" in str(e).lower():
+                    pass
+                else:
+                    raise
+
+            time.sleep(poll_interval)
+
+        raise MalvaAPIError(f"Batch search timed out after {max_wait} seconds")
+
+    def search_genes(self, genes: List[str],
+                     wait_for_completion: bool = True,
+                     poll_interval: int = 2, max_wait: int = 300,
+                     aggregate_expression: bool = True) -> SearchResult:
         """
-        Search for multiple genes
+        Search for multiple genes in a single request
+
+        Sends a comma-separated gene list as the query string.
 
         Args:
-            genes: List of gene symbols
-            **kwargs: Additional arguments passed to search(), including
-                ``window_size``, ``threshold``, and ``stranded``
+            genes: List of gene symbols (e.g., ``["BRCA1", "TP53"]``)
+            wait_for_completion: Whether to wait for results or return immediately
+            poll_interval: How often to check for completion (seconds)
+            max_wait: Maximum time to wait for completion (seconds)
+            aggregate_expression: Whether to aggregate expression by cell type
 
         Returns:
             SearchResult object
         """
-        gene_query = f"expression of {', '.join(genes)}"
-        return self.search(gene_query, **kwargs)
+        if not genes:
+            raise ValueError("At least one gene is required")
+        if len(genes) > 10:
+            raise ValueError(
+                f"Too many genes ({len(genes)}). Maximum is 10 per request."
+            )
+
+        gene_query = ", ".join(genes)
+
+        data = {
+            'query': gene_query,
+            'wait_for_completion': wait_for_completion,
+            'max_wait': max_wait,
+            'poll_interval': poll_interval,
+            'aggregate_expression': aggregate_expression,
+        }
+
+        logger.info(f"Submitting gene search: {gene_query}")
+
+        response = self._request('POST', '/search', json=data)
+
+        if response.get('status') == 'completed':
+            logger.info(f"Gene search completed with job ID: {response['job_id']}")
+            return SearchResult(response['results'], self)
+
+        job_id = response['job_id']
+        logger.info(f"Gene search submitted with job ID: {job_id}")
+
+        if not wait_for_completion or response.get('status') == 'pending':
+            return SearchResult({'job_id': job_id, 'status': 'pending'}, self)
+
+        if not response.get('success', True):
+            error_msg = response.get('error', 'Unknown error')
+            raise MalvaAPIError(f"Gene search failed: {error_msg}")
+
+        start_time = time.time()
+        while time.time() - start_time < max_wait:
+            try:
+                results_response = self._request('GET', f'/search/{job_id}')
+                status = results_response.get('status')
+
+                logger.info(f"Gene search status: {status}")
+
+                if status == 'completed':
+                    logger.info(f"Gene search completed with job ID: {job_id}")
+                    return SearchResult(results_response.get('results', results_response), self)
+                elif status == 'error':
+                    error_msg = results_response.get('error', 'Unknown error')
+                    raise MalvaAPIError(f"Gene search failed: {error_msg}")
+
+            except MalvaAPIError as e:
+                if "404" in str(e) or "not found" in str(e).lower():
+                    pass
+                else:
+                    raise
+
+            time.sleep(poll_interval)
+
+        raise MalvaAPIError(f"Gene search timed out after {max_wait} seconds")
     
     def get_samples(self, page: int = 1, page_size: int = 50, 
                    filters: Dict[str, Any] = None, search_query: str = "") -> Dict[str, Any]:

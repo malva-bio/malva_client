@@ -106,13 +106,12 @@ Search Query Types
          # Multiple genes
          results = client.search_genes(["BRCA1", "TP53"])
 
-         # Multiple sequences
-         batch = client.search_sequences([
+         # Multiple sequences (single batch request)
+         result = client.search_sequences([
              "ATCGATCGATCGATCGATCGATCG",
              "GCTAGCTAGCTAGCTAGCTAGCTA",
          ])
-         for seq, result in batch.items():
-             print(seq[:20], result)
+         print(result)
 
 Tuning Search Parameters
 -------------------------
