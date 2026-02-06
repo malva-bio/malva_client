@@ -1,21 +1,22 @@
 [build-system]
-requires = ["poetry", "setuptools"]
-build-backend = "poetry.masonry.api"
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
 
-[tool.poetry]
-name = "malva_client"
+[project]
+name = "malva-client"
 version = "0.1.0"
 description = "Python client for Malva Index"
-license = "BSD-3"
+readme = "README.md"
+license = "BSD-3-Clause-Clear"
+requires-python = ">=3.8"
 authors = [
-    "Daniel León-Periñán <daniel.leonperinan@mdc-berlin.de>",
-    "Nikos Karaiskos <nikolaos.karaiskos@mdc-berlin.de>",
+    {name = "Daniel León-Periñán", email = "daniel.leonperinan@mdc-berlin.de"},
+    {name = "Nikos Karaiskos", email = "nikolaos.karaiskos@mdc-berlin.de"},
 ]
 maintainers = [
-    "Daniel León-Periñán <daniel.leonperinan@mdc-berlin.de>",
-    "Nikos Karaiskos <nikolaos.karaiskos@mdc-berlin.de>",
+    {name = "Daniel León-Periñán", email = "daniel.leonperinan@mdc-berlin.de"},
+    {name = "Nikos Karaiskos", email = "nikolaos.karaiskos@mdc-berlin.de"},
 ]
-readme = "README.md"
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Console",
@@ -33,36 +34,42 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Bio-Informatics",
     "Topic :: Scientific/Engineering :: Visualization",
 ]
+dependencies = [
+    "requests>=2.25.0",
+    "pandas>=1.0",
+    "click>=8.0.0",
+    "rich>=13.0",
+    "pydantic>=1.8.0",
+    "keyring>=23.0.0",
+    "tqdm>=4.60.0",
+    "gprofiler-official>=1.0.0",
+    "matplotlib>=3.5.0",
+    "anndata>=0.8.0",
+    "seaborn>=0.12.0",
+    "dnaio>=1.2.3",
+]
 
-[tool.poetry.dependencies]
-python = ">=3.8,<3.13"
-requests = ">=2.25.0"
-pandas = ">=1.0"
-click = ">=8.0.0"
-rich = ">=13.0"
-pydantic = ">=1.8.0"
-keyring = ">=23.0.0"
-tqdm = ">=4.60.0"
-gprofiler-official = ">=1.0.0"
-matplotlib = ">=3.10.6"
-anndata = ">=0.12.2"
-seaborn = ">=0.13.2"
-dnaio= ">=1.2.3"
+[project.optional-dependencies]
+docs = [
+    "sphinx>=7.0",
+    "furo>=2024.0",
+    "sphinx-autodoc-typehints>=1.25",
+    "sphinx-click>=5.0",
+    "sphinx-copybutton>=0.5",
+    "myst-parser>=2.0",
+    "sphinx-design>=0.5",
+    "nbsphinx>=0.9",
+    "pandoc",
+    "ipykernel",
+]
 
-[tool.poetry.dev-dependencies]
-pytest = ">=7.0.0"
-pytest-cov = ">=4.0.0"
-coverage = ">=7.0.0"
-black = ">=22.0.0"
-flake8 = ">=4.0.0"
+[project.urls]
+Documentation = "https://malva-client.readthedocs.io"
+Source = "https://github.com/malva-bio/malva_client"
+Homepage = "https://malva.bio"
 
-[tool.poetry.urls]
-"Documentation" = "https://rajewsky-lab.github.io/malva_client"
-"Source" = "https://github.com/rajewsky-lab/malva_client"
-"Home-page" = "https://rajewsky-lab.github.io/malva_client"
-
-[tool.poetry.scripts]
-malva_client = 'malva_client.cli:main'
+[project.scripts]
+malva_client = "malva_client.cli:main"
 
 [tool.coverage.run]
 source = ["malva_client"]

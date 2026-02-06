@@ -2,7 +2,12 @@
 Malva Client - Python client for the Malva genomic search platform
 """
 
-__version__ = "0.1.0"
+try:
+    from importlib.metadata import version as _get_version
+    __version__ = _get_version("malva-client")
+except Exception:
+    __version__ = "0.1.0"
+
 __author__ = "Malva Team"
 __email__ = "hello@malva.bio"
 
@@ -10,7 +15,7 @@ __email__ = "hello@malva.bio"
 __all__ = [
     'MalvaClient',
     'MalvaAPIError',
-    'AuthenticationError', 
+    'AuthenticationError',
     'SearchError',
     'QuotaExceededError',
     'ValidationError',
@@ -21,7 +26,6 @@ __all__ = [
     'Config',
     'search_gene',
     'search_sequence',
-    'get_coverage_for_region',
     'login',
     'logout',
     'get_stored_token'
@@ -34,31 +38,31 @@ def __getattr__(name):
     if name == 'MalvaClient':
         from .client import MalvaClient
         return MalvaClient
-    
-    elif name in ('MalvaAPIError', 'AuthenticationError', 'SearchError', 
+
+    elif name in ('MalvaAPIError', 'AuthenticationError', 'SearchError',
                   'QuotaExceededError', 'ValidationError', 'ConfigurationError'):
         from .exceptions import (
-            MalvaAPIError, AuthenticationError, SearchError, 
+            MalvaAPIError, AuthenticationError, SearchError,
             QuotaExceededError, ValidationError, ConfigurationError
         )
         return locals()[name]
-    
+
     elif name in ('SearchResult', 'CoverageResult', 'SingleCellResult'):
         from .models import SearchResult, CoverageResult, SingleCellResult
         return locals()[name]
-    
+
     elif name == 'Config':
         from .config import Config
         return Config
-    
-    elif name in ('search_gene', 'search_sequence', 'get_coverage_for_region'):
-        from .client import search_gene, search_sequence, get_coverage_for_region
+
+    elif name in ('search_gene', 'search_sequence'):
+        from .client import search_gene, search_sequence
         return locals()[name]
-    
+
     elif name in ('login', 'logout', 'get_stored_token'):
         from .auth import login, logout, get_stored_token
         return locals()[name]
-    
+
     else:
         raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
 
