@@ -3,9 +3,13 @@ import sys
 sys.path.insert(0, os.path.abspath('..'))
 
 project = 'Malva Client'
-copyright = '2025, Malva Team'
+copyright = '2025-2026, Malva Team'
 author = 'Malva Team'
-release = '0.1.0'
+try:
+    from importlib.metadata import version as _get_version
+    release = _get_version("malva_client")
+except Exception:
+    release = '0.2.0'
 
 extensions = [
     'sphinx.ext.autodoc',
@@ -16,7 +20,11 @@ extensions = [
     'myst_parser',
     'sphinx_click',
     'sphinx_copybutton',
+    'sphinx_design',
+    'nbsphinx',
 ]
+
+nbsphinx_execute = 'never'
 
 # FURO THEME
 html_theme = 'furo'
@@ -26,7 +34,7 @@ html_logo = "_static/malva_logo.svg"
 html_theme_options = {
     "sidebar_hide_name": False,
     "navigation_with_keys": True,
-    "source_repository": "https://github.com/malva_bio/malva_client/",
+    "source_repository": "https://github.com/malva-bio/malva_client/",
     "source_branch": "main",
     "source_directory": "docs/",
 }
@@ -48,3 +56,4 @@ napoleon_google_docstring = True
 napoleon_numpy_docstring = True
 source_suffix = {'.rst': None, '.md': 'myst_parser'}
 master_doc = 'index'
+html_search_language = 'en'

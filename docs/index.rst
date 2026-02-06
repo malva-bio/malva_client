@@ -1,112 +1,111 @@
-Malva Client Documentation
-==========================
+Malva Client
+============
 
-Python client for the Malva genomic search platform, enabling programmatic access to harmonized single-cell and spatial transcriptomics data.
+Python client for the `Malva <https://malva.bio>`_ genomic search platform, enabling programmatic access to harmonized single-cell and spatial transcriptomics data.
 
-Installation
+.. grid:: 2
+
+   .. grid-item-card:: Getting Started
+      :link: installation
+      :link-type: doc
+
+      Install the package and configure authentication.
+
+   .. grid-item-card:: Tutorials
+      :link: tutorials/index
+      :link-type: doc
+
+      Step-by-step Jupyter notebooks for common workflows.
+
+   .. grid-item-card:: Examples
+      :link: examples/index
+      :link-type: doc
+
+      Code examples for search, coverage, and data access.
+
+   .. grid-item-card:: API Reference
+      :link: api/modules
+      :link-type: doc
+
+      Full reference for all classes and methods.
+
+Key Features
 ------------
 
-.. code-block:: bash
+.. grid:: 3
 
-   pip install malva_client
+   .. grid-item-card:: Search
+      :text-align: center
 
-Quick Start
------------
+      Gene symbols, natural language, and DNA sequences.
 
-**Authentication**
+   .. grid-item-card:: Coverage
+      :text-align: center
 
-Get your API token from malva.mdc-berlin.de → Profile → Generate API Token
+      Genomic region and sequence coverage across cell types.
 
-.. code-block:: bash
+   .. grid-item-card:: Dataset Discovery
+      :text-align: center
 
-   # Configure client
-   malva_client config --server https://malva.mdc-berlin.de --token YOUR_TOKEN
+      Browse datasets, studies, samples, and metadata.
 
-   # Or login interactively
-   malva_client login
-
-**Python API**
+Quick Example
+-------------
 
 .. code-block:: python
 
    from malva_client import MalvaClient
 
-   # Initialize client
-   client = MalvaClient("https://malva.mdc-berlin.de", "YOUR_API_TOKEN")
+   client = MalvaClient("https://malva.bio", "YOUR_API_TOKEN")
 
-   # Search for genes or sequences
+   # Gene expression search
    results = client.search("BRCA1")
-   results = client.search("find cells with hallmarks of neurodegeneration")
-   results = client.search("ATCGATCGATCG")  # DNA sequence
+   results.enrich_with_metadata()
+   results.plot_expression_by("cell_type")
 
-   # Get coverage data
+   # Genomic coverage
    coverage = client.get_coverage("chr1", 1000000, 2000000)
+   coverage.plot()
 
-   # Download samples
-   sample = client.download_sample("sample-uuid")
-
-**Command Line Interface**
-
-.. code-block:: bash
-
-   # Search operations
-   malva_client search "BRCA1 expression"
-   malva_client search "CD4 T cells" --output results.csv --format csv
-
-   # Async operations
-   malva_client search "FOXP3" --no-wait  # Returns job ID
-   malva_client status <job_id>
-   malva_client results <job_id> --output results.xlsx
-
-   # Account management
-   malva_client quota
-   malva_client history
-   malva_client config --show
-
-Features
---------
-
-- **Gene symbols**: Search for specific genes like "BRCA1", "TP53"
-- **Natural language**: Use plain English queries like "find cells with neurodegeneration markers"
-- **DNA sequences**: Search for specific sequences like "ATCGATCGATCG"
-- **Coverage analysis**: Get expression coverage across genomic regions
-- **Sample downloads**: Access and download sample data
-
-Output Formats
---------------
-
-- CSV: ``--format csv``
-- JSON: ``--format json``
-- Excel: ``--format excel``
-- Table: ``--format table`` (default)
-
-Configuration
--------------
-
-Configuration via file (``~/.malva/config.json``), environment variables, or command line:
-
-.. code-block:: bash
-
-   # Environment variables
-   export MALVA_API_URL="https://malva.mdc-berlin.de"
-   export MALVA_API_TOKEN="your_token"
-
-   # Command line
-   malva_client config --server URL --token TOKEN
+   # Dataset hierarchy
+   hierarchy = client.get_datasets_hierarchy()
 
 .. toctree::
    :maxdepth: 2
-   :caption: Documentation
+   :caption: Guides
+   :hidden:
 
    about
    installation
    quickstart
-   api/modules
+
+.. toctree::
+   :maxdepth: 2
+   :caption: Tutorials
+   :hidden:
+
+   tutorials/index
+
+.. toctree::
+   :maxdepth: 2
+   :caption: Examples
+   :hidden:
+
    examples/index
+
+.. toctree::
+   :maxdepth: 2
+   :caption: API Reference
+   :hidden:
+
+   api/modules
 
 .. toctree::
    :maxdepth: 1
    :caption: Links
+   :hidden:
 
-   Malva Platform <https://malva.mdc-berlin.de>
-   GitHub Repository <https://github.com/malva_bio/malva_client>
+   Malva Platform <https://malva.bio>
+   GitHub <https://github.com/malva-bio/malva_client>
+   Malva Tools <https://malva.readthedocs.io>
+   Changelog <https://github.com/malva-bio/malva_client/blob/main/CHANGELOG.md>

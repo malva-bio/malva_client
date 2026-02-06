@@ -19,7 +19,7 @@ Install from source
 
 .. code-block:: bash
 
-   git clone https://github.com/malva_bio/malva_client
+   git clone https://github.com/malva-bio/malva_client
    cd malva_client
    pip install -e .
 
