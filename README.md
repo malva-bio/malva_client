@@ -59,6 +59,12 @@ See the [tutorials](https://malva-client.readthedocs.io/en/latest/tutorials.html
 
 For local indexing and quantification, see [Malva Tools](https://github.com/malva-bio/malva) (`malva` CLI).
 
+## Citation
+
+If you use Malva in your research, please cite:
+
+> [TBA]
+
 ## License
 
 The Clear BSD License - Copyright (c) 2025-2026 Malva
