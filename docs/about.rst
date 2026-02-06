@@ -36,15 +36,32 @@ Data Sources
 Malva integrates data from:
 
 - Human Cell Atlas datasets
-- Published single-cell studies  
+- Published single-cell studies
 - Spatial transcriptomics experiments
 - Disease-focused research cohorts
 
 All data is processed through standardized pipelines with consistent quality control and metadata annotation.
+
+Indexing Your Own Data
+----------------------
+
+For indexing and quantifying your own data locally, use **Malva Tools** (the ``malva`` command-line suite), not the Malva Client. Malva Tools provides local indexing, quantification, and analysis capabilities:
+
+.. code-block:: bash
+
+   # Index a reference transcriptome
+   malva index --fasta transcriptome.fa --output my_index
+
+   # Quantify single-cell data against the index
+   malva quant --index my_index --reads sample_R2.fastq.gz --output counts.h5ad
+
+Malva Tools documentation: `malva.readthedocs.io <https://malva.readthedocs.io>`_
+
+Malva Tools source code: `github.com/malva-bio/malva <https://github.com/malva-bio/malva>`_
 
 Contact
 -------
 
 For questions or support, contact the Malva team at hello@malva.bio.
 
-More information available at `malva.mdc-berlin.de <https://malva.mdc-berlin.de>`_.
+More information available at `malva.bio <https://malva.bio>`_.
