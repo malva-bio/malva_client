@@ -2,8 +2,8 @@
 requires = ["setuptools>=45", "wheel"]
 build-backend = "setuptools.build_meta"
 
-[tool.poetry]
-name = "malva_client"
+[project]
+name = "malva-client"
 version = "0.2.0"
 description = "Python client for Malva Index"
 readme = "README.md"
