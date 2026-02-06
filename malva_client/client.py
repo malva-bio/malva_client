@@ -937,7 +937,7 @@ class MalvaClient:
             chr: Chromosome name (e.g., 'chr1')
             start: Start position
             end: End position
-            strand: Strand ('+' or '-')
+            strand: Strand ('+', '-', or 'both')
             zoom: Zoom level for binning
             metadata_filters: Optional metadata filters (e.g., {'organ': ['brain']})
             poll_interval: How often to check for completion (seconds)
@@ -946,11 +946,14 @@ class MalvaClient:
         Returns:
             CoverageResult object
         """
+        # Map +/- notation to server's expected format
+        strand_map = {'+': 'forward', '-': 'reverse', 'both': 'both',
+                      'forward': 'forward', 'reverse': 'reverse'}
         data = {
             'chromosome': chr,
             'start': start,
             'end': end,
-            'strand': strand,
+            'strand': strand_map.get(strand, 'both'),
             'zoom_level': zoom,
         }
         if metadata_filters:
