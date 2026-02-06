@@ -458,7 +458,7 @@ class MalvaClient:
                 else:
                     params[key] = [value] if value else []
         
-        return self._request('GET', '/samples/search', params=params)
+        return self._request('GET', '/samples/api/search', params=params)
     
     def search_samples(self, query: str = "", organ: List[str] = None, 
                       species: List[str] = None, study: List[str] = None,
@@ -522,7 +522,7 @@ class MalvaClient:
         Returns:
             DataFrame containing study information
         """
-        response = self._request('GET', '/samples/studies/summary')
+        response = self._request('GET', '/samples/api/studies')
         studies = response.get('studies', [])
         return pd.DataFrame(studies)
     
@@ -686,7 +686,7 @@ class MalvaClient:
     
     def get_available_filters(self) -> Dict[str, Any]:
         """Get available filter options for samples"""
-        return self._request('GET', '/samples/available-filters')
+        return self._request('GET', '/samples/api/filters')
 
     def submit_search(self, query: str, aggregate_expression: bool = True,
                       window_size: Optional[int] = None,
@@ -951,7 +951,7 @@ class MalvaClient:
             'start': start,
             'end': end,
             'strand': strand,
-            'zoom': zoom,
+            'zoom_level': zoom,
         }
         if metadata_filters:
             data['metadata_filters'] = metadata_filters
@@ -1120,7 +1120,7 @@ class MalvaClient:
         Returns:
             Dictionary with the full hierarchy tree
         """
-        return self._request('GET', '/datasets/hierarchy')
+        return self._request('GET', '/samples/api/datasets/hierarchy')
 
     def get_dataset_studies(self, dataset_id: str,
                             page: int = 1, page_size: int = 50) -> Dict[str, Any]:
@@ -1136,7 +1136,7 @@ class MalvaClient:
             Dictionary with studies and pagination info
         """
         params = {'page': page, 'page_size': page_size}
-        return self._request('GET', f'/datasets/{dataset_id}/studies', params=params)
+        return self._request('GET', f'/samples/api/datasets/{dataset_id}/studies', params=params)
 
     def get_study_samples(self, dataset_id: str, study_name: str,
                           page: int = 1, page_size: int = 50) -> Dict[str, Any]:
@@ -1153,7 +1153,7 @@ class MalvaClient:
             Dictionary with samples and pagination info
         """
         params = {'page': page, 'page_size': page_size}
-        return self._request('GET', f'/datasets/{dataset_id}/studies/{study_name}/samples',
+        return self._request('GET', f'/samples/api/datasets/{dataset_id}/studies/{study_name}/samples',
                              params=params)
 
     def get_sample_details(self, sample_uuid: str) -> Dict[str, Any]:
@@ -1166,7 +1166,7 @@ class MalvaClient:
         Returns:
             Dictionary with complete sample metadata
         """
-        return self._request('GET', f'/samples/{sample_uuid}/metadata')
+        return self._request('GET', f'/samples/api/sample/{sample_uuid}')
 
     def get_filter_values(self, column: str, search: str = '',
                           limit: int = 50) -> List[str]:
@@ -1181,10 +1181,10 @@ class MalvaClient:
         Returns:
             List of unique values for the column
         """
-        params = {'column': column, 'limit': limit}
+        params = {'limit': limit}
         if search:
             params['search'] = search
-        response = self._request('GET', '/samples/filters/search', params=params)
+        response = self._request('GET', f'/samples/api/filters/{column}/values', params=params)
         return response.get('values', [])
 
     def get_overview_stats(self) -> Dict[str, Any]:
@@ -1194,7 +1194,7 @@ class MalvaClient:
         Returns:
             Dictionary with overview statistics (total samples, studies, etc.)
         """
-        return self._request('GET', '/samples/stats/overview')
+        return self._request('GET', '/samples/api/overview')
 
 
 # Convenience functions for common operations
