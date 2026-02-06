@@ -211,8 +211,8 @@ Browse the dataset → study → sample hierarchy.
    hierarchy = client.get_datasets_hierarchy()
 
    studies = client.get_dataset_studies("human_cell_atlas")
-   samples = client.get_study_samples("human_cell_atlas", "Smith2023")
-   details = client.get_sample_details("sample-uuid")
+   samples = client.get_study_samples("human_cell_atlas", "Roussos-Human-10x3pv3")
+   details = client.get_sample_details("34f13021-4ea8-4fae-b990-33b4d6442621")
 
    stats = client.get_overview_stats()
 
