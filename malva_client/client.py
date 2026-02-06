@@ -11,7 +11,7 @@ import h5py
 import anndata as ad
 
 from malva_client.exceptions import MalvaAPIError, AuthenticationError, SearchError, QuotaExceededError
-from malva_client.models import SearchResult, SingleCellResult
+from malva_client.models import SearchResult, SingleCellResult, CoverageResult
 from malva_client.config import Config
 
 logging.basicConfig(level=logging.INFO)
@@ -164,20 +164,34 @@ class MalvaClient:
         except requests.exceptions.RequestException as e:
             raise MalvaAPIError(f"Request failed: {e}")
 
-    def search(self, query: str, wait_for_completion: bool = True, 
-               poll_interval: int = 2, max_wait: int = 300, aggregate_expression: bool = True) -> SearchResult:
+    def search(self, query: str, wait_for_completion: bool = True,
+               poll_interval: int = 2, max_wait: int = 300, aggregate_expression: bool = True,
+               window_size: Optional[int] = None,
+               threshold: Optional[float] = None,
+               stranded: Optional[bool] = None) -> SearchResult:
         """
         Perform a natural language or gene search
-        
+
         Args:
             query: Natural language query or gene symbol (e.g., "BRCA1 expression in cancer")
             wait_for_completion: Whether to wait for results or return immediately
             poll_interval: How often to check for completion (seconds)
             max_wait: Maximum time to wait for completion (seconds)
-            
+            aggregate_expression: Whether to aggregate expression by cell type
+            window_size: Sliding window size in k-mers. Controls how many consecutive
+                k-mers are evaluated per window. Larger values suit transcript-level
+                queries; smaller values (e.g., 24) suit junction or SNV detection.
+            threshold: Match threshold between 0.0 and 1.0. Fraction of k-mers in
+                a window that must match. Lower values allow more mismatches.
+            stranded: If True, restrict search to the forward strand only.
+
         Returns:
             SearchResult object containing the results
         """
+        if window_size is not None and window_size < 1:
+            raise ValueError("window_size must be a positive integer")
+        if threshold is not None and not (0.0 <= threshold <= 1.0):
+            raise ValueError("threshold must be between 0.0 and 1.0")
 
         data = {
             'query': query,
@@ -186,6 +200,12 @@ class MalvaClient:
             'poll_interval': poll_interval,
             'aggregate_expression': aggregate_expression
         }
+        if window_size is not None:
+            data['window_size'] = window_size
+        if threshold is not None:
+            data['threshold'] = threshold
+        if stranded is not None:
+            data['stranded'] = stranded
         
         response = self._request('POST', '/search', json=data)
         
@@ -254,10 +274,30 @@ class MalvaClient:
                 print(f"{spacing}{key}: {value}")
 
     def search_cells(self, query: str, wait_for_completion: bool = True,
-                    poll_interval: int = 2, max_wait: int = 300) -> SingleCellResult:
+                    poll_interval: int = 2, max_wait: int = 300,
+                    window_size: Optional[int] = None,
+                    threshold: Optional[float] = None,
+                    stranded: Optional[bool] = None) -> SingleCellResult:
         """
         Perform a natural language or gene search and returns individual cells
+
+        Args:
+            query: Natural language query, gene symbol, or DNA sequence
+            wait_for_completion: Whether to wait for results or return immediately
+            poll_interval: How often to check for completion (seconds)
+            max_wait: Maximum time to wait for completion (seconds)
+            window_size: Sliding window size in k-mers (see :doc:`query_parameters`)
+            threshold: Match threshold between 0.0 and 1.0
+            stranded: If True, restrict search to the forward strand only
+
+        Returns:
+            SingleCellResult object with cell-level resolution
         """
+        if window_size is not None and window_size < 1:
+            raise ValueError("window_size must be a positive integer")
+        if threshold is not None and not (0.0 <= threshold <= 1.0):
+            raise ValueError("threshold must be between 0.0 and 1.0")
+
         data = {
             'query': query,
             'wait_for_completion': wait_for_completion,
@@ -265,6 +305,12 @@ class MalvaClient:
             'poll_interval': poll_interval,
             'aggregate_expression': False
         }
+        if window_size is not None:
+            data['window_size'] = window_size
+        if threshold is not None:
+            data['threshold'] = threshold
+        if stranded is not None:
+            data['stranded'] = stranded
         
         response = self._request('POST', '/search', json=data)
         
@@ -331,11 +377,12 @@ class MalvaClient:
     def search_sequence(self, sequence: str, **kwargs) -> SearchResult:
         """
         Search for a specific DNA sequence
-        
+
         Args:
             sequence: DNA sequence to search for
-            **kwargs: Additional arguments passed to search()
-            
+            **kwargs: Additional arguments passed to search(), including
+                ``window_size``, ``threshold``, and ``stranded``
+
         Returns:
             SearchResult object
         """
@@ -347,20 +394,187 @@ class MalvaClient:
             raise ValueError("Sequence contains invalid nucleotides. Only A, T, G, C, U, N are allowed.")
         
         return self.search(sequence, **kwargs)
-    
-    def search_genes(self, genes: List[str], **kwargs) -> SearchResult:
+
+    def search_sequences(self, sequences: List[str],
+                         wait_for_completion: bool = True,
+                         poll_interval: int = 2, max_wait: int = 300,
+                         aggregate_expression: bool = True) -> SearchResult:
         """
-        Search for multiple genes
-        
+        Search for multiple DNA sequences in a single batch request
+
+        Sends all sequences as FASTA content in one API call using the
+        ``fasta_sequences`` field. Only one search quota slot is consumed.
+
         Args:
-            genes: List of gene symbols
-            **kwargs: Additional arguments passed to search()
-            
+            sequences: List of DNA sequences to search for
+            wait_for_completion: Whether to wait for results or return immediately
+            poll_interval: How often to check for completion (seconds)
+            max_wait: Maximum time to wait for completion (seconds)
+            aggregate_expression: Whether to aggregate expression by cell type
+
+        Returns:
+            SearchResult object containing results for all sequences
+        """
+        if not sequences:
+            raise ValueError("At least one sequence is required")
+
+        valid_nucleotides = set('ATGCUN')
+        total_nt = 0
+        for i, seq in enumerate(sequences):
+            if not seq:
+                raise ValueError(f"Sequence {i + 1} is empty")
+            if not all(c.upper() in valid_nucleotides for c in seq):
+                raise ValueError(
+                    f"Sequence {i + 1} contains invalid nucleotides. "
+                    "Only A, T, G, C, U, N are allowed."
+                )
+            total_nt += len(seq)
+
+        if total_nt > 100_000:
+            raise ValueError(
+                f"Total nucleotides ({total_nt:,}) exceed the 100,000 limit"
+            )
+
+        # Build FASTA content
+        fasta_lines = []
+        for i, seq in enumerate(sequences, 1):
+            fasta_lines.append(f">seq_{i}")
+            fasta_lines.append(seq)
+        fasta_content = "\n".join(fasta_lines) + "\n"
+
+        data = {
+            'query': 'batch sequence search',
+            'fasta_sequences': fasta_content,
+            'wait_for_completion': wait_for_completion,
+            'max_wait': max_wait,
+            'poll_interval': poll_interval,
+            'aggregate_expression': aggregate_expression,
+        }
+
+        logger.info(
+            f"Submitting batch search: {len(sequences)} sequences, "
+            f"{total_nt:,} total nucleotides"
+        )
+
+        response = self._request('POST', '/search', json=data)
+
+        if response.get('status') == 'completed':
+            logger.info(f"Batch search completed with job ID: {response['job_id']}")
+            return SearchResult(response['results'], self)
+
+        job_id = response['job_id']
+        logger.info(f"Batch search submitted with job ID: {job_id}")
+
+        if not wait_for_completion or response.get('status') == 'pending':
+            return SearchResult({'job_id': job_id, 'status': 'pending'}, self)
+
+        if not response.get('success', True):
+            error_msg = response.get('error', 'Unknown error')
+            raise MalvaAPIError(f"Batch search failed: {error_msg}")
+
+        start_time = time.time()
+        while time.time() - start_time < max_wait:
+            try:
+                results_response = self._request('GET', f'/search/{job_id}')
+                status = results_response.get('status')
+
+                logger.info(f"Batch search status: {status}")
+
+                if status == 'completed':
+                    logger.info(f"Batch search completed with job ID: {job_id}")
+                    return SearchResult(results_response.get('results', results_response), self)
+                elif status == 'error':
+                    error_msg = results_response.get('error', 'Unknown error')
+                    raise MalvaAPIError(f"Batch search failed: {error_msg}")
+
+            except MalvaAPIError as e:
+                if "404" in str(e) or "not found" in str(e).lower():
+                    pass
+                else:
+                    raise
+
+            time.sleep(poll_interval)
+
+        raise MalvaAPIError(f"Batch search timed out after {max_wait} seconds")
+
+    def search_genes(self, genes: List[str],
+                     wait_for_completion: bool = True,
+                     poll_interval: int = 2, max_wait: int = 300,
+                     aggregate_expression: bool = True) -> SearchResult:
+        """
+        Search for multiple genes in a single request
+
+        Sends a comma-separated gene list as the query string.
+
+        Args:
+            genes: List of gene symbols (e.g., ``["BRCA1", "TP53"]``)
+            wait_for_completion: Whether to wait for results or return immediately
+            poll_interval: How often to check for completion (seconds)
+            max_wait: Maximum time to wait for completion (seconds)
+            aggregate_expression: Whether to aggregate expression by cell type
+
         Returns:
             SearchResult object
         """
-        gene_query = f"expression of {', '.join(genes)}"
-        return self.search(gene_query, **kwargs)
+        if not genes:
+            raise ValueError("At least one gene is required")
+        if len(genes) > 10:
+            raise ValueError(
+                f"Too many genes ({len(genes)}). Maximum is 10 per request."
+            )
+
+        gene_query = ", ".join(genes)
+
+        data = {
+            'query': gene_query,
+            'wait_for_completion': wait_for_completion,
+            'max_wait': max_wait,
+            'poll_interval': poll_interval,
+            'aggregate_expression': aggregate_expression,
+        }
+
+        logger.info(f"Submitting gene search: {gene_query}")
+
+        response = self._request('POST', '/search', json=data)
+
+        if response.get('status') == 'completed':
+            logger.info(f"Gene search completed with job ID: {response['job_id']}")
+            return SearchResult(response['results'], self)
+
+        job_id = response['job_id']
+        logger.info(f"Gene search submitted with job ID: {job_id}")
+
+        if not wait_for_completion or response.get('status') == 'pending':
+            return SearchResult({'job_id': job_id, 'status': 'pending'}, self)
+
+        if not response.get('success', True):
+            error_msg = response.get('error', 'Unknown error')
+            raise MalvaAPIError(f"Gene search failed: {error_msg}")
+
+        start_time = time.time()
+        while time.time() - start_time < max_wait:
+            try:
+                results_response = self._request('GET', f'/search/{job_id}')
+                status = results_response.get('status')
+
+                logger.info(f"Gene search status: {status}")
+
+                if status == 'completed':
+                    logger.info(f"Gene search completed with job ID: {job_id}")
+                    return SearchResult(results_response.get('results', results_response), self)
+                elif status == 'error':
+                    error_msg = results_response.get('error', 'Unknown error')
+                    raise MalvaAPIError(f"Gene search failed: {error_msg}")
+
+            except MalvaAPIError as e:
+                if "404" in str(e) or "not found" in str(e).lower():
+                    pass
+                else:
+                    raise
+
+            time.sleep(poll_interval)
+
+        raise MalvaAPIError(f"Gene search timed out after {max_wait} seconds")
     
     def get_samples(self, page: int = 1, page_size: int = 50, 
                    filters: Dict[str, Any] = None, search_query: str = "") -> Dict[str, Any]:
@@ -389,7 +603,7 @@ class MalvaClient:
                 else:
                     params[key] = [value] if value else []
         
-        return self._request('GET', '/samples/search', params=params)
+        return self._request('GET', '/samples/api/search', params=params)
     
     def search_samples(self, query: str = "", organ: List[str] = None, 
                       species: List[str] = None, study: List[str] = None,
@@ -453,7 +667,7 @@ class MalvaClient:
         Returns:
             DataFrame containing study information
         """
-        response = self._request('GET', '/samples/studies/summary')
+        response = self._request('GET', '/samples/api/studies')
         studies = response.get('studies', [])
         return pd.DataFrame(studies)
     
@@ -617,18 +831,533 @@ class MalvaClient:
     
     def get_available_filters(self) -> Dict[str, Any]:
         """Get available filter options for samples"""
-        return self._request('GET', '/samples/available-filters')
+        return self._request('GET', '/samples/api/filters')
+
+    def submit_search(self, query: str, aggregate_expression: bool = True,
+                      window_size: Optional[int] = None,
+                      threshold: Optional[float] = None,
+                      stranded: Optional[bool] = None) -> str:
+        """
+        Submit search without waiting for completion
+
+        Args:
+            query: Search query
+            aggregate_expression: Whether to aggregate expression by cell type
+            window_size: Sliding window size in k-mers
+            threshold: Match threshold between 0.0 and 1.0
+            stranded: If True, restrict search to the forward strand only
+
+        Returns:
+            Job ID for tracking
+        """
+        if window_size is not None and window_size < 1:
+            raise ValueError("window_size must be a positive integer")
+        if threshold is not None and not (0.0 <= threshold <= 1.0):
+            raise ValueError("threshold must be between 0.0 and 1.0")
+
+        from malva_client.storage import save_search, save_job_status
+
+        data = {
+            'query': query,
+            'wait_for_completion': False,
+            'aggregate_expression': aggregate_expression
+        }
+        if window_size is not None:
+            data['window_size'] = window_size
+        if threshold is not None:
+            data['threshold'] = threshold
+        if stranded is not None:
+            data['stranded'] = stranded
+
+        response = self._request('POST', '/search', json=data)
+        job_id = response['job_id']
+
+        # Save to local storage
+        search_id = save_search(
+            query=query,
+            job_id=job_id,
+            server_url=self.base_url,
+            status='submitted'
+        )
+
+        save_job_status(
+            job_id=job_id,
+            status='pending',
+            query=query,
+            server_url=self.base_url
+        )
+
+        logger.info(f"Search submitted with job ID: {job_id}")
+        return job_id
+
+    def get_job_status(self, job_id: str) -> Dict[str, Any]:
+        """
+        Get status of an async job
+
+        Args:
+            job_id: Job ID to check
+
+        Returns:
+            Dictionary with job status information
+        """
+        from malva_client.storage import save_job_status
+
+        try:
+            response = self._request('GET', f'/search/{job_id}')
+
+            # Update local storage
+            save_job_status(
+                job_id=job_id,
+                status=response.get('status', 'unknown'),
+                server_url=self.base_url,
+                results_data=response.get('results') if response.get('status') == 'completed' else None,
+                error_message=response.get('error') if response.get('status') == 'error' else None
+            )
+
+            return response
+
+        except MalvaAPIError as e:
+            if "404" in str(e) or "not found" in str(e).lower():
+                # Job not found on server, check local storage
+                from malva_client.storage import get_job_status as get_local_status
+                local_status = get_local_status(job_id)
+                if local_status:
+                    return {
+                        'job_id': job_id,
+                        'status': local_status['status'],
+                        'error': 'Job not found on server (may have expired)'
+                    }
+                else:
+                    return {
+                        'job_id': job_id,
+                        'status': 'not_found',
+                        'error': 'Job not found'
+                    }
+            raise
+
+    def get_job_results(self, job_id: str) -> 'SearchResult':
+        """
+        Get results of a completed job
+
+        Args:
+            job_id: Job ID
+
+        Returns:
+            SearchResult object
+        """
+        from malva_client.storage import get_job_status as get_local_status, save_job_status
+
+        # First check if we have results cached locally
+        local_status = get_local_status(job_id)
+        if local_status and local_status.get('results_data'):
+            logger.info(f"Using cached results for job {job_id}")
+            return SearchResult(local_status['results_data'], self)
+
+        # Otherwise fetch from server
+        status_response = self.get_job_status(job_id)
+
+        if status_response['status'] == 'completed':
+            results_data = status_response.get('results', {})
+
+            # Cache results locally
+            save_job_status(
+                job_id=job_id,
+                status='completed',
+                server_url=self.base_url,
+                results_data=results_data
+            )
+
+            return SearchResult(results_data, self)
+
+        elif status_response['status'] == 'error':
+            error_msg = status_response.get('error', 'Unknown error')
+            raise SearchError(f"Job {job_id} failed: {error_msg}")
+
+        elif status_response['status'] in ['pending', 'running']:
+            raise SearchError(f"Job {job_id} is still {status_response['status']}. Use get_job_status() to check progress.")
+
+        else:
+            raise SearchError(f"Job {job_id} has unexpected status: {status_response['status']}")
+
+    def list_jobs(self, limit: int = 20) -> List[Dict[str, Any]]:
+        """
+        List recent jobs
+
+        Args:
+            limit: Maximum number of jobs to return
+
+        Returns:
+            List of job information
+        """
+        from malva_client.storage import get_storage
+
+        storage = get_storage()
+        history = storage.get_search_history(limit=limit, server_url=self.base_url)
+
+        jobs = []
+        for entry in history:
+            if entry.get('job_id'):
+                jobs.append({
+                    'job_id': entry['job_id'],
+                    'query': entry['query'],
+                    'status': entry['status'],
+                    'timestamp': entry['timestamp'],
+                    'results_count': entry.get('results_count', 0),
+                    'error': entry.get('error_message')
+                })
+
+        return jobs
+
+    def wait_for_job(self, job_id: str, poll_interval: int = 2,
+                    max_wait: int = 300) -> 'SearchResult':
+        """
+        Wait for a job to complete and return results
+
+        Args:
+            job_id: Job ID to wait for
+            poll_interval: How often to check status (seconds)
+            max_wait: Maximum time to wait (seconds)
+
+        Returns:
+            SearchResult object
+        """
+        start_time = time.time()
+
+        while time.time() - start_time < max_wait:
+            status_response = self.get_job_status(job_id)
+            status = status_response.get('status')
+
+            if status == 'completed':
+                return self.get_job_results(job_id)
+            elif status == 'error':
+                error_msg = status_response.get('error', 'Unknown error')
+                raise SearchError(f"Job {job_id} failed: {error_msg}")
+            elif status in ['pending', 'running']:
+                logger.info(f"Job {job_id} status: {status}")
+                time.sleep(poll_interval)
+            else:
+                raise SearchError(f"Job {job_id} has unexpected status: {status}")
+
+        raise MalvaAPIError(f"Job {job_id} timed out after {max_wait} seconds")
+
+    def cancel_job(self, job_id: str) -> bool:
+        """
+        Attempt to cancel a running job
+
+        Args:
+            job_id: Job ID to cancel
+
+        Returns:
+            True if cancellation was successful
+        """
+        try:
+            response = self._request('DELETE', f'/search/{job_id}')
+
+            # Update local storage
+            from malva_client.storage import save_job_status
+            save_job_status(
+                job_id=job_id,
+                status='cancelled',
+                server_url=self.base_url
+            )
+
+            return response.get('success', True)
+
+        except MalvaAPIError as e:
+            if "404" in str(e):
+                logger.warning(f"Job {job_id} not found for cancellation")
+                return False
+            raise
+
+    # ── Coverage Analysis Methods ──
+
+    def get_coverage(self, chr: str, start: int, end: int,
+                     strand: str = '+', zoom: int = 1,
+                     metadata_filters: Optional[Dict[str, Any]] = None,
+                     poll_interval: int = 2, max_wait: int = 300) -> 'CoverageResult':
+        """
+        Get genomic region coverage across cell types.
+
+        Args:
+            chr: Chromosome name (e.g., 'chr1')
+            start: Start position
+            end: End position
+            strand: Strand ('+', '-', or 'both')
+            zoom: Zoom level for binning
+            metadata_filters: Optional metadata filters (e.g., {'organ': ['brain']})
+            poll_interval: How often to check for completion (seconds)
+            max_wait: Maximum time to wait for completion (seconds)
+
+        Returns:
+            CoverageResult object
+        """
+        # Map +/- notation to server's expected format
+        strand_map = {'+': 'forward', '-': 'reverse', 'both': 'both',
+                      'forward': 'forward', 'reverse': 'reverse'}
+        data = {
+            'chromosome': chr,
+            'start': start,
+            'end': end,
+            'strand': strand_map.get(strand, 'both'),
+            'zoom_level': zoom,
+        }
+        if metadata_filters:
+            data['metadata_filters'] = metadata_filters
+
+        response = self._request('POST', '/api/genome-browser/search', json=data)
+        job_id = response.get('job_id')
+
+        if not job_id:
+            raise MalvaAPIError("No job_id received from coverage search")
+
+        region = f"{chr}:{start}-{end}({strand})"
+        return self._poll_coverage(job_id, region, poll_interval=poll_interval, max_wait=max_wait)
+
+    def get_sequence_coverage(self, sequence: str, sequence_name: str = '',
+                              metadata_filters: Optional[Dict[str, Any]] = None,
+                              poll_interval: int = 2, max_wait: int = 300) -> 'CoverageResult':
+        """
+        Get coverage for an arbitrary DNA sequence.
+
+        Args:
+            sequence: DNA sequence
+            sequence_name: Optional name for the sequence
+            metadata_filters: Optional metadata filters
+            poll_interval: How often to check for completion (seconds)
+            max_wait: Maximum time to wait for completion (seconds)
+
+        Returns:
+            CoverageResult object
+        """
+        data = {
+            'sequence': sequence,
+        }
+        if sequence_name:
+            data['sequence_name'] = sequence_name
+        if metadata_filters:
+            data['metadata_filters'] = metadata_filters
+
+        response = self._request('POST', '/api/genome-browser/search-sequence', json=data)
+        job_id = response.get('job_id')
+
+        if not job_id:
+            raise MalvaAPIError("No job_id received from sequence coverage search")
+
+        region = sequence_name or f"seq:{sequence[:20]}..."
+        return self._poll_coverage(job_id, region, poll_interval=poll_interval, max_wait=max_wait)
+
+    def _poll_coverage(self, job_id: str, region: str = '',
+                       poll_interval: int = 2, max_wait: int = 300) -> 'CoverageResult':
+        """
+        Internal helper to poll for coverage results.
+
+        Args:
+            job_id: Coverage job ID
+            region: Region description for the result object
+            poll_interval: How often to check for completion (seconds)
+            max_wait: Maximum time to wait for completion (seconds)
+
+        Returns:
+            CoverageResult object
+        """
+        start_time = time.time()
+
+        while time.time() - start_time < max_wait:
+            response = self._request('GET', f'/api/genome-browser/coverage/{job_id}')
+            status = response.get('status')
+
+            if status == 'completed':
+                coverage_data = response.get('coverage_data', response)
+                coverage_data['job_id'] = job_id
+                coverage_data['region'] = region
+                return CoverageResult(coverage_data, self)
+            elif status == 'error':
+                error_msg = response.get('error', 'Unknown error')
+                raise MalvaAPIError(f"Coverage job failed: {error_msg}")
+
+            logger.info(f"Coverage job {job_id} status: {status}")
+            time.sleep(poll_interval)
+
+        raise MalvaAPIError(f"Coverage job {job_id} timed out after {max_wait} seconds")
+
+    def get_coverage_data(self, job_id: str, **filters) -> 'CoverageResult':
+        """
+        Retrieve coverage data for an existing job.
+
+        Args:
+            job_id: Coverage job ID
+            **filters: Optional metadata filters to apply
+
+        Returns:
+            CoverageResult object
+        """
+        params = {}
+        if filters:
+            for key, value in filters.items():
+                if isinstance(value, list):
+                    params[key] = value
+                else:
+                    params[key] = [value] if value else []
+
+        response = self._request('GET', f'/api/genome-browser/coverage/{job_id}', params=params)
+        coverage_data = response.get('coverage_data', response)
+        coverage_data['job_id'] = job_id
+        return CoverageResult(coverage_data, self)
+
+    def download_coverage_wig(self, job_id: str, output_path: str,
+                              poll_interval: int = 2, max_wait: int = 120,
+                              **filters) -> str:
+        """
+        Download coverage data as a WIG file.
+
+        The endpoint returns 202 while the file is being generated,
+        so we poll until the file is ready.
+
+        Args:
+            job_id: Coverage job ID
+            output_path: Path to save the WIG file
+            poll_interval: How often to check for completion (seconds)
+            max_wait: Maximum time to wait (seconds)
+            **filters: Optional metadata filters
+
+        Returns:
+            Path to the saved file
+        """
+        url = urljoin(self.base_url, f'/api/genome-browser/coverage-file/{job_id}')
+
+        params = {}
+        if filters:
+            for key, value in filters.items():
+                if isinstance(value, list):
+                    params[key] = value
+                else:
+                    params[key] = [value] if value else []
+
+        start_time = time.time()
+        while time.time() - start_time < max_wait:
+            response = self.session.get(url, params=params, timeout=self.timeout)
+
+            if response.status_code == 200:
+                output = Path(output_path)
+                output.parent.mkdir(parents=True, exist_ok=True)
+                output.write_text(response.text)
+                logger.info(f"Coverage WIG saved to {output_path}")
+                return str(output)
+            elif response.status_code == 202:
+                logger.info(f"WIG file still generating for job {job_id}...")
+                time.sleep(poll_interval)
+            else:
+                raise MalvaAPIError(f"Failed to download WIG file: HTTP {response.status_code}")
+
+        raise MalvaAPIError(f"WIG download timed out after {max_wait} seconds")
+
+    def get_coverage_filter_options(self, job_id: str) -> Dict[str, Any]:
+        """
+        Get available filter options for a coverage result.
+
+        Args:
+            job_id: Coverage job ID
+
+        Returns:
+            Dictionary with available filter options
+        """
+        return self._request('GET', f'/api/genome-browser/filter-options/{job_id}')
+
+    # ── Dataset Discovery Methods ──
+
+    def get_datasets_hierarchy(self) -> Dict[str, Any]:
+        """
+        Get the full dataset → study → sample hierarchy.
+
+        Returns:
+            Dictionary with the full hierarchy tree
+        """
+        return self._request('GET', '/samples/api/datasets/hierarchy')
+
+    def get_dataset_studies(self, dataset_id: str,
+                            page: int = 1, page_size: int = 50) -> Dict[str, Any]:
+        """
+        Get studies belonging to a dataset.
+
+        Args:
+            dataset_id: Dataset identifier
+            page: Page number (1-based)
+            page_size: Number of studies per page
+
+        Returns:
+            Dictionary with studies and pagination info
+        """
+        params = {'page': page, 'page_size': page_size}
+        return self._request('GET', f'/samples/api/datasets/{dataset_id}/studies', params=params)
+
+    def get_study_samples(self, dataset_id: str, study_name: str,
+                          page: int = 1, page_size: int = 50) -> Dict[str, Any]:
+        """
+        Get samples belonging to a study within a dataset.
+
+        Args:
+            dataset_id: Dataset identifier
+            study_name: Study name
+            page: Page number (1-based)
+            page_size: Number of samples per page
+
+        Returns:
+            Dictionary with samples and pagination info
+        """
+        params = {'page': page, 'page_size': page_size}
+        return self._request('GET', f'/samples/api/datasets/{dataset_id}/studies/{study_name}/samples',
+                             params=params)
+
+    def get_sample_details(self, sample_uuid: str) -> Dict[str, Any]:
+        """
+        Get full metadata for a single sample.
+
+        Args:
+            sample_uuid: UUID of the sample
+
+        Returns:
+            Dictionary with complete sample metadata
+        """
+        return self._request('GET', f'/samples/api/sample/{sample_uuid}')
+
+    def get_filter_values(self, column: str, search: str = '',
+                          limit: int = 50) -> List[str]:
+        """
+        Get unique values for a filter column, with optional search.
+
+        Args:
+            column: Filter column name (e.g., 'organ', 'species')
+            search: Optional text to filter values by
+            limit: Maximum number of values to return
+
+        Returns:
+            List of unique values for the column
+        """
+        params = {'limit': limit}
+        if search:
+            params['search'] = search
+        response = self._request('GET', f'/samples/api/filters/{column}/values', params=params)
+        return response.get('values', [])
+
+    def get_overview_stats(self) -> Dict[str, Any]:
+        """
+        Get platform-wide statistics.
+
+        Returns:
+            Dictionary with overview statistics (total samples, studies, etc.)
+        """
+        return self._request('GET', '/samples/api/overview')
 
 
 # Convenience functions for common operations
 def search_gene(gene: str, base_url: str = "https://malva.mdc-berlin.de") -> SearchResult:
     """
     Quick gene search
-    
+
     Args:
         gene: Gene symbol to search for
         base_url: Malva API base URL
-        
+
     Returns:
         SearchResult object
     """
@@ -639,232 +1368,13 @@ def search_gene(gene: str, base_url: str = "https://malva.mdc-berlin.de") -> Sea
 def search_sequence(sequence: str, base_url: str = "https://malva.mdc-berlin.de") -> SearchResult:
     """
     Quick sequence search
-    
+
     Args:
         sequence: DNA sequence to search for
         base_url: Malva API base URL
-        
+
     Returns:
         SearchResult object
     """
     client = MalvaClient(base_url)
     return client.search_sequence(sequence)
-
-def submit_search(self, query: str, aggregate_expression: bool = True) -> str:
-    """
-    Submit search without waiting for completion
-    
-    Args:
-        query: Search query
-        aggregate_expression: Whether to aggregate expression by cell type
-        
-    Returns:
-        Job ID for tracking
-    """
-    from malva_client.storage import save_search, save_job_status
-    
-    data = {
-        'query': query,
-        'wait_for_completion': False,
-        'aggregate_expression': aggregate_expression
-    }
-    
-    response = self._request('POST', '/search', json=data)
-    job_id = response['job_id']
-    
-    # Save to local storage
-    search_id = save_search(
-        query=query,
-        job_id=job_id,
-        server_url=self.base_url,
-        status='submitted'
-    )
-    
-    save_job_status(
-        job_id=job_id,
-        status='pending',
-        query=query,
-        server_url=self.base_url
-    )
-    
-    logger.info(f"Search submitted with job ID: {job_id}")
-    return job_id
-
-def get_job_status(self, job_id: str) -> Dict[str, Any]:
-    """
-    Get status of an async job
-    
-    Args:
-        job_id: Job ID to check
-        
-    Returns:
-        Dictionary with job status information
-    """
-    from malva_client.storage import save_job_status
-    
-    try:
-        response = self._request('GET', f'/search/{job_id}')
-        
-        # Update local storage
-        save_job_status(
-            job_id=job_id,
-            status=response.get('status', 'unknown'),
-            server_url=self.base_url,
-            results_data=response.get('results') if response.get('status') == 'completed' else None,
-            error_message=response.get('error') if response.get('status') == 'error' else None
-        )
-        
-        return response
-        
-    except MalvaAPIError as e:
-        if "404" in str(e) or "not found" in str(e).lower():
-            # Job not found on server, check local storage
-            from malva_client.storage import get_job_status as get_local_status
-            local_status = get_local_status(job_id)
-            if local_status:
-                return {
-                    'job_id': job_id,
-                    'status': local_status['status'],
-                    'error': 'Job not found on server (may have expired)'
-                }
-            else:
-                return {
-                    'job_id': job_id,
-                    'status': 'not_found',
-                    'error': 'Job not found'
-                }
-        raise
-
-def get_job_results(self, job_id: str) -> 'SearchResult':
-    """
-    Get results of a completed job
-    
-    Args:
-        job_id: Job ID
-        
-    Returns:
-        SearchResult object
-    """
-    from malva_client.storage import get_job_status as get_local_status, save_job_status
-    
-    # First check if we have results cached locally
-    local_status = get_local_status(job_id)
-    if local_status and local_status.get('results_data'):
-        logger.info(f"Using cached results for job {job_id}")
-        return SearchResult(local_status['results_data'], self)
-    
-    # Otherwise fetch from server
-    status_response = self.get_job_status(job_id)
-    
-    if status_response['status'] == 'completed':
-        results_data = status_response.get('results', {})
-        
-        # Cache results locally
-        save_job_status(
-            job_id=job_id,
-            status='completed',
-            server_url=self.base_url,
-            results_data=results_data
-        )
-        
-        return SearchResult(results_data, self)
-        
-    elif status_response['status'] == 'error':
-        error_msg = status_response.get('error', 'Unknown error')
-        raise SearchError(f"Job {job_id} failed: {error_msg}")
-        
-    elif status_response['status'] in ['pending', 'running']:
-        raise SearchError(f"Job {job_id} is still {status_response['status']}. Use get_job_status() to check progress.")
-        
-    else:
-        raise SearchError(f"Job {job_id} has unexpected status: {status_response['status']}")
-
-def list_jobs(self, limit: int = 20) -> List[Dict[str, Any]]:
-    """
-    List recent jobs
-    
-    Args:
-        limit: Maximum number of jobs to return
-        
-    Returns:
-        List of job information
-    """
-    from malva_client.storage import get_storage
-    
-    storage = get_storage()
-    history = storage.get_search_history(limit=limit, server_url=self.base_url)
-    
-    jobs = []
-    for entry in history:
-        if entry.get('job_id'):
-            jobs.append({
-                'job_id': entry['job_id'],
-                'query': entry['query'],
-                'status': entry['status'],
-                'timestamp': entry['timestamp'],
-                'results_count': entry.get('results_count', 0),
-                'error': entry.get('error_message')
-            })
-    
-    return jobs
-
-def wait_for_job(self, job_id: str, poll_interval: int = 2, 
-                max_wait: int = 300) -> 'SearchResult':
-    """
-    Wait for a job to complete and return results
-    
-    Args:
-        job_id: Job ID to wait for
-        poll_interval: How often to check status (seconds)
-        max_wait: Maximum time to wait (seconds)
-        
-    Returns:
-        SearchResult object
-    """
-    start_time = time.time()
-    
-    while time.time() - start_time < max_wait:
-        status_response = self.get_job_status(job_id)
-        status = status_response.get('status')
-        
-        if status == 'completed':
-            return self.get_job_results(job_id)
-        elif status == 'error':
-            error_msg = status_response.get('error', 'Unknown error')
-            raise SearchError(f"Job {job_id} failed: {error_msg}")
-        elif status in ['pending', 'running']:
-            logger.info(f"Job {job_id} status: {status}")
-            time.sleep(poll_interval)
-        else:
-            raise SearchError(f"Job {job_id} has unexpected status: {status}")
-    
-    raise MalvaAPIError(f"Job {job_id} timed out after {max_wait} seconds")
-
-def cancel_job(self, job_id: str) -> bool:
-    """
-    Attempt to cancel a running job
-    
-    Args:
-        job_id: Job ID to cancel
-        
-    Returns:
-        True if cancellation was successful
-    """
-    try:
-        response = self._request('DELETE', f'/search/{job_id}')
-        
-        # Update local storage
-        from malva_client.storage import save_job_status
-        save_job_status(
-            job_id=job_id,
-            status='cancelled',
-            server_url=self.base_url
-        )
-        
-        return response.get('success', True)
-        
-    except MalvaAPIError as e:
-        if "404" in str(e):
-            logger.warning(f"Job {job_id} not found for cancellation")
-            return False
-        raise

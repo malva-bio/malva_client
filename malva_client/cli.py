@@ -40,13 +40,20 @@ def main(ctx, config, server, token, no_ssl_verify):
 @main.command()
 @click.argument('query')
 @click.option('--output', '-o', type=click.Path(), help='Output file path')
-@click.option('--format', 'output_format', type=click.Choice(['csv', 'json', 'excel', 'table']), 
+@click.option('--format', 'output_format', type=click.Choice(['csv', 'json', 'excel', 'table']),
               default='table', help='Output format')
 @click.option('--no-wait', is_flag=True, help='Submit search without waiting for completion')
 @click.option('--max-wait', default=300, help='Maximum time to wait for completion (seconds)')
 @click.option('--no-enrich', is_flag=True, help='Skip metadata enrichment')
+@click.option('--window-size', '-w', type=int, default=None,
+              help='Sliding window size (k-mers per window)')
+@click.option('--threshold', '-t', type=float, default=None,
+              help='Match threshold (0.0-1.0)')
+@click.option('--stranded', is_flag=True, default=False,
+              help='Restrict to single-strand search')
 @click.pass_context
-def search(ctx, query, output, output_format, no_wait, max_wait, no_enrich):
+def search(ctx, query, output, output_format, no_wait, max_wait, no_enrich,
+           window_size, threshold, stranded):
     """Search genomic datasets."""
     config = ctx.obj['config']
     from malva_client.client import MalvaClient
@@ -62,19 +69,27 @@ def search(ctx, query, output, output_format, no_wait, max_wait, no_enrich):
         
         console.print(f"Searching for: [bold]{query}[/bold]")
         
+        search_kwargs = {}
+        if window_size is not None:
+            search_kwargs['window_size'] = window_size
+        if threshold is not None:
+            search_kwargs['threshold'] = threshold
+        if stranded:
+            search_kwargs['stranded'] = True
+
         if no_wait:
-            job_id = client.submit_search(query)
+            job_id = client.submit_search(query, **search_kwargs)
             console.print(f"Search submitted with job ID: [bold]{job_id}[/bold]")
             console.print(f"Check status with: [bold]malva_client status {job_id}[/bold]")
             return
-        
+
         with Progress(
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
             console=console
         ) as progress:
             task = progress.add_task("Searching...", total=None)
-            results = client.search(query, max_wait=max_wait)
+            results = client.search(query, max_wait=max_wait, **search_kwargs)
 
         if not no_enrich and hasattr(results, 'enrich_with_metadata'):
             with Progress(

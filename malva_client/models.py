@@ -1238,3 +1238,128 @@ class SingleCellResult:
     
     def __len__(self) -> int:
         return self.cell_count
+
+
+class CoverageResult:
+    """
+    Represents genomic coverage data from the Malva genome browser.
+
+    Coverage data is organized as a matrix with genomic positions as rows
+    and cell types as columns. Each cell contains a coverage value.
+    """
+
+    def __init__(self, raw_data: Dict[str, Any], client: Optional['MalvaClient'] = None):
+        """
+        Initialize CoverageResult
+
+        Args:
+            raw_data: Raw coverage data from the API
+            client: MalvaClient instance for follow-up requests
+        """
+        self.raw_data = raw_data
+        self.client = client
+
+        self.job_id = raw_data.get('job_id', '')
+        self.region = raw_data.get('region', '')
+        self.positions = raw_data.get('positions', [])
+        self.cell_types = raw_data.get('cell_types', [])
+        self.coverage_matrix = raw_data.get('coverage_matrix', [])
+        self.total_windows = raw_data.get('total_windows', len(self.positions))
+
+    def to_dataframe(self) -> pd.DataFrame:
+        """
+        Convert coverage data to a pandas DataFrame.
+
+        Returns:
+            DataFrame with positions as index and cell types as columns
+        """
+        if not self.coverage_matrix or not self.cell_types:
+            return pd.DataFrame()
+
+        # Server returns coverage_matrix as (cell_types x positions);
+        # transpose to (positions x cell_types) for the DataFrame
+        matrix = np.array(self.coverage_matrix)
+        if matrix.ndim == 2 and matrix.shape[1] != len(self.cell_types):
+            matrix = matrix.T
+
+        df = pd.DataFrame(
+            matrix,
+            columns=self.cell_types
+        )
+
+        if self.positions:
+            df.index = self.positions
+            df.index.name = 'position'
+
+        return df
+
+    def get_filter_options(self) -> Dict[str, Any]:
+        """
+        Get available filter options for this coverage result.
+
+        Returns:
+            Dictionary with filter options
+        """
+        if not self.client or not self.job_id:
+            return {}
+        return self.client.get_coverage_filter_options(self.job_id)
+
+    def download_wig(self, output_path: str, **filters) -> str:
+        """
+        Download coverage data as a WIG file.
+
+        Args:
+            output_path: Path to save the WIG file
+            **filters: Optional metadata filters
+
+        Returns:
+            Path to the saved file
+        """
+        if not self.client or not self.job_id:
+            raise MalvaAPIError("Client and job_id required to download WIG files")
+        return self.client.download_coverage_wig(self.job_id, output_path, **filters)
+
+    def plot(self, cell_types: Optional[List[str]] = None, **kwargs):
+        """
+        Plot coverage across the genomic region.
+
+        Args:
+            cell_types: Specific cell types to plot (default: all)
+            **kwargs: Additional arguments passed to matplotlib
+        """
+        try:
+            import matplotlib.pyplot as plt
+        except ImportError:
+            raise ImportError("matplotlib required for plotting. Install with: pip install matplotlib")
+
+        df = self.to_dataframe()
+        if df.empty:
+            print("No coverage data to plot")
+            return
+
+        if cell_types:
+            available = [ct for ct in cell_types if ct in df.columns]
+            if not available:
+                raise ValueError(f"None of {cell_types} found. Available: {list(df.columns)}")
+            df = df[available]
+
+        fig, ax = plt.subplots(figsize=kwargs.get('figsize', (14, 6)))
+        for col in df.columns:
+            ax.plot(range(len(df)), df[col].values, label=col, alpha=0.8)
+
+        ax.set_xlabel('Genomic Position')
+        ax.set_ylabel('Coverage')
+        ax.set_title(f'Coverage: {self.region}' if self.region else 'Genomic Coverage')
+        ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize='small')
+        plt.tight_layout()
+        return fig
+
+    def __repr__(self) -> str:
+        n_positions = len(self.positions)
+        n_cell_types = len(self.cell_types)
+        return (f"CoverageResult(region='{self.region}', "
+                f"positions={n_positions}, cell_types={n_cell_types}, "
+                f"job_id='{self.job_id}')")
+
+    def __len__(self) -> int:
+        return len(self.positions)

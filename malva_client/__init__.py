@@ -4,10 +4,9 @@ Malva Client - Python client for the Malva genomic search platform
 
 try:
     from importlib.metadata import version as _get_version
-    __version__ = _get_version("malva-client")
+    __version__ = _get_version("malva_client")
 except Exception:
-    __version__ = "0.1.0"
-
+    __version__ = "0.2.0"
 __author__ = "Malva Team"
 __email__ = "hello@malva.bio"
 
@@ -54,7 +53,7 @@ def __getattr__(name):
     elif name == 'Config':
         from .config import Config
         return Config
-
+    
     elif name in ('search_gene', 'search_sequence'):
         from .client import search_gene, search_sequence
         return locals()[name]
