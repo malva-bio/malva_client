@@ -117,6 +117,28 @@ results = client.search("ATCGATCGATCGCCACATGGACTTGAC")
 results = client.search("cells expressing markers of neurodegeneration")
 ```
 
+### Search Parameters
+
+```python
+# Tune sensitivity: larger window, lower threshold for expression
+results = client.search("BRCA1", window_size=96, threshold=0.55)
+
+# Exact matching for splice junctions or circRNAs
+results = client.search_sequence(junction_seq, window_size=24, threshold=1.0)
+
+# Strand-specific search
+results = client.search_sequence(probe, stranded=True)
+```
+
+### Batch Sequence Search
+
+```python
+seqs = ["ATCGATCGATCGATCGATCGATCG", "GCTAGCTAGCTAGCTAGCTAGCTA"]
+batch = client.search_sequences(seqs)
+for seq, result in batch.items():
+    print(seq[:20], "→", result)
+```
+
 ### Working with Results
 
 ```python

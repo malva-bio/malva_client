@@ -4,7 +4,7 @@ build-backend = "poetry.masonry.api"
 
 [tool.poetry]
 name = "malva_client"
-version = "0.1.0"
+version = "0.2.0"
 description = "Python client for Malva Index"
 license = "BSD-3"
 authors = [
@@ -57,9 +57,9 @@ black = ">=22.0.0"
 flake8 = ">=4.0.0"
 
 [tool.poetry.urls]
-"Documentation" = "https://rajewsky-lab.github.io/malva_client"
-"Source" = "https://github.com/rajewsky-lab/malva_client"
-"Home-page" = "https://rajewsky-lab.github.io/malva_client"
+"Documentation" = "https://malva-client.readthedocs.io"
+"Source" = "https://github.com/malva-bio/malva_client"
+"Home-page" = "https://malva.bio"
 
 [tool.poetry.scripts]
 malva_client = 'malva_client.cli:main'
