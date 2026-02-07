@@ -47,7 +47,6 @@ suppress_warnings = ['autodoc.duplicate_object']
 autodoc_default_options = {
     'members': True,
     'member-order': 'bysource',
-    'special-members': '__init__',
     'undoc-members': True,
     'exclude-members': '__weakref__'
 }
@@ -57,3 +56,11 @@ napoleon_numpy_docstring = True
 source_suffix = {'.rst': None, '.md': 'myst_parser'}
 master_doc = 'index'
 html_search_language = 'en'
+
+autodoc_mock_imports = ['h5py', 'anndata', 'dnaio']
+
+intersphinx_mapping = {
+    'python': ('https://docs.python.org/3', None),
+    'pandas': ('https://pandas.pydata.org/docs/', None),
+    'numpy': ('https://numpy.org/doc/stable/', None),
+}

@@ -1,36 +1,38 @@
 Exceptions
 ==========
 
-All exceptions inherit from :class:`~malva_client.exceptions.MalvaAPIError`,
-so you can catch any Malva-related error with a single
-``except MalvaAPIError`` clause.
-
-.. autoexception:: malva_client.exceptions.MalvaAPIError
+.. autoclass:: malva_client.exceptions.MalvaAPIError
    :members:
    :show-inheritance:
 
-.. autoexception:: malva_client.exceptions.AuthenticationError
-   :show-inheritance:
-
-.. autoexception:: malva_client.exceptions.SearchError
+.. autoclass:: malva_client.exceptions.AuthenticationError
    :members:
    :show-inheritance:
 
-.. autoexception:: malva_client.exceptions.QuotaExceededError
+.. autoclass:: malva_client.exceptions.SearchError
    :members:
    :show-inheritance:
 
-.. autoexception:: malva_client.exceptions.ValidationError
+.. autoclass:: malva_client.exceptions.QuotaExceededError
+   :members:
    :show-inheritance:
 
-.. autoexception:: malva_client.exceptions.ConfigurationError
+.. autoclass:: malva_client.exceptions.ValidationError
+   :members:
    :show-inheritance:
 
-.. autoexception:: malva_client.exceptions.StorageError
+.. autoclass:: malva_client.exceptions.ConfigurationError
+   :members:
    :show-inheritance:
 
-.. autoexception:: malva_client.exceptions.NetworkError
+.. autoclass:: malva_client.exceptions.StorageError
+   :members:
    :show-inheritance:
 
-.. autoexception:: malva_client.exceptions.TimeoutError
+.. autoclass:: malva_client.exceptions.NetworkError
+   :members:
+   :show-inheritance:
+
+.. autoclass:: malva_client.exceptions.TimeoutError
+   :members:
    :show-inheritance:

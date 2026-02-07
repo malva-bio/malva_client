@@ -15,7 +15,7 @@ clean:
 	rm -rf $(BUILDDIR)/*
 
 apidoc:
-	sphinx-apidoc -o api/ ../malva_client --force --separate
+	sphinx-apidoc -o api/ ../malva_client --separate
 
-html: apidoc
+html:
 	@$(SPHINXBUILD) -b html "$(SOURCEDIR)" "$(BUILDDIR)/html" $(SPHINXOPTS) $(O)

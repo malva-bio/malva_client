@@ -1,9 +1,6 @@
 API Reference
 =============
 
-This section documents every public class, method, and function in the
-``malva_client`` package.
-
 .. toctree::
    :maxdepth: 2
 
