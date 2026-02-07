@@ -292,8 +292,10 @@ class TestJobManagement:
             responses.POST, f"{BASE}/search",
             json={'job_id': 'j1', 'status': 'pending'},
         )
-        with patch('malva_client.client.save_search', return_value=1), \
-             patch('malva_client.client.save_job_status'):
+        with patch('malva_client.storage.get_storage') as mock_gs:
+            mock_storage = MagicMock()
+            mock_storage.save_search.return_value = 1
+            mock_gs.return_value = mock_storage
             job_id = mock_client.submit_search("BRCA1")
             assert job_id == 'j1'
 
@@ -303,7 +305,8 @@ class TestJobManagement:
             responses.GET, f"{BASE}/search/j1",
             json={'status': 'running', 'job_id': 'j1'},
         )
-        with patch('malva_client.client.save_job_status'):
+        with patch('malva_client.storage.get_storage') as mock_gs:
+            mock_gs.return_value = MagicMock()
             result = mock_client.get_job_status("j1")
             assert result['status'] == 'running'
 
@@ -313,8 +316,10 @@ class TestJobManagement:
             responses.GET, f"{BASE}/search/j1",
             json={'status': 'completed', 'job_id': 'j1', 'results': {}},
         )
-        with patch('malva_client.client.get_job_status', return_value=None), \
-             patch('malva_client.client.save_job_status'):
+        with patch('malva_client.storage.get_storage') as mock_gs:
+            mock_storage = MagicMock()
+            mock_storage.get_job_status.return_value = None
+            mock_gs.return_value = mock_storage
             result = mock_client.get_job_results("j1")
             assert isinstance(result, SearchResult)
 
@@ -324,8 +329,10 @@ class TestJobManagement:
             responses.GET, f"{BASE}/search/j1",
             json={'status': 'pending', 'job_id': 'j1'},
         )
-        with patch('malva_client.client.get_job_status', return_value=None), \
-             patch('malva_client.client.save_job_status'):
+        with patch('malva_client.storage.get_storage') as mock_gs:
+            mock_storage = MagicMock()
+            mock_storage.get_job_status.return_value = None
+            mock_gs.return_value = mock_storage
             with pytest.raises(SearchError, match="still pending"):
                 mock_client.get_job_results("j1")
 
@@ -339,8 +346,10 @@ class TestJobManagement:
             responses.GET, f"{BASE}/search/j1",
             json={'status': 'completed', 'job_id': 'j1', 'results': {}},
         )
-        with patch('malva_client.client.get_job_status', return_value=None), \
-             patch('malva_client.client.save_job_status'):
+        with patch('malva_client.storage.get_storage') as mock_gs:
+            mock_storage = MagicMock()
+            mock_storage.get_job_status.return_value = None
+            mock_gs.return_value = mock_storage
             result = mock_client.wait_for_job("j1", poll_interval=0, max_wait=10)
             assert isinstance(result, SearchResult)
 
@@ -350,7 +359,8 @@ class TestJobManagement:
             responses.GET, f"{BASE}/search/j1",
             json={'status': 'pending', 'job_id': 'j1'},
         )
-        with patch('malva_client.client.save_job_status'):
+        with patch('malva_client.storage.get_storage') as mock_gs:
+            mock_gs.return_value = MagicMock()
             with pytest.raises(MalvaAPIError, match="timed out"):
                 mock_client.wait_for_job("j1", poll_interval=0, max_wait=0.01)
 
@@ -360,12 +370,13 @@ class TestJobManagement:
             responses.DELETE, f"{BASE}/search/j1",
             json={'success': True},
         )
-        with patch('malva_client.client.save_job_status'):
+        with patch('malva_client.storage.get_storage') as mock_gs:
+            mock_gs.return_value = MagicMock()
             assert mock_client.cancel_job("j1") is True
 
     @responses.activate
     def test_list_jobs(self, mock_client):
-        with patch('malva_client.client.get_storage') as mock_gs:
+        with patch('malva_client.storage.get_storage') as mock_gs:
             mock_storage = MagicMock()
             mock_storage.get_search_history.return_value = [
                 {'job_id': 'j1', 'query': 'BRCA1', 'status': 'completed',
@@ -539,9 +550,10 @@ class TestErrorHandling:
 
     @responses.activate
     def test_request_connection_error(self, mock_client):
+        import requests as req
         responses.add(
             responses.GET, f"{BASE}/health",
-            body=ConnectionError("connection refused"),
+            body=req.exceptions.ConnectionError("connection refused"),
         )
         with pytest.raises(MalvaAPIError, match="connect"):
             mock_client._request('GET', '/health')
