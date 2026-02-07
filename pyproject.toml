@@ -62,6 +62,11 @@ docs = [
     "pandoc",
     "ipykernel",
 ]
+test = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "responses>=0.23",
+]
 
 [project.urls]
 Documentation = "https://malva-client.readthedocs.io"
@@ -89,3 +94,6 @@ exclude_lines = [
 
 [tool.coverage.html]
 directory = "htmlcov"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
