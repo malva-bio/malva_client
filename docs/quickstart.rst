@@ -348,39 +348,31 @@ Browse the dataset, study, and sample hierarchy:
 
    stats = client.get_overview_stats()
 
-Async Operations
-----------------
+Job Management
+--------------
 
-Searches over large sequences or many genes can take a while.  Instead of
-blocking, you can submit a job and retrieve results later.
+Every search creates a **job** on the server.  By default, methods like
+``search()`` block until the job completes, but you can also work
+asynchronously: submit a job, do other work, and retrieve results later.
 
-Single query
-^^^^^^^^^^^^
+All job management methods work with **any** job, whether it was created
+by ``submit_search()``, ``search_sequences()``, ``search_genes()``, or
+any other search method.
+
+Submitting without waiting
+^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Use ``submit_search()`` for a fire-and-forget single query:
 
 .. code-block:: python
 
    job_id = client.submit_search("FOXP3")
+   print(job_id)  # UUID string
 
-   # ... do other work ...
-
-   status = client.get_job_status(job_id)
-   if status["status"] == "completed":
-       result = client.get_job_results(job_id)
-
-   # Or block until the job finishes
-   result = client.wait_for_job(job_id, max_wait=600)
-
-Async batch
-^^^^^^^^^^^
-
-``search_sequences()`` and ``search_genes()`` accept
-``wait_for_completion=False``.  The returned
-:class:`~malva_client.models.SearchResult` will have ``status='pending'``
-and a ``job_id`` you can poll:
+For batch methods, pass ``wait_for_completion=False``:
 
 .. code-block:: python
 
-   # Submit a batch of sequences without waiting
    pending = client.search_sequences(
        ["ATCGATCG" * 10, "GCTAGCTA" * 10],
        wait_for_completion=False,
@@ -388,24 +380,83 @@ and a ``job_id`` you can poll:
    print(pending.job_id)   # UUID of the pending job
    print(pending.status)   # "pending"
 
-   # Check status any time
-   status = client.get_job_status(pending.job_id)
-   print(status["status"])  # "pending", "running", or "completed"
-
-   # Block until done and get the full result
-   result = client.wait_for_job(pending.job_id)
-   result.enrich_with_metadata()
-   result.plot_expression_by("cell_type")
-
-The same works for genes:
-
-.. code-block:: python
-
+   # Same for genes
    pending = client.search_genes(
        ["BRCA1", "TP53", "MYC"],
        wait_for_completion=False,
    )
-   result = client.wait_for_job(pending.job_id)
+
+Checking status
+^^^^^^^^^^^^^^^
+
+Poll a job to see whether it is still running:
+
+.. code-block:: python
+
+   status = client.get_job_status(job_id)
+   print(status["status"])  # "pending", "running", "completed", or "error"
+
+Retrieving results
+^^^^^^^^^^^^^^^^^^
+
+Once a job is complete, fetch the full result:
+
+.. code-block:: python
+
+   result = client.get_job_results(job_id)
+   result.enrich_with_metadata()
+   result.plot_expression_by("cell_type")
+
+Or block until it finishes:
+
+.. code-block:: python
+
+   result = client.wait_for_job(job_id, max_wait=600)
+
+Example: async batch workflow
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Submit a batch sequence search, do other work, then come back for the
+results:
+
+.. code-block:: python
+
+   # Submit without waiting
+   pending = client.search_sequences(
+       ["ATCGATCG" * 10, "GCTAGCTA" * 10],
+       wait_for_completion=False,
+   )
+   batch_job_id = pending.job_id
+
+   # ... do other work ...
+
+   # Check on it later
+   status = client.get_job_status(batch_job_id)
+   print(status["status"])
+
+   # Retrieve the batch result once complete
+   result = client.get_job_results(batch_job_id)
+   result.enrich_with_metadata()
+
+   # Work with individual sequences from the batch
+   print(result.df["gene_sequence"].unique())
+   seq1 = result.filter_by(gene_sequence="seq_1")
+   seq1.plot_expression_by("cell_type", limit=10)
+
+Listing and cancelling jobs
+^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Browse your recent jobs or cancel a running one:
+
+.. code-block:: python
+
+   # List recent jobs on this server
+   jobs = client.list_jobs(limit=10)
+   for job in jobs:
+       print(f"{job['job_id']}  {job['status']}  {job['query']}")
+
+   # Cancel a running job
+   client.cancel_job(job_id)
 
 Sample Downloads
 ----------------
