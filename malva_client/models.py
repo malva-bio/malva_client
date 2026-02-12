@@ -1363,3 +1363,392 @@ class CoverageResult:
 
     def __len__(self) -> int:
         return len(self.positions)
+
+
+class UMAPCoordinates:
+    """
+    Lightweight container for UMAP coordinates from the coexpression API.
+
+    Wraps the compact parallel-array format returned by
+    ``GET /api/coexpression/umap/<dataset_id>`` and provides conversion to
+    a pandas DataFrame and a simple scatter-plot method.
+    """
+
+    def __init__(self, raw_data: Dict[str, Any], client: Optional['MalvaClient'] = None):
+        """
+        Initialize UMAPCoordinates.
+
+        Args:
+            raw_data: Raw response from the UMAP endpoint
+            client: MalvaClient instance for follow-up requests
+        """
+        self.raw_data = raw_data
+        self.client = client
+
+        self.x = raw_data.get('x', [])
+        self.y = raw_data.get('y', [])
+        self.metacell_ids = raw_data.get('metacell_ids', [])
+        self.n_cells = raw_data.get('n_cells', [])
+        self.samples = raw_data.get('samples', [])
+        self.clusters = raw_data.get('clusters', [])
+
+    def to_dataframe(self) -> pd.DataFrame:
+        """
+        Convert to a pandas DataFrame.
+
+        Returns:
+            DataFrame with columns: x, y, metacell_id, n_cells, sample, cluster
+        """
+        data: Dict[str, Any] = {'x': self.x, 'y': self.y}
+
+        if self.metacell_ids:
+            data['metacell_id'] = self.metacell_ids
+        if self.n_cells:
+            data['n_cells'] = self.n_cells
+        if self.samples:
+            data['sample'] = self.samples
+        if self.clusters:
+            data['cluster'] = self.clusters
+
+        return pd.DataFrame(data)
+
+    def plot(self, color_by: str = 'cluster', point_size: Optional[float] = None,
+             cmap: str = 'tab20', figsize: Tuple[int, int] = (10, 8)):
+        """
+        Scatter plot of UMAP coordinates.
+
+        Args:
+            color_by: Column to color points by (default ``'cluster'``)
+            point_size: Marker size (auto-scaled if ``None``)
+            cmap: Matplotlib colormap name
+            figsize: Figure size as ``(width, height)``
+
+        Returns:
+            matplotlib Figure
+        """
+        try:
+            import matplotlib.pyplot as plt
+        except ImportError:
+            raise ImportError("matplotlib required for plotting. Install with: pip install matplotlib")
+
+        df = self.to_dataframe()
+        if df.empty:
+            print("No UMAP data to plot")
+            return
+
+        fig, ax = plt.subplots(figsize=figsize)
+
+        if point_size is None:
+            point_size = max(1, 200 / (len(df) ** 0.5))
+
+        if color_by in df.columns:
+            col = df[color_by]
+            if col.dtype == 'object' or hasattr(col, 'cat'):
+                categories = col.unique()
+                color_map = {cat: i for i, cat in enumerate(categories)}
+                colors = col.map(color_map)
+                scatter = ax.scatter(df['x'], df['y'], c=colors, s=point_size,
+                                     cmap=cmap, alpha=0.7)
+                handles = [plt.Line2D([0], [0], marker='o', color='w',
+                                       markerfacecolor=plt.get_cmap(cmap)(color_map[cat] / max(len(categories) - 1, 1)),
+                                       markersize=8, label=str(cat))
+                           for cat in categories]
+                ax.legend(handles=handles, bbox_to_anchor=(1.05, 1),
+                          loc='upper left', fontsize='small')
+            else:
+                scatter = ax.scatter(df['x'], df['y'], c=col, s=point_size,
+                                     cmap=cmap, alpha=0.7)
+                plt.colorbar(scatter, ax=ax, label=color_by)
+        else:
+            ax.scatter(df['x'], df['y'], s=point_size, alpha=0.7)
+
+        ax.set_xlabel('UMAP 1')
+        ax.set_ylabel('UMAP 2')
+        ax.set_title(f'UMAP ({color_by})')
+        plt.tight_layout()
+        return fig
+
+    def __repr__(self) -> str:
+        return f"UMAPCoordinates(n_points={len(self.x)}, clusters={len(set(self.clusters)) if self.clusters else 'N/A'})"
+
+    def __len__(self) -> int:
+        return len(self.x)
+
+
+class CoexpressionResult:
+    """
+    Full coexpression analysis result from the Malva coexpression API.
+
+    Wraps the response from ``POST /api/coexpression/query-by-job`` and
+    provides DataFrame conversions, top-gene retrieval, and plotting
+    helpers for correlated genes, GO enrichment, and UMAP scores.
+    """
+
+    def __init__(self, raw_data: Dict[str, Any], client: Optional['MalvaClient'] = None):
+        """
+        Initialize CoexpressionResult.
+
+        Args:
+            raw_data: Raw response from the coexpression endpoint
+            client: MalvaClient instance for follow-up requests
+        """
+        self.raw_data = raw_data
+        self.client = client
+
+        self.dataset_id = raw_data.get('dataset_id', '')
+        self.correlated_genes = raw_data.get('correlated_genes', [])
+        self.umap_scores = raw_data.get('umap_scores', {})
+        self.go_enrichment = raw_data.get('go_enrichment', [])
+        self.cell_type_enrichment = raw_data.get('cell_type_enrichment', [])
+        self.tissue_breakdown = raw_data.get('tissue_breakdown', [])
+        self.n_query_cells = raw_data.get('n_query_cells', 0)
+        self.n_mapped_metacells = raw_data.get('n_mapped_metacells', 0)
+
+    # -- DataFrame conversions ------------------------------------------------
+
+    def genes_to_dataframe(self) -> pd.DataFrame:
+        """
+        Convert correlated genes to a DataFrame.
+
+        Returns:
+            DataFrame with columns: gene, correlation, p_value (plus any
+            extra fields returned by the server)
+        """
+        if not self.correlated_genes:
+            return pd.DataFrame(columns=['gene', 'correlation', 'p_value'])
+        return pd.DataFrame(self.correlated_genes)
+
+    def scores_to_dataframe(self) -> pd.DataFrame:
+        """
+        Convert UMAP scores to a DataFrame.
+
+        Returns:
+            DataFrame with metacell-level score data
+        """
+        scores = self.umap_scores
+        if not scores:
+            return pd.DataFrame()
+
+        # Handle parallel-array (compact) format
+        if isinstance(scores, dict) and 'metacell_ids' in scores:
+            data: Dict[str, Any] = {}
+            for key, values in scores.items():
+                if isinstance(values, list):
+                    data[key] = values
+            return pd.DataFrame(data)
+
+        # Handle list-of-dicts format
+        if isinstance(scores, list):
+            return pd.DataFrame(scores)
+
+        return pd.DataFrame()
+
+    def umap_to_dataframe(self) -> pd.DataFrame:
+        """
+        Convert UMAP score data to a DataFrame with x/y coordinates.
+
+        Falls back to :meth:`scores_to_dataframe` when coordinates are
+        embedded in the scores payload.
+
+        Returns:
+            DataFrame with UMAP coordinates and scores
+        """
+        return self.scores_to_dataframe()
+
+    def go_to_dataframe(self) -> pd.DataFrame:
+        """
+        Convert GO enrichment results to a DataFrame.
+
+        Returns:
+            DataFrame with columns such as go_id, name, fdr, etc.
+        """
+        if not self.go_enrichment:
+            return pd.DataFrame(columns=['go_id', 'name', 'fdr'])
+        return pd.DataFrame(self.go_enrichment)
+
+    def cell_type_enrichment_to_dataframe(self) -> pd.DataFrame:
+        """
+        Convert cell-type enrichment to a DataFrame.
+
+        Returns:
+            DataFrame with cell-type enrichment data
+        """
+        if not self.cell_type_enrichment:
+            return pd.DataFrame()
+        return pd.DataFrame(self.cell_type_enrichment)
+
+    def tissue_breakdown_to_dataframe(self) -> pd.DataFrame:
+        """
+        Convert tissue breakdown to a DataFrame.
+
+        Returns:
+            DataFrame with tissue breakdown data
+        """
+        if not self.tissue_breakdown:
+            return pd.DataFrame()
+        return pd.DataFrame(self.tissue_breakdown)
+
+    # -- Convenience ----------------------------------------------------------
+
+    def get_top_genes(self, n: int = 20, min_correlation: float = 0.0) -> List[str]:
+        """
+        Get the top *n* correlated gene names.
+
+        Args:
+            n: Number of genes to return
+            min_correlation: Minimum correlation to include
+
+        Returns:
+            List of gene names
+        """
+        df = self.genes_to_dataframe()
+        if df.empty:
+            return []
+
+        if 'correlation' in df.columns:
+            df = df[df['correlation'] >= min_correlation]
+            df = df.sort_values('correlation', ascending=False)
+
+        gene_col = 'gene' if 'gene' in df.columns else df.columns[0]
+        return df[gene_col].head(n).tolist()
+
+    # -- Plotting -------------------------------------------------------------
+
+    def plot_umap(self, color_by: str = 'positive_fraction', point_size: Optional[float] = None,
+                  cmap: str = 'viridis', figsize: Tuple[int, int] = (10, 8)):
+        """
+        Scatter plot of UMAP coordinates coloured by a score column.
+
+        Args:
+            color_by: Column in the scores data to use for colouring
+            point_size: Marker size (auto-scaled if ``None``)
+            cmap: Matplotlib colormap name
+            figsize: Figure size as ``(width, height)``
+
+        Returns:
+            matplotlib Figure
+        """
+        try:
+            import matplotlib.pyplot as plt
+        except ImportError:
+            raise ImportError("matplotlib required for plotting. Install with: pip install matplotlib")
+
+        df = self.scores_to_dataframe()
+        if df.empty:
+            print("No UMAP score data to plot")
+            return
+
+        fig, ax = plt.subplots(figsize=figsize)
+
+        if point_size is None:
+            point_size = max(1, 200 / (len(df) ** 0.5))
+
+        x_col = 'x' if 'x' in df.columns else df.columns[0]
+        y_col = 'y' if 'y' in df.columns else df.columns[1]
+
+        if color_by in df.columns:
+            scatter = ax.scatter(df[x_col], df[y_col], c=df[color_by],
+                                 s=point_size, cmap=cmap, alpha=0.7)
+            plt.colorbar(scatter, ax=ax, label=color_by)
+        else:
+            ax.scatter(df[x_col], df[y_col], s=point_size, alpha=0.7)
+
+        ax.set_xlabel('UMAP 1')
+        ax.set_ylabel('UMAP 2')
+        ax.set_title(f'Coexpression UMAP ({color_by})')
+        plt.tight_layout()
+        return fig
+
+    def plot_top_genes(self, n: int = 20, figsize: Tuple[int, int] = (8, 6)):
+        """
+        Horizontal bar chart of the top correlated genes.
+
+        Args:
+            n: Number of genes to show
+            figsize: Figure size as ``(width, height)``
+
+        Returns:
+            matplotlib Figure
+        """
+        try:
+            import matplotlib.pyplot as plt
+        except ImportError:
+            raise ImportError("matplotlib required for plotting. Install with: pip install matplotlib")
+
+        df = self.genes_to_dataframe()
+        if df.empty:
+            print("No correlated gene data to plot")
+            return
+
+        if 'correlation' in df.columns:
+            df = df.sort_values('correlation', ascending=False).head(n)
+        else:
+            df = df.head(n)
+
+        gene_col = 'gene' if 'gene' in df.columns else df.columns[0]
+        corr_col = 'correlation' if 'correlation' in df.columns else df.columns[1]
+
+        fig, ax = plt.subplots(figsize=figsize)
+        y_pos = range(len(df))
+        ax.barh(y_pos, df[corr_col].values, color='steelblue')
+        ax.set_yticks(y_pos)
+        ax.set_yticklabels(df[gene_col].values)
+        ax.invert_yaxis()
+        ax.set_xlabel('Correlation')
+        ax.set_title(f'Top {len(df)} Correlated Genes')
+        plt.tight_layout()
+        return fig
+
+    def plot_go_enrichment(self, n: int = 15, figsize: Tuple[int, int] = (8, 6)):
+        """
+        Bar chart of GO enrichment results (−log10 FDR).
+
+        Args:
+            n: Number of GO terms to show
+            figsize: Figure size as ``(width, height)``
+
+        Returns:
+            matplotlib Figure
+        """
+        try:
+            import matplotlib.pyplot as plt
+        except ImportError:
+            raise ImportError("matplotlib required for plotting. Install with: pip install matplotlib")
+
+        df = self.go_to_dataframe()
+        if df.empty:
+            print("No GO enrichment data to plot")
+            return
+
+        fdr_col = 'fdr' if 'fdr' in df.columns else 'p_value' if 'p_value' in df.columns else None
+        name_col = 'name' if 'name' in df.columns else df.columns[0]
+
+        if fdr_col is None:
+            print("No FDR or p-value column found in GO enrichment data")
+            return
+
+        df = df.sort_values(fdr_col, ascending=True).head(n)
+        df['neg_log10_fdr'] = -np.log10(df[fdr_col].clip(lower=1e-300))
+
+        fig, ax = plt.subplots(figsize=figsize)
+        y_pos = range(len(df))
+        ax.barh(y_pos, df['neg_log10_fdr'].values, color='darkorange')
+        ax.set_yticks(y_pos)
+        ax.set_yticklabels(df[name_col].values)
+        ax.invert_yaxis()
+        ax.set_xlabel('-log10(FDR)')
+        ax.set_title(f'Top {len(df)} GO Enrichment Terms')
+        plt.tight_layout()
+        return fig
+
+    def __repr__(self) -> str:
+        parts = [f"CoexpressionResult(dataset='{self.dataset_id}'"]
+        parts.append(f"genes={len(self.correlated_genes)}")
+        parts.append(f"query_cells={self.n_query_cells}")
+        parts.append(f"metacells={self.n_mapped_metacells}")
+        if self.go_enrichment:
+            parts.append(f"go_terms={len(self.go_enrichment)}")
+        return ', '.join(parts) + ')'
+
+    def __len__(self) -> int:
+        return len(self.correlated_genes)

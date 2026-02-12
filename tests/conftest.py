@@ -105,3 +105,53 @@ def sample_metadata():
             'project.project_core.project_short_name': 'MouseBrain',
         },
     }
+
+
+@pytest.fixture
+def sample_coexpression_response():
+    """Realistic CoexpressionResult data."""
+    return {
+        'dataset_id': 'human_cortex',
+        'correlated_genes': [
+            {'gene': 'FOXP3', 'correlation': 0.95, 'p_value': 1e-10},
+            {'gene': 'IL2RA', 'correlation': 0.88, 'p_value': 1e-8},
+            {'gene': 'CTLA4', 'correlation': 0.82, 'p_value': 1e-7},
+            {'gene': 'IKZF2', 'correlation': 0.75, 'p_value': 1e-6},
+            {'gene': 'TNFRSF18', 'correlation': 0.70, 'p_value': 1e-5},
+        ],
+        'umap_scores': {
+            'metacell_ids': [1, 2, 3, 4],
+            'x': [1.0, 2.0, 3.0, 4.0],
+            'y': [5.0, 6.0, 7.0, 8.0],
+            'positive_fraction': [0.8, 0.1, 0.5, 0.3],
+        },
+        'go_enrichment': [
+            {'go_id': 'GO:0001', 'name': 'immune regulation', 'fdr': 1e-5},
+            {'go_id': 'GO:0002', 'name': 'T cell activation', 'fdr': 1e-3},
+            {'go_id': 'GO:0003', 'name': 'cytokine signaling', 'fdr': 0.01},
+        ],
+        'cell_type_enrichment': [
+            {'cell_type': 'T regulatory', 'enrichment_score': 0.9, 'p_value': 1e-8},
+            {'cell_type': 'CD4+ T cell', 'enrichment_score': 0.6, 'p_value': 1e-4},
+        ],
+        'tissue_breakdown': [
+            {'tissue': 'blood', 'fraction': 0.6},
+            {'tissue': 'lymph node', 'fraction': 0.3},
+            {'tissue': 'spleen', 'fraction': 0.1},
+        ],
+        'n_query_cells': 5000,
+        'n_mapped_metacells': 120,
+    }
+
+
+@pytest.fixture
+def sample_umap_compact():
+    """Realistic compact UMAP coordinate data."""
+    return {
+        'x': [1.0, 2.0, 3.0, 4.0, 5.0],
+        'y': [10.0, 20.0, 30.0, 40.0, 50.0],
+        'metacell_ids': [101, 102, 103, 104, 105],
+        'n_cells': [50, 80, 120, 60, 90],
+        'samples': ['s1', 's1', 's2', 's2', 's3'],
+        'clusters': ['c1', 'c1', 'c2', 'c2', 'c3'],
+    }

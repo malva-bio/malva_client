@@ -10,7 +10,7 @@ import responses
 from responses import matchers
 
 from malva_client.client import MalvaClient
-from malva_client.models import SearchResult, SingleCellResult, CoverageResult
+from malva_client.models import SearchResult, SingleCellResult, CoverageResult, CoexpressionResult, UMAPCoordinates
 from malva_client.exceptions import (
     MalvaAPIError,
     AuthenticationError,
@@ -514,6 +514,79 @@ class TestDatasetDiscovery:
         result = mock_client.get_studies()
         assert isinstance(result, pd.DataFrame)
         assert len(result) == 1
+
+
+# ===========================================================================
+# Error Handling
+# ===========================================================================
+
+# ===========================================================================
+# Coexpression
+# ===========================================================================
+
+class TestCoexpressionMethods:
+    @responses.activate
+    def test_get_umap_coordinates(self, mock_client):
+        responses.add(
+            responses.GET, f"{BASE}/api/coexpression/umap/human_cortex",
+            json={
+                'x': [1.0, 2.0], 'y': [3.0, 4.0],
+                'metacell_ids': [1, 2],
+                'clusters': ['c1', 'c2'],
+            },
+        )
+        result = mock_client.get_umap_coordinates("human_cortex")
+        assert isinstance(result, UMAPCoordinates)
+        assert len(result) == 2
+
+    @responses.activate
+    def test_get_coexpression(self, mock_client):
+        def check_body(request):
+            body = json.loads(request.body)
+            assert body['job_id'] == 'j1'
+            assert body['dataset_id'] == 'human_cortex'
+            # Full query should NOT have include_* flags set to False
+            assert 'include_go_enrichment' not in body
+            return (200, {}, json.dumps({
+                'dataset_id': 'human_cortex',
+                'correlated_genes': [{'gene': 'FOX', 'correlation': 0.9, 'p_value': 1e-5}],
+                'n_query_cells': 100,
+                'n_mapped_metacells': 10,
+            }))
+
+        responses.add_callback(
+            responses.POST, f"{BASE}/api/coexpression/query-by-job",
+            callback=check_body,
+        )
+        result = mock_client.get_coexpression("j1", "human_cortex")
+        assert isinstance(result, CoexpressionResult)
+        assert result.dataset_id == 'human_cortex'
+        assert len(result.correlated_genes) == 1
+
+    @responses.activate
+    def test_get_coexpression_genes(self, mock_client):
+        def check_body(request):
+            body = json.loads(request.body)
+            assert body['job_id'] == 'j1'
+            assert body['dataset_id'] == 'human_cortex'
+            assert body['include_go_enrichment'] is False
+            assert body['include_umap_scores'] is False
+            assert body['include_cell_type_enrichment'] is False
+            assert body['include_tissue_breakdown'] is False
+            return (200, {}, json.dumps({
+                'dataset_id': 'human_cortex',
+                'correlated_genes': [{'gene': 'FOX', 'correlation': 0.9, 'p_value': 1e-5}],
+                'n_query_cells': 100,
+                'n_mapped_metacells': 10,
+            }))
+
+        responses.add_callback(
+            responses.POST, f"{BASE}/api/coexpression/query-by-job",
+            callback=check_body,
+        )
+        result = mock_client.get_coexpression_genes("j1", "human_cortex")
+        assert isinstance(result, CoexpressionResult)
+        assert len(result.correlated_genes) == 1
 
 
 # ===========================================================================

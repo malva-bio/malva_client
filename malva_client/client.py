@@ -11,7 +11,7 @@ import h5py
 import anndata as ad
 
 from malva_client.exceptions import MalvaAPIError, AuthenticationError, SearchError, QuotaExceededError
-from malva_client.models import SearchResult, SingleCellResult, CoverageResult
+from malva_client.models import SearchResult, SingleCellResult, CoverageResult, CoexpressionResult, UMAPCoordinates
 from malva_client.config import Config
 
 logging.basicConfig(level=logging.INFO)
@@ -1347,6 +1347,70 @@ class MalvaClient:
             Dictionary with overview statistics (total samples, studies, etc.)
         """
         return self._request('GET', '/samples/api/overview')
+
+    # ── Coexpression Analysis Methods ──
+
+    def get_umap_coordinates(self, dataset_id: str) -> 'UMAPCoordinates':
+        """
+        Get UMAP coordinates for a dataset's metacells.
+
+        Args:
+            dataset_id: Dataset identifier
+
+        Returns:
+            UMAPCoordinates object with x, y, cluster, and sample data
+        """
+        response = self._request('GET', f'/api/coexpression/umap/{dataset_id}')
+        return UMAPCoordinates(response, self)
+
+    def get_coexpression(self, job_id: str, dataset_id: str) -> 'CoexpressionResult':
+        """
+        Run a full coexpression analysis for a search job on a dataset.
+
+        Calls ``POST /api/coexpression/query-by-job`` with all enrichment
+        options enabled (GO enrichment, UMAP scores, cell-type enrichment,
+        tissue breakdown).
+
+        Args:
+            job_id: Job ID from a previous search
+            dataset_id: Dataset identifier to run coexpression against
+
+        Returns:
+            CoexpressionResult with correlated genes, UMAP scores, GO
+            enrichment, cell-type enrichment, and tissue breakdown
+        """
+        data = {
+            'job_id': job_id,
+            'dataset_id': dataset_id,
+        }
+        response = self._request('POST', '/api/coexpression/query-by-job', json=data)
+        return CoexpressionResult(response, self)
+
+    def get_coexpression_genes(self, job_id: str, dataset_id: str) -> 'CoexpressionResult':
+        """
+        Lightweight coexpression query returning only correlated genes.
+
+        Same endpoint as :meth:`get_coexpression` but disables GO
+        enrichment, UMAP scores, cell-type enrichment, and tissue
+        breakdown for faster response.
+
+        Args:
+            job_id: Job ID from a previous search
+            dataset_id: Dataset identifier
+
+        Returns:
+            CoexpressionResult with only the correlated_genes field populated
+        """
+        data = {
+            'job_id': job_id,
+            'dataset_id': dataset_id,
+            'include_go_enrichment': False,
+            'include_umap_scores': False,
+            'include_cell_type_enrichment': False,
+            'include_tissue_breakdown': False,
+        }
+        response = self._request('POST', '/api/coexpression/query-by-job', json=data)
+        return CoexpressionResult(response, self)
 
 
 # Convenience functions for common operations

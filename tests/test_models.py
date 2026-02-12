@@ -5,7 +5,10 @@ import numpy as np
 import pytest
 from unittest.mock import MagicMock
 
-from malva_client.models import SearchResult, MalvaDataFrame, SingleCellResult, CoverageResult
+from malva_client.models import (
+    SearchResult, MalvaDataFrame, SingleCellResult, CoverageResult,
+    CoexpressionResult, UMAPCoordinates,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -336,3 +339,126 @@ class TestCoverageResult:
         cr = CoverageResult({'job_id': 'empty'})
         df = cr.to_dataframe()
         assert df.empty
+
+
+# ===========================================================================
+# UMAPCoordinates
+# ===========================================================================
+
+class TestUMAPCoordinates:
+    def test_from_compact(self, sample_umap_compact):
+        uc = UMAPCoordinates(sample_umap_compact)
+        assert len(uc) == 5
+        assert uc.x == [1.0, 2.0, 3.0, 4.0, 5.0]
+        assert uc.clusters == ['c1', 'c1', 'c2', 'c2', 'c3']
+
+    def test_to_dataframe(self, sample_umap_compact):
+        uc = UMAPCoordinates(sample_umap_compact)
+        df = uc.to_dataframe()
+        assert len(df) == 5
+        assert 'x' in df.columns
+        assert 'y' in df.columns
+        assert 'cluster' in df.columns
+        assert 'metacell_id' in df.columns
+        assert 'n_cells' in df.columns
+        assert 'sample' in df.columns
+
+    def test_repr(self, sample_umap_compact):
+        uc = UMAPCoordinates(sample_umap_compact)
+        text = repr(uc)
+        assert 'n_points=5' in text
+        assert 'clusters=3' in text
+
+    def test_empty(self):
+        uc = UMAPCoordinates({})
+        assert len(uc) == 0
+        df = uc.to_dataframe()
+        assert df.empty
+
+
+# ===========================================================================
+# CoexpressionResult
+# ===========================================================================
+
+class TestCoexpressionResult:
+    def test_init(self, sample_coexpression_response):
+        cr = CoexpressionResult(sample_coexpression_response)
+        assert cr.dataset_id == 'human_cortex'
+        assert cr.n_query_cells == 5000
+        assert cr.n_mapped_metacells == 120
+        assert len(cr) == 5  # 5 correlated genes
+
+    def test_genes_to_dataframe(self, sample_coexpression_response):
+        cr = CoexpressionResult(sample_coexpression_response)
+        df = cr.genes_to_dataframe()
+        assert len(df) == 5
+        assert 'gene' in df.columns
+        assert 'correlation' in df.columns
+        assert 'p_value' in df.columns
+
+    def test_scores_to_dataframe(self, sample_coexpression_response):
+        cr = CoexpressionResult(sample_coexpression_response)
+        df = cr.scores_to_dataframe()
+        assert len(df) == 4
+        assert 'metacell_ids' in df.columns
+        assert 'positive_fraction' in df.columns
+
+    def test_go_to_dataframe(self, sample_coexpression_response):
+        cr = CoexpressionResult(sample_coexpression_response)
+        df = cr.go_to_dataframe()
+        assert len(df) == 3
+        assert 'go_id' in df.columns
+        assert 'name' in df.columns
+        assert 'fdr' in df.columns
+
+    def test_cell_type_enrichment_to_dataframe(self, sample_coexpression_response):
+        cr = CoexpressionResult(sample_coexpression_response)
+        df = cr.cell_type_enrichment_to_dataframe()
+        assert len(df) == 2
+        assert 'cell_type' in df.columns
+
+    def test_tissue_breakdown_to_dataframe(self, sample_coexpression_response):
+        cr = CoexpressionResult(sample_coexpression_response)
+        df = cr.tissue_breakdown_to_dataframe()
+        assert len(df) == 3
+        assert 'tissue' in df.columns
+
+    def test_get_top_genes(self, sample_coexpression_response):
+        cr = CoexpressionResult(sample_coexpression_response)
+        top = cr.get_top_genes(n=3)
+        assert len(top) == 3
+        assert top[0] == 'FOXP3'  # highest correlation
+        assert top[1] == 'IL2RA'
+
+    def test_get_top_genes_with_min_correlation(self, sample_coexpression_response):
+        cr = CoexpressionResult(sample_coexpression_response)
+        top = cr.get_top_genes(n=20, min_correlation=0.80)
+        assert len(top) == 3  # FOXP3 (0.95), IL2RA (0.88), CTLA4 (0.82)
+
+    def test_empty_result(self):
+        cr = CoexpressionResult({})
+        assert len(cr) == 0
+        assert cr.genes_to_dataframe().empty
+        assert cr.scores_to_dataframe().empty
+        assert cr.go_to_dataframe().empty
+        assert cr.cell_type_enrichment_to_dataframe().empty
+        assert cr.tissue_breakdown_to_dataframe().empty
+        assert cr.get_top_genes() == []
+
+    def test_repr(self, sample_coexpression_response):
+        cr = CoexpressionResult(sample_coexpression_response)
+        text = repr(cr)
+        assert 'human_cortex' in text
+        assert 'genes=5' in text
+        assert 'query_cells=5000' in text
+
+    def test_len(self, sample_coexpression_response):
+        cr = CoexpressionResult(sample_coexpression_response)
+        assert len(cr) == 5
+
+    def test_umap_to_dataframe(self, sample_coexpression_response):
+        cr = CoexpressionResult(sample_coexpression_response)
+        df = cr.umap_to_dataframe()
+        assert len(df) == 4
+        assert 'x' in df.columns
+        assert 'y' in df.columns

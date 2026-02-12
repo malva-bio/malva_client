@@ -32,6 +32,12 @@ Client
    .. automethod:: download_coverage_wig
    .. automethod:: get_coverage_filter_options
 
+   .. rubric:: Coexpression Analysis
+
+   .. automethod:: get_umap_coordinates
+   .. automethod:: get_coexpression
+   .. automethod:: get_coexpression_genes
+
    .. rubric:: Samples & Datasets
 
    .. automethod:: get_samples

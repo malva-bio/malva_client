@@ -22,6 +22,8 @@ __all__ = [
     'SearchResult',
     'CoverageResult',
     'SingleCellResult',
+    'CoexpressionResult',
+    'UMAPCoordinates',
     'Config',
     'search_gene',
     'search_sequence',
@@ -46,8 +48,10 @@ def __getattr__(name):
         )
         return locals()[name]
 
-    elif name in ('SearchResult', 'CoverageResult', 'SingleCellResult'):
-        from .models import SearchResult, CoverageResult, SingleCellResult
+    elif name in ('SearchResult', 'CoverageResult', 'SingleCellResult',
+                  'CoexpressionResult', 'UMAPCoordinates'):
+        from .models import (SearchResult, CoverageResult, SingleCellResult,
+                             CoexpressionResult, UMAPCoordinates)
         return locals()[name]
 
     elif name == 'Config':

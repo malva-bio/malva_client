@@ -235,10 +235,84 @@ By default, Malva aggregates expression per sample and cell type.  Use
 
 .. code-block:: python
 
-   cells = client.search_cells("CDR1as")
+   cells = client.search_cells("SPP1")
    cells.enrich_with_metadata()
    df = cells.to_pandas()
    print(df[["cell_type", "organ", "pseudocount"]].head())
+
+Coexpression Analysis
+---------------------
+
+The coexpression API identifies genes that are co-expressed with your query
+across a dataset's metacell atlas.  All heavy computation happens on the
+server.
+
+Basic workflow
+^^^^^^^^^^^^^^
+
+.. code-block:: python
+
+   # 1. Search for a gene
+   result = client.search("FOXP3")
+
+   # 2. Run coexpression on a dataset
+   coexpr = client.get_coexpression(result.job_id, "DATASET_ID")
+
+   # 3. Visualise the UMAP coloured by expression
+   coexpr.plot_umap(color_by='positive_fraction')
+
+   # 4. Get the top correlated genes
+   top_genes = coexpr.get_top_genes(20)
+   print(top_genes)
+
+UMAP coordinates
+^^^^^^^^^^^^^^^^
+
+Fetch the base UMAP embedding for a dataset (useful for visualising cluster
+structure before running a coexpression query):
+
+.. code-block:: python
+
+   umap = client.get_umap_coordinates("DATASET_ID")
+   umap.plot(color_by='cluster')
+   df = umap.to_dataframe()
+
+Correlated genes
+^^^^^^^^^^^^^^^^
+
+Inspect and plot the correlated gene list:
+
+.. code-block:: python
+
+   genes_df = coexpr.genes_to_dataframe()
+   print(genes_df.head(20))
+   coexpr.plot_top_genes(n=20)
+
+Lightweight query
+^^^^^^^^^^^^^^^^^
+
+If you only need the correlated genes (no UMAP scores, GO enrichment,
+or cell-type breakdown), use the lightweight endpoint:
+
+.. code-block:: python
+
+   quick = client.get_coexpression_genes(result.job_id, "DATASET_ID")
+   quick.get_top_genes(5)
+
+GO and cell type enrichment
+^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+.. code-block:: python
+
+   # GO enrichment
+   go_df = coexpr.go_to_dataframe()
+   coexpr.plot_go_enrichment(n=10)
+
+   # Cell type enrichment
+   ct_df = coexpr.cell_type_enrichment_to_dataframe()
+
+   # Tissue breakdown
+   tissue_df = coexpr.tissue_breakdown_to_dataframe()
 
 Coverage Analysis
 -----------------
