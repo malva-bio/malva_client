@@ -1643,10 +1643,13 @@ class CoexpressionResult:
         if point_size is None:
             point_size = max(1, 200 / (len(df) ** 0.5))
 
-        x_col = 'x' if 'x' in df.columns else df.columns[0]
-        y_col = 'y' if 'y' in df.columns else df.columns[1]
+        x_col = 'umap_x' if 'umap_x' in df.columns else df.columns[0]
+        y_col = 'umap_y' if 'umap_y' in df.columns else df.columns[1]
 
         if color_by in df.columns:
+            # resort if the data is numeric, to plot properly
+            if pd.api.types.is_any_real_numeric_dtype(df[color_by]):
+                df = df.sort_values(by=color_by, ascending=True)
             scatter = ax.scatter(df[x_col], df[y_col], c=df[color_by],
                                  s=point_size, cmap=cmap, alpha=0.7)
             plt.colorbar(scatter, ax=ax, label=color_by)

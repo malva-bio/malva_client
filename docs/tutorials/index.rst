@@ -33,13 +33,7 @@ Interactive Jupyter notebooks demonstrating common Malva Client workflows.
       :link: 04_coexpression_analysis
       :link-type: doc
 
-      Server-side coexpression, correlated genes, GO enrichment, and UMAP visualization.
-
-   .. grid-item-card:: Cell Projection & Similarity
-      :link: 05_cell_projection
-      :link-type: doc
-
-      Combine local scanpy analysis with server-side coexpression for cross-comparison.
+      Coexpression networks, correlated genes, GO enrichment, and UMAP visualization.
 
 .. toctree::
    :maxdepth: 1
@@ -50,4 +44,3 @@ Interactive Jupyter notebooks demonstrating common Malva Client workflows.
    02_querying_covid
    03_projecting_to_cells
    04_coexpression_analysis
-   05_cell_projection
