@@ -1387,10 +1387,10 @@ class UMAPCoordinates:
 
         self.x = raw_data.get('x', [])
         self.y = raw_data.get('y', [])
-        self.metacell_ids = raw_data.get('metacell_ids', [])
+        self.metacell_ids = raw_data.get('metacell_id', [])
         self.n_cells = raw_data.get('n_cells', [])
-        self.samples = raw_data.get('samples', [])
-        self.clusters = raw_data.get('clusters', [])
+        self.samples = raw_data.get('sample', [])
+        self.clusters = raw_data.get('cluster', [])
 
     def to_dataframe(self) -> pd.DataFrame:
         """
