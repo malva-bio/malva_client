@@ -14,6 +14,68 @@ from malva_client.exceptions import MalvaAPIError, AuthenticationError, SearchEr
 from malva_client.models import SearchResult, SingleCellResult, CoverageResult, CoexpressionResult, UMAPCoordinates
 from malva_client.config import Config
 
+
+def _expr_data_from_columnar(expr_col: dict) -> dict:
+    """Reconstruct row-major expression_data from compact_v2 columnar format."""
+    si = expr_col.get('si', [])
+    n = len(si)
+    if n == 0:
+        return {
+            'data': [],
+            'samples': expr_col.get('samples', []),
+            'cell_types': expr_col.get('cell_types', []),
+            'columns': expr_col.get('columns', []),
+            'celltype_sample_counts': expr_col.get('celltype_sample_counts', {}),
+        }
+    ci = expr_col.get('ci', [])
+    v0 = expr_col.get('v0', [])
+    v1 = expr_col.get('v1', [])
+    v2 = expr_col.get('v2', [])
+    v3 = expr_col.get('v3', [])
+    v4 = expr_col.get('v4', [])
+    return {
+        'data': [[si[j], ci[j], v0[j], v1[j], v2[j], v3[j], v4[j]] for j in range(n)],
+        'samples': expr_col.get('samples', []),
+        'cell_types': expr_col.get('cell_types', []),
+        'columns': expr_col.get('columns', []),
+        'celltype_sample_counts': expr_col.get('celltype_sample_counts', {}),
+    }
+
+
+def _reconstruct_compact_v2(data: dict) -> dict:
+    """Reconstruct compact_v2 search result to dense format in-place.
+
+    The search server stores results in compact_v2 (deduplicated cell/sample
+    arrays + columnar expression_data) and now serves it directly.  This
+    function expands it back to the dense per-gene format the rest of the
+    client code expects.  No-op for any other format.
+    """
+    if not isinstance(data, dict) or data.get('_format') != 'compact_v2':
+        return data
+
+    global_cells = data.get('_global_cells', [])
+    global_samples = data.get('_global_samples', [])
+    results = data.get('results', {})
+
+    for gene, gdata in results.items():
+        if gene.startswith('_') or not isinstance(gdata, dict):
+            continue
+        ci = gdata.pop('_ci', None)
+        if ci:
+            gdata['cell'] = [global_cells[i] for i in ci]
+            gdata['sample'] = [global_samples[i] for i in ci]
+        else:
+            gdata['cell'] = []
+            gdata['sample'] = []
+        ed = gdata.get('expression_data')
+        if isinstance(ed, dict) and ed.get('_fmt') == 'col':
+            gdata['expression_data'] = _expr_data_from_columnar(ed)
+
+    data.pop('_format', None)
+    data.pop('_global_cells', None)
+    data.pop('_global_samples', None)
+    return data
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -152,7 +214,11 @@ class MalvaClient:
                     raise MalvaAPIError(f"HTTP {response.status_code}: {response.text[:200]}")
             
             try:
-                return response.json()
+                result = response.json()
+                # Transparently reconstruct compact_v2 to dense format.
+                if isinstance(result, dict) and result.get('_format') == 'compact_v2':
+                    _reconstruct_compact_v2(result)
+                return result
             except json.JSONDecodeError as e:
                 content_type = response.headers.get('content-type', 'unknown')
                 raise MalvaAPIError(f"Expected JSON response but got {content_type}. Content: {response.text[:200]}")
