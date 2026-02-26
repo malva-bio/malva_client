@@ -649,7 +649,7 @@ class MalvaClient:
 
                 if status == 'completed':
                     logger.info(f"Batch search completed with job ID: {job_id}")
-                    return SearchResult(results_response.get('results', results_response), self)
+                    return SearchResult({'job_id': job_id, 'status': 'completed'}, self)
                 elif status == 'error':
                     error_msg = results_response.get('error', 'Unknown error')
                     raise MalvaAPIError(f"Batch search failed: {error_msg}")
@@ -729,7 +729,7 @@ class MalvaClient:
 
                 if status == 'completed':
                     logger.info(f"Gene search completed with job ID: {job_id}")
-                    return SearchResult(results_response.get('results', results_response), self)
+                    return SearchResult({'job_id': job_id, 'status': 'completed'}, self)
                 elif status == 'error':
                     error_msg = results_response.get('error', 'Unknown error')
                     raise MalvaAPIError(f"Gene search failed: {error_msg}")

@@ -15,6 +15,38 @@ from malva_client.exceptions import MalvaAPIError, AuthenticationError, SearchEr
 logger = logging.getLogger(__name__)
 
 
+def _expr_data_from_columnar(expr_col: dict) -> dict:
+    """Expand columnar (_fmt: col) expression_data to row-major format.
+
+    The server encodes aggregated expression data in a compact columnar layout
+    (si, ci, v0-v4 as parallel arrays) to minimise JSON payload. This function
+    reconstructs the row-major 'data' list expected by _convert_to_dataframe.
+    """
+    si = expr_col.get('si', [])
+    n = len(si)
+    if n == 0:
+        return {
+            'data': [],
+            'samples': expr_col.get('samples', []),
+            'cell_types': expr_col.get('cell_types', []),
+            'columns': expr_col.get('columns', []),
+            'celltype_sample_counts': expr_col.get('celltype_sample_counts', {}),
+        }
+    ci = expr_col.get('ci', [])
+    v0 = expr_col.get('v0', [])
+    v1 = expr_col.get('v1', [])
+    v2 = expr_col.get('v2', [])
+    v3 = expr_col.get('v3', [])
+    v4 = expr_col.get('v4', [])
+    return {
+        'data': [[si[j], ci[j], v0[j], v1[j], v2[j], v3[j], v4[j]] for j in range(n)],
+        'samples': expr_col.get('samples', []),
+        'cell_types': expr_col.get('cell_types', []),
+        'columns': expr_col.get('columns', []),
+        'celltype_sample_counts': expr_col.get('celltype_sample_counts', {}),
+    }
+
+
 class MalvaDataFrame:
     """
     Wrapper around pandas DataFrame with sample metadata enrichment and analysis methods
@@ -674,6 +706,10 @@ class SearchResult(MalvaDataFrame):
             # Handle the new compact expression_data format
             if 'expression_data' in result:
                 expression_data = result['expression_data']
+                # Expand columnar format (_fmt: col) to row-major before reading 'data'.
+                # The /api/expression-data/<job_id>/results endpoint returns columnar layout.
+                if isinstance(expression_data, dict) and expression_data.get('_fmt') == 'col':
+                    expression_data = _expr_data_from_columnar(expression_data)
                 data = expression_data.get('data', [])
                 columns = expression_data.get('columns', [])
                 samples = expression_data.get('samples', [])
@@ -764,11 +800,17 @@ class SearchResult(MalvaDataFrame):
     @property
     def results(self) -> Dict[str, Any]:
         """Get the raw search results"""
+        self._ensure_loaded()
         return self.raw_data.get('results', {})
-    
+
+    def __len__(self) -> int:
+        self._ensure_loaded()
+        return len(self._df)
+
     @property
     def total_cells(self) -> int:
         """Get total number of cells found"""
+        self._ensure_loaded()
         if 'cell_count' in self._df.columns:
             return int(self._df['cell_count'].sum())
         else:
