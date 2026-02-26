@@ -668,9 +668,9 @@ class SearchResult(MalvaDataFrame):
         
         all_data = []
         for gene_seq, result in results.items():
-            if gene_seq == "_sample_metadata":
+            if gene_seq.startswith('_') or not isinstance(result, dict):
                 continue
-                
+
             # Handle the new compact expression_data format
             if 'expression_data' in result:
                 expression_data = result['expression_data']

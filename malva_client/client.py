@@ -625,8 +625,9 @@ class MalvaClient:
         response = self._request('POST', '/search', json=data)
 
         if response.get('status') == 'completed':
-            logger.info(f"Batch search completed with job ID: {response['job_id']}")
-            return SearchResult(response['results'], self)
+            job_id = response.get('job_id')
+            logger.info(f"Batch search completed with job ID: {job_id}")
+            return SearchResult({'job_id': job_id, 'status': 'completed'}, self)
 
         job_id = response['job_id']
         logger.info(f"Batch search submitted with job ID: {job_id}")
@@ -704,8 +705,9 @@ class MalvaClient:
         response = self._request('POST', '/search', json=data)
 
         if response.get('status') == 'completed':
-            logger.info(f"Gene search completed with job ID: {response['job_id']}")
-            return SearchResult(response['results'], self)
+            job_id = response.get('job_id')
+            logger.info(f"Gene search completed with job ID: {job_id}")
+            return SearchResult({'job_id': job_id, 'status': 'completed'}, self)
 
         job_id = response['job_id']
         logger.info(f"Gene search submitted with job ID: {job_id}")
