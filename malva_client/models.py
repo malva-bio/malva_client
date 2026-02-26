@@ -12,6 +12,41 @@ import anndata as ad
 
 from malva_client.exceptions import MalvaAPIError, AuthenticationError, SearchError, QuotaExceededError
 
+logger = logging.getLogger(__name__)
+
+
+def _expr_data_from_columnar(expr_col: dict) -> dict:
+    """Expand columnar (_fmt: col) expression_data to row-major format.
+
+    The server encodes aggregated expression data in a compact columnar layout
+    (si, ci, v0-v4 as parallel arrays) to minimise JSON payload. This function
+    reconstructs the row-major 'data' list expected by _convert_to_dataframe.
+    """
+    si = expr_col.get('si', [])
+    n = len(si)
+    if n == 0:
+        return {
+            'data': [],
+            'samples': expr_col.get('samples', []),
+            'cell_types': expr_col.get('cell_types', []),
+            'columns': expr_col.get('columns', []),
+            'celltype_sample_counts': expr_col.get('celltype_sample_counts', {}),
+        }
+    ci = expr_col.get('ci', [])
+    v0 = expr_col.get('v0', [])
+    v1 = expr_col.get('v1', [])
+    v2 = expr_col.get('v2', [])
+    v3 = expr_col.get('v3', [])
+    v4 = expr_col.get('v4', [])
+    return {
+        'data': [[si[j], ci[j], v0[j], v1[j], v2[j], v3[j], v4[j]] for j in range(n)],
+        'samples': expr_col.get('samples', []),
+        'cell_types': expr_col.get('cell_types', []),
+        'columns': expr_col.get('columns', []),
+        'celltype_sample_counts': expr_col.get('celltype_sample_counts', {}),
+    }
+
+
 class MalvaDataFrame:
     """
     Wrapper around pandas DataFrame with sample metadata enrichment and analysis methods
@@ -601,18 +636,58 @@ class MalvaDataFrame:
         return self._df[field].value_counts().head(limit)
 
 class SearchResult(MalvaDataFrame):
-    """Container for search results that extends MalvaDataFrame for direct analysis"""
-    
+    """Container for search results that extends MalvaDataFrame for direct analysis.
+
+    Data loading is lazy: if raw_data contains no 'results' (e.g. it is the
+    initial POST response or a lightweight status response), the DataFrame is
+    populated on first access to .df by fetching
+    /api/expression-data/<job_id>/results from the server.
+    """
+
     def __init__(self, raw_data: Dict[str, Any], client: 'MalvaClient'):
         self.raw_data = raw_data
         self.client = client
         self._enriched = False
-        
-        # Convert to DataFrame immediately
+        self._job_id = raw_data.get('job_id') if isinstance(raw_data, dict) else None
+
+        # Try to build DataFrame immediately; mark for lazy fetch if no data yet.
         expr_df = self._convert_to_dataframe()
-        
-        # Initialize as MalvaDataFrame (without metadata initially)
+        self._needs_lazy_fetch = expr_df.empty and bool(self._job_id)
+
         super().__init__(expr_df, client, sample_metadata={})
+
+    def _ensure_loaded(self):
+        """Lazily fetch expression data from the server if not yet loaded."""
+        if not self._needs_lazy_fetch:
+            return
+        self._needs_lazy_fetch = False
+        try:
+            import time as _time
+            logger.info(f"Fetching results for job {self._job_id} ...")
+            t0 = _time.time()
+            response = self.client._request(
+                'GET', f'/api/expression-data/{self._job_id}/results'
+            )
+            # response may be a dict or a SearchResults wrapper
+            if hasattr(response, '_data'):
+                response = response._data
+            n_genes = len(response.get('results', {})) if isinstance(response, dict) else 0
+            logger.info(
+                f"Results parsed in {_time.time() - t0:.1f}s: {n_genes} genes"
+            )
+            self.raw_data = response
+            self._df = self._convert_to_dataframe()
+            sample_meta = response.get('_sample_metadata', {}) if isinstance(response, dict) else {}
+            self._sample_metadata = sample_meta
+            self._enrich_with_metadata()
+        except Exception as exc:
+            logger.error(f"Failed to fetch results for job {self._job_id}: {exc}")
+
+    @property
+    def df(self) -> 'pd.DataFrame':
+        """Return the expression DataFrame, fetching lazily if needed."""
+        self._ensure_loaded()
+        return self._df
     
     def _convert_to_dataframe(self) -> pd.DataFrame:
         """Convert raw search results to DataFrame - keep sample-level aggregates"""
@@ -625,12 +700,16 @@ class SearchResult(MalvaDataFrame):
         
         all_data = []
         for gene_seq, result in results.items():
-            if gene_seq == "_sample_metadata":
+            if gene_seq.startswith('_') or not isinstance(result, dict):
                 continue
-                
+
             # Handle the new compact expression_data format
             if 'expression_data' in result:
                 expression_data = result['expression_data']
+                # Expand columnar format (_fmt: col) to row-major before reading 'data'.
+                # The /api/expression-data/<job_id>/results endpoint returns columnar layout.
+                if isinstance(expression_data, dict) and expression_data.get('_fmt') == 'col':
+                    expression_data = _expr_data_from_columnar(expression_data)
                 data = expression_data.get('data', [])
                 columns = expression_data.get('columns', [])
                 samples = expression_data.get('samples', [])
@@ -721,11 +800,17 @@ class SearchResult(MalvaDataFrame):
     @property
     def results(self) -> Dict[str, Any]:
         """Get the raw search results"""
+        self._ensure_loaded()
         return self.raw_data.get('results', {})
-    
+
+    def __len__(self) -> int:
+        self._ensure_loaded()
+        return len(self._df)
+
     @property
     def total_cells(self) -> int:
         """Get total number of cells found"""
+        self._ensure_loaded()
         if 'cell_count' in self._df.columns:
             return int(self._df['cell_count'].sum())
         else:
@@ -765,6 +850,7 @@ class SearchResult(MalvaDataFrame):
         return self
     
     def __repr__(self) -> str:
+        self._ensure_loaded()
         if self._df.empty:
             return "SearchResult: No data found"
         
@@ -821,6 +907,7 @@ class SearchResult(MalvaDataFrame):
     
     def _repr_html_(self) -> str:
         """HTML representation for Jupyter notebooks"""
+        self._ensure_loaded()
         if self._df.empty:
             return "<div><strong>SearchResult:</strong> No data found</div>"
         
@@ -1363,3 +1450,395 @@ class CoverageResult:
 
     def __len__(self) -> int:
         return len(self.positions)
+
+
+class UMAPCoordinates:
+    """
+    Lightweight container for UMAP coordinates from the coexpression API.
+
+    Wraps the compact parallel-array format returned by
+    ``GET /api/coexpression/umap/<dataset_id>`` and provides conversion to
+    a pandas DataFrame and a simple scatter-plot method.
+    """
+
+    def __init__(self, raw_data: Dict[str, Any], client: Optional['MalvaClient'] = None):
+        """
+        Initialize UMAPCoordinates.
+
+        Args:
+            raw_data: Raw response from the UMAP endpoint
+            client: MalvaClient instance for follow-up requests
+        """
+        self.raw_data = raw_data
+        self.client = client
+
+        self.x = raw_data.get('x', [])
+        self.y = raw_data.get('y', [])
+        self.metacell_ids = raw_data.get('metacell_id', [])
+        self.n_cells = raw_data.get('n_cells', [])
+        self.samples = raw_data.get('sample', [])
+        self.clusters = raw_data.get('cluster', [])
+
+    def to_dataframe(self) -> pd.DataFrame:
+        """
+        Convert to a pandas DataFrame.
+
+        Returns:
+            DataFrame with columns: x, y, metacell_id, n_cells, sample, cluster
+        """
+        data: Dict[str, Any] = {'x': self.x, 'y': self.y}
+
+        if self.metacell_ids:
+            data['metacell_id'] = self.metacell_ids
+        if self.n_cells:
+            data['n_cells'] = self.n_cells
+        if self.samples:
+            data['sample'] = self.samples
+        if self.clusters:
+            data['cluster'] = self.clusters
+
+        return pd.DataFrame(data)
+
+    def plot(self, color_by: str = 'cluster', point_size: Optional[float] = None,
+             cmap: str = 'tab20', figsize: Tuple[int, int] = (10, 8)):
+        """
+        Scatter plot of UMAP coordinates.
+
+        Args:
+            color_by: Column to color points by (default ``'cluster'``)
+            point_size: Marker size (auto-scaled if ``None``)
+            cmap: Matplotlib colormap name
+            figsize: Figure size as ``(width, height)``
+
+        Returns:
+            matplotlib Figure
+        """
+        try:
+            import matplotlib.pyplot as plt
+        except ImportError:
+            raise ImportError("matplotlib required for plotting. Install with: pip install matplotlib")
+
+        df = self.to_dataframe()
+        if df.empty:
+            print("No UMAP data to plot")
+            return
+
+        fig, ax = plt.subplots(figsize=figsize)
+
+        if point_size is None:
+            point_size = max(1, 200 / (len(df) ** 0.5))
+
+        if color_by in df.columns:
+            col = df[color_by]
+            if col.dtype == 'object' or hasattr(col, 'cat'):
+                categories = col.unique()
+                color_map = {cat: i for i, cat in enumerate(categories)}
+                colors = col.map(color_map)
+                scatter = ax.scatter(df['x'], df['y'], c=colors, s=point_size,
+                                     cmap=cmap, alpha=0.7)
+                handles = [plt.Line2D([0], [0], marker='o', color='w',
+                                       markerfacecolor=plt.get_cmap(cmap)(color_map[cat] / max(len(categories) - 1, 1)),
+                                       markersize=8, label=str(cat))
+                           for cat in categories]
+                ax.legend(handles=handles, bbox_to_anchor=(1.05, 1),
+                          loc='upper left', fontsize='small')
+            else:
+                scatter = ax.scatter(df['x'], df['y'], c=col, s=point_size,
+                                     cmap=cmap, alpha=0.7)
+                plt.colorbar(scatter, ax=ax, label=color_by)
+        else:
+            ax.scatter(df['x'], df['y'], s=point_size, alpha=0.7)
+
+        ax.set_xlabel('UMAP 1')
+        ax.set_ylabel('UMAP 2')
+        ax.set_title(f'UMAP ({color_by})')
+        plt.tight_layout()
+        return fig
+
+    def __repr__(self) -> str:
+        return f"UMAPCoordinates(n_points={len(self.x)}, clusters={len(set(self.clusters)) if self.clusters else 'N/A'})"
+
+    def __len__(self) -> int:
+        return len(self.x)
+
+
+class CoexpressionResult:
+    """
+    Full coexpression analysis result from the Malva coexpression API.
+
+    Wraps the response from ``POST /api/coexpression/query-by-job`` and
+    provides DataFrame conversions, top-gene retrieval, and plotting
+    helpers for correlated genes, GO enrichment, and UMAP scores.
+    """
+
+    def __init__(self, raw_data: Dict[str, Any], client: Optional['MalvaClient'] = None):
+        """
+        Initialize CoexpressionResult.
+
+        Args:
+            raw_data: Raw response from the coexpression endpoint
+            client: MalvaClient instance for follow-up requests
+        """
+        self.raw_data = raw_data
+        self.client = client
+
+        self.dataset_id = raw_data.get('dataset_id', '')
+        self.correlated_genes = raw_data.get('correlated_genes', [])
+        self.umap_scores = raw_data.get('umap_scores', {})
+        self.go_enrichment = raw_data.get('go_enrichment', [])
+        self.cell_type_enrichment = raw_data.get('cell_type_enrichment', [])
+        self.tissue_breakdown = raw_data.get('tissue_breakdown', [])
+        self.n_query_cells = raw_data.get('n_query_cells', 0)
+        self.n_mapped_metacells = raw_data.get('n_mapped_metacells', 0)
+
+    # -- DataFrame conversions ------------------------------------------------
+
+    def genes_to_dataframe(self) -> pd.DataFrame:
+        """
+        Convert correlated genes to a DataFrame.
+
+        Returns:
+            DataFrame with columns: gene, correlation, p_value (plus any
+            extra fields returned by the server)
+        """
+        if not self.correlated_genes:
+            return pd.DataFrame(columns=['gene', 'correlation', 'p_value'])
+        return pd.DataFrame(self.correlated_genes)
+
+    def scores_to_dataframe(self) -> pd.DataFrame:
+        """
+        Convert UMAP scores to a DataFrame.
+
+        Returns:
+            DataFrame with metacell-level score data
+        """
+        scores = self.umap_scores
+        if not scores:
+            return pd.DataFrame()
+
+        # Handle parallel-array (compact) format
+        if isinstance(scores, dict) and 'metacell_ids' in scores:
+            data: Dict[str, Any] = {}
+            for key, values in scores.items():
+                if isinstance(values, list):
+                    data[key] = values
+            return pd.DataFrame(data)
+
+        # Handle list-of-dicts format
+        if isinstance(scores, list):
+            return pd.DataFrame(scores)
+
+        return pd.DataFrame()
+
+    def umap_to_dataframe(self) -> pd.DataFrame:
+        """
+        Convert UMAP score data to a DataFrame with x/y coordinates.
+
+        Falls back to :meth:`scores_to_dataframe` when coordinates are
+        embedded in the scores payload.
+
+        Returns:
+            DataFrame with UMAP coordinates and scores
+        """
+        return self.scores_to_dataframe()
+
+    def go_to_dataframe(self) -> pd.DataFrame:
+        """
+        Convert GO enrichment results to a DataFrame.
+
+        Returns:
+            DataFrame with columns such as go_id, name, fdr, etc.
+        """
+        if not self.go_enrichment:
+            return pd.DataFrame(columns=['go_id', 'name', 'fdr'])
+        return pd.DataFrame(self.go_enrichment)
+
+    def cell_type_enrichment_to_dataframe(self) -> pd.DataFrame:
+        """
+        Convert cell-type enrichment to a DataFrame.
+
+        Returns:
+            DataFrame with cell-type enrichment data
+        """
+        if not self.cell_type_enrichment:
+            return pd.DataFrame()
+        return pd.DataFrame(self.cell_type_enrichment)
+
+    def tissue_breakdown_to_dataframe(self) -> pd.DataFrame:
+        """
+        Convert tissue breakdown to a DataFrame.
+
+        Returns:
+            DataFrame with tissue breakdown data
+        """
+        if not self.tissue_breakdown:
+            return pd.DataFrame()
+        return pd.DataFrame(self.tissue_breakdown)
+
+    # -- Convenience ----------------------------------------------------------
+
+    def get_top_genes(self, n: int = 20, min_correlation: float = 0.0) -> List[str]:
+        """
+        Get the top *n* correlated gene names.
+
+        Args:
+            n: Number of genes to return
+            min_correlation: Minimum correlation to include
+
+        Returns:
+            List of gene names
+        """
+        df = self.genes_to_dataframe()
+        if df.empty:
+            return []
+
+        if 'correlation' in df.columns:
+            df = df[df['correlation'] >= min_correlation]
+            df = df.sort_values('correlation', ascending=False)
+
+        gene_col = 'gene' if 'gene' in df.columns else df.columns[0]
+        return df[gene_col].head(n).tolist()
+
+    # -- Plotting -------------------------------------------------------------
+
+    def plot_umap(self, color_by: str = 'positive_fraction', point_size: Optional[float] = None,
+                  cmap: str = 'viridis', figsize: Tuple[int, int] = (10, 8)):
+        """
+        Scatter plot of UMAP coordinates coloured by a score column.
+
+        Args:
+            color_by: Column in the scores data to use for colouring
+            point_size: Marker size (auto-scaled if ``None``)
+            cmap: Matplotlib colormap name
+            figsize: Figure size as ``(width, height)``
+
+        Returns:
+            matplotlib Figure
+        """
+        try:
+            import matplotlib.pyplot as plt
+        except ImportError:
+            raise ImportError("matplotlib required for plotting. Install with: pip install matplotlib")
+
+        df = self.scores_to_dataframe()
+        if df.empty:
+            print("No UMAP score data to plot")
+            return
+
+        fig, ax = plt.subplots(figsize=figsize)
+
+        if point_size is None:
+            point_size = max(1, 200 / (len(df) ** 0.5))
+
+        x_col = 'umap_x' if 'umap_x' in df.columns else df.columns[0]
+        y_col = 'umap_y' if 'umap_y' in df.columns else df.columns[1]
+
+        if color_by in df.columns:
+            # resort if the data is numeric, to plot properly
+            if pd.api.types.is_any_real_numeric_dtype(df[color_by]):
+                df = df.sort_values(by=color_by, ascending=True)
+            scatter = ax.scatter(df[x_col], df[y_col], c=df[color_by],
+                                 s=point_size, cmap=cmap, alpha=0.7)
+            plt.colorbar(scatter, ax=ax, label=color_by)
+        else:
+            ax.scatter(df[x_col], df[y_col], s=point_size, alpha=0.7)
+
+        ax.set_xlabel('UMAP 1')
+        ax.set_ylabel('UMAP 2')
+        ax.set_title(f'Coexpression UMAP ({color_by})')
+        plt.tight_layout()
+        return fig
+
+    def plot_top_genes(self, n: int = 20, figsize: Tuple[int, int] = (8, 6)):
+        """
+        Horizontal bar chart of the top correlated genes.
+
+        Args:
+            n: Number of genes to show
+            figsize: Figure size as ``(width, height)``
+
+        Returns:
+            matplotlib Figure
+        """
+        try:
+            import matplotlib.pyplot as plt
+        except ImportError:
+            raise ImportError("matplotlib required for plotting. Install with: pip install matplotlib")
+
+        df = self.genes_to_dataframe()
+        if df.empty:
+            print("No correlated gene data to plot")
+            return
+
+        if 'correlation' in df.columns:
+            df = df.sort_values('correlation', ascending=False).head(n)
+        else:
+            df = df.head(n)
+
+        gene_col = 'gene' if 'gene' in df.columns else df.columns[0]
+        corr_col = 'correlation' if 'correlation' in df.columns else df.columns[1]
+
+        fig, ax = plt.subplots(figsize=figsize)
+        y_pos = range(len(df))
+        ax.barh(y_pos, df[corr_col].values, color='steelblue')
+        ax.set_yticks(y_pos)
+        ax.set_yticklabels(df[gene_col].values)
+        ax.invert_yaxis()
+        ax.set_xlabel('Correlation')
+        ax.set_title(f'Top {len(df)} Correlated Genes')
+        plt.tight_layout()
+        return fig
+
+    def plot_go_enrichment(self, n: int = 15, figsize: Tuple[int, int] = (8, 6)):
+        """
+        Bar chart of GO enrichment results (−log10 FDR).
+
+        Args:
+            n: Number of GO terms to show
+            figsize: Figure size as ``(width, height)``
+
+        Returns:
+            matplotlib Figure
+        """
+        try:
+            import matplotlib.pyplot as plt
+        except ImportError:
+            raise ImportError("matplotlib required for plotting. Install with: pip install matplotlib")
+
+        df = self.go_to_dataframe()
+        if df.empty:
+            print("No GO enrichment data to plot")
+            return
+
+        fdr_col = 'fdr' if 'fdr' in df.columns else 'p_value' if 'p_value' in df.columns else None
+        name_col = 'name' if 'name' in df.columns else df.columns[0]
+
+        if fdr_col is None:
+            print("No FDR or p-value column found in GO enrichment data")
+            return
+
+        df = df.sort_values(fdr_col, ascending=True).head(n)
+        df['neg_log10_fdr'] = -np.log10(df[fdr_col].clip(lower=1e-300))
+
+        fig, ax = plt.subplots(figsize=figsize)
+        y_pos = range(len(df))
+        ax.barh(y_pos, df['neg_log10_fdr'].values, color='darkorange')
+        ax.set_yticks(y_pos)
+        ax.set_yticklabels(df[name_col].values)
+        ax.invert_yaxis()
+        ax.set_xlabel('-log10(FDR)')
+        ax.set_title(f'Top {len(df)} GO Enrichment Terms')
+        plt.tight_layout()
+        return fig
+
+    def __repr__(self) -> str:
+        parts = [f"CoexpressionResult(dataset='{self.dataset_id}'"]
+        parts.append(f"genes={len(self.correlated_genes)}")
+        parts.append(f"query_cells={self.n_query_cells}")
+        parts.append(f"metacells={self.n_mapped_metacells}")
+        if self.go_enrichment:
+            parts.append(f"go_terms={len(self.go_enrichment)}")
+        return ', '.join(parts) + ')'
+
+    def __len__(self) -> int:
+        return len(self.correlated_genes)

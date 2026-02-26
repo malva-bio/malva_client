@@ -73,3 +73,33 @@ CoverageResult
    .. automethod:: get_filter_options
    .. automethod:: download_wig
    .. automethod:: plot
+
+CoexpressionResult
+------------------
+
+.. autoclass:: malva_client.models.CoexpressionResult
+   :no-members:
+   :show-inheritance:
+
+   .. automethod:: __init__
+   .. automethod:: genes_to_dataframe
+   .. automethod:: scores_to_dataframe
+   .. automethod:: umap_to_dataframe
+   .. automethod:: go_to_dataframe
+   .. automethod:: cell_type_enrichment_to_dataframe
+   .. automethod:: tissue_breakdown_to_dataframe
+   .. automethod:: get_top_genes
+   .. automethod:: plot_umap
+   .. automethod:: plot_top_genes
+   .. automethod:: plot_go_enrichment
+
+UMAPCoordinates
+---------------
+
+.. autoclass:: malva_client.models.UMAPCoordinates
+   :no-members:
+   :show-inheritance:
+
+   .. automethod:: __init__
+   .. automethod:: to_dataframe
+   .. automethod:: plot

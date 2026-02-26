@@ -8,13 +8,11 @@ Malva indexes every sample with fixed-length **k-mers** (k = 24 nucleotides).
 When you submit a query sequence, the engine:
 
 1. Extracts all k-mers from the query.
-2. Slides a window of **w** consecutive k-mers across the query.
-3. For each window, counts how many k-mers are present in a cell's index.
-4. Reports a hit when the fraction of matching k-mers meets or exceeds the
-   **threshold** (tau).
+2. Looks up each k-mer in the index and identifies which cells contain it.
+3. Aggregates per-cell hit counts and normalises them into expression scores.
 
-The two user-facing parameters — ``window_size`` and ``threshold`` — let you
-control this sensitivity/specificity trade-off.
+The three user-facing parameters let you filter which k-mers participate in
+the search and whether both strands are considered.
 
 Parameters
 ----------
@@ -26,24 +24,26 @@ Parameters
       :class-card: sd-border-primary sd-rounded-3
       :class-header: sd-bg-primary sd-text-white
 
-      Window Size (w)
+      min_kmer_presence
       ^^^
-      Number of consecutive k-mers per sliding window.  A window of *w* k-mers
-      covers *w + 23* nucleotides.
+      Exclude k-mers that appear in **fewer** than this many cells across
+      the entire database.
 
-      * **Larger** (64--120) — robust to mismatches, best for expression
-      * **Smaller** (24) — contiguous region, best for junctions/SNVs
+      * ``0`` (default) — no lower filter; all k-mers used
+      * ``10`` – ``100`` — removes k-mers that are extremely rare
+        (likely sequencing errors or ultra-low-coverage regions)
 
    .. grid-item-card::
       :class-card: sd-border-success sd-rounded-3
       :class-header: sd-bg-success sd-text-white
 
-      Threshold (tau)
+      max_kmer_presence
       ^^^
-      Minimum fraction of k-mers in a window that must match (0.0--1.0).
+      Exclude k-mers that appear in **more** than this many cells.
 
-      * **Lower** (0.5--0.65) — tolerates mismatches, expression queries
-      * **Higher** (0.9--1.0) — near-exact, junctions/SNV screening
+      * ``100000`` (default) — retains nearly all k-mers
+      * ``10000`` – ``50000`` — removes highly repetitive / ubiquitous
+        k-mers that would inflate scores for unrelated cell types
 
    .. grid-item-card::
       :class-card: sd-border-info sd-rounded-3
@@ -51,17 +51,14 @@ Parameters
 
       Strandedness
       ^^^
-      By default both strands are searched.  Set ``stranded=True`` to restrict
-      to the forward strand only.
+      By default the forward strand only is searched.  Set
+      ``stranded=False`` to include reverse-complement k-mers as well.
 
-      Useful for antisense oligos or distinguishing sense vs. antisense
-      transcription.
+      Useful for ambiguous queries or when the orientation of your
+      sequence is not known.
 
-Recommended Parameters
-----------------------
-
-The table below summarises recommended settings for common use cases
-(based on Supplementary Table 2 of the Malva manuscript).
+Recommended Settings
+--------------------
 
 .. list-table::
    :header-rows: 1
@@ -69,29 +66,29 @@ The table below summarises recommended settings for common use cases
    :class: sd-table-hover
 
    * - Use Case
-     - Window Size (w)
-     - Threshold (tau)
+     - min_kmer_presence
+     - max_kmer_presence
      - Notes
    * - Transcript expression
-     - 64--120
-     - 0.50--0.65
-     - Default-like; tolerant of mismatches
+     - ``0``
+     - ``100000``
+     - Defaults are fine for most genes
    * - Splice junction detection
-     - 24
-     - 1.0
-     - Exact match over junction sequence
-   * - Circular RNA (back-splice)
-     - 24
-     - 1.0
-     - Query should span the BSJ
+     - ``0``
+     - ``10000``
+     - Junction k-mers should be moderately rare
+   * - Viral / pathogen sequences
+     - ``0``
+     - ``5000``
+     - Pathogen k-mers uncommon in human transcriptomes
+   * - Repeat / low-complexity regions
+     - ``10``
+     - ``5000``
+     - Discard both error k-mers and repeat elements
    * - SNV / short variant detection
-     - 24
-     - 1.0
-     - Probe covers variant +/- 12 nt
-   * - Isoform-level analysis
-     - 64--96
-     - 0.50--0.65
-     - Use isoform-specific exon sequences
+     - ``0``
+     - ``50000``
+     - Variant k-mers rare; exclude highly repetitive flanking k-mers
 
 Probe Design Guidelines
 -----------------------
@@ -100,49 +97,55 @@ Probe Design Guidelines
 
    .. tab-item:: Transcript Expression
 
-      Use the full coding sequence or a representative exon.  Larger windows
-      average over local noise.
+      Use the full coding sequence or a representative exon.  The
+      default parameters work well.
 
       .. code-block:: python
 
-         results = client.search("BRCA1", window_size=96, threshold=0.55)
+         results = client.search("BRCA1")
+
+         # Or with explicit filtering
+         results = client.search_sequences(
+             "ATCGATCGATCG" * 20,
+             max_kmer_presence=50000,
+         )
 
    .. tab-item:: Splice Junction
 
-      Design a probe of ~48 nt centred on the junction (24 nt from each exon).
-      Use ``window_size=24`` and ``threshold=1.0`` so only reads spanning the
-      exact junction are counted.
+      Design a probe of ~48 nt centred on the junction (24 nt from each
+      exon).  Reducing ``max_kmer_presence`` ensures only junction-specific
+      k-mers contribute.
 
       .. code-block:: python
 
          junction = "ACGTACGT" * 6  # 48 nt spanning junction
-         results = client.search_sequence(
-             junction, window_size=24, threshold=1.0
+         results = client.search_sequences(
+             junction,
+             max_kmer_presence=10000,
          )
 
    .. tab-item:: Circular RNA (BSJ)
 
-      Same principle: design a probe that spans the back-splice junction and
-      use exact matching.
+      Same principle: design a probe that spans the back-splice junction.
 
       .. code-block:: python
 
          bsj_probe = "CTAG" * 12  # 48 nt across BSJ
-         results = client.search_sequence(
-             bsj_probe, window_size=24, threshold=1.0
+         results = client.search_sequences(
+             bsj_probe,
+             max_kmer_presence=10000,
          )
 
    .. tab-item:: SNV Detection
 
-      Centre a 48 nt probe on the variant position.  The variant must fall
-      within the window so that exact matching distinguishes reference from
-      alternative alleles.
+      Centre a 48 nt probe on the variant position.
 
       .. code-block:: python
 
          snv_probe = ref_context[:24] + alt_base + ref_context[25:48]
-         results = client.search_sequence(
-             snv_probe, window_size=24, threshold=1.0
+         results = client.search_sequences(
+             snv_probe,
+             max_kmer_presence=50000,
          )
 
 .. warning::
@@ -156,20 +159,26 @@ Probe Design Guidelines
 Stranded Search
 ---------------
 
-Pass ``stranded=True`` when the orientation of your query matters:
+By default Malva searches the **forward strand only**, which is correct for
+most RNA-seq queries where the query sequence is in the same orientation as the
+transcript.
+
+Pass ``stranded=False`` when you want to include reverse-complement k-mers:
 
 .. code-block:: python
 
-   # Antisense probe — only count forward-strand matches
-   results = client.search_sequence(antisense_oligo, stranded=True)
+   # Both strands — useful when orientation is ambiguous
+   results = client.search_sequences(probe, stranded=False)
 
-Omitting the parameter (or setting it to ``False``) searches both strands,
-which is the correct default for most expression queries.
+   # Forward only (default)
+   results = client.search_sequences(probe, stranded=True)
+   results = client.search_sequences(probe)  # same as above
 
 Default Behaviour
 -----------------
 
-When ``window_size``, ``threshold``, or ``stranded`` are omitted, the server
-applies its own defaults (currently tuned for general transcript-level
-expression queries).  You only need to set these parameters when your use case
-requires tighter or looser matching than the default.
+When ``min_kmer_presence``, ``max_kmer_presence``, or ``stranded`` are omitted,
+the server applies the defaults shown above (``0``, ``100000``, forward only).
+These work well for the majority of expression queries.  Adjust them when you
+need to reduce noise from rare k-mers (``min_kmer_presence``) or filter out
+repetitive/ubiquitous k-mers (``max_kmer_presence``).

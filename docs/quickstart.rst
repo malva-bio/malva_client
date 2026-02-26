@@ -89,7 +89,7 @@ so you can filter, aggregate, and plot straight away.
 
       .. code-block:: python
 
-         result = client.search_sequence(
+         result = client.search_sequences(
              "ATCGATCGATCGATCGATCGATCG"
          )
 
@@ -145,8 +145,9 @@ Batch sequences
 .. tip::
 
    The total nucleotide count across all sequences must be 100 kb or
-   less.  If you need to search longer sequences, use
-   ``search_sequence()`` individually.
+   less.  If you need to search a longer sequence, pass it as a single
+   string: ``client.search_sequences("ATCG..." * 1000)`` — single strings
+   are not subject to the 100 kb batch limit (max 500 kb).
 
 Batch genes
 ^^^^^^^^^^^
@@ -171,35 +172,39 @@ Batch genes
 Tuning Search Parameters
 -------------------------
 
-Malva's index uses fixed-length k-mers (k = 24).  Two parameters let you
-control the sensitivity/specificity trade-off:
+Malva's index uses fixed-length k-mers (k = 24).  Three parameters let you
+filter which k-mers participate in the search:
 
-* **window_size** -- number of consecutive k-mers evaluated per sliding window
-* **threshold** -- fraction of k-mers in a window that must match (0.0--1.0)
+* **min_kmer_presence** -- exclude k-mers appearing in fewer than N cells
+  (removes rare / error k-mers)
+* **max_kmer_presence** -- exclude k-mers appearing in more than N cells
+  (removes repetitive / ubiquitous k-mers)
+* **stranded** -- restrict to forward strand (``True``) or search both
+  strands (``False``)
 
 See :doc:`query_parameters` for recommended values per use case.
 
 .. tab-set::
 
-   .. tab-item:: Expression (permissive)
+   .. tab-item:: Expression (default)
 
       .. code-block:: python
 
-         result = client.search("BRCA1", window_size=96, threshold=0.55)
+         result = client.search("BRCA1")
 
-   .. tab-item:: Exact match (junctions / SNVs)
+   .. tab-item:: Filter repetitive k-mers
 
       .. code-block:: python
 
-         result = client.search_sequence(
-             junction_seq, window_size=24, threshold=1.0
+         result = client.search_sequences(
+             junction_seq, max_kmer_presence=10000
          )
 
    .. tab-item:: Strand-specific
 
       .. code-block:: python
 
-         result = client.search_sequence(probe, stranded=True)
+         result = client.search_sequences(probe, stranded=True)
 
 Working with Results
 --------------------
@@ -235,10 +240,84 @@ By default, Malva aggregates expression per sample and cell type.  Use
 
 .. code-block:: python
 
-   cells = client.search_cells("CDR1as")
+   cells = client.search_cells("SPP1")
    cells.enrich_with_metadata()
    df = cells.to_pandas()
    print(df[["cell_type", "organ", "pseudocount"]].head())
+
+Coexpression Analysis
+---------------------
+
+The coexpression API identifies genes that are co-expressed with your query
+across a dataset's metacell atlas.  All heavy computation happens on the
+server.
+
+Basic workflow
+^^^^^^^^^^^^^^
+
+.. code-block:: python
+
+   # 1. Search for a gene
+   result = client.search("FOXP3")
+
+   # 2. Run coexpression on a dataset
+   coexpr = client.get_coexpression(result.job_id, "DATASET_ID")
+
+   # 3. Visualise the UMAP coloured by expression
+   coexpr.plot_umap(color_by='positive_fraction')
+
+   # 4. Get the top correlated genes
+   top_genes = coexpr.get_top_genes(20)
+   print(top_genes)
+
+UMAP coordinates
+^^^^^^^^^^^^^^^^
+
+Fetch the base UMAP embedding for a dataset (useful for visualising cluster
+structure before running a coexpression query):
+
+.. code-block:: python
+
+   umap = client.get_umap_coordinates("DATASET_ID")
+   umap.plot(color_by='cluster')
+   df = umap.to_dataframe()
+
+Correlated genes
+^^^^^^^^^^^^^^^^
+
+Inspect and plot the correlated gene list:
+
+.. code-block:: python
+
+   genes_df = coexpr.genes_to_dataframe()
+   print(genes_df.head(20))
+   coexpr.plot_top_genes(n=20)
+
+Lightweight query
+^^^^^^^^^^^^^^^^^
+
+If you only need the correlated genes (no UMAP scores, GO enrichment,
+or cell-type breakdown), use the lightweight endpoint:
+
+.. code-block:: python
+
+   quick = client.get_coexpression_genes(result.job_id, "DATASET_ID")
+   quick.get_top_genes(5)
+
+GO and cell type enrichment
+^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+.. code-block:: python
+
+   # GO enrichment
+   go_df = coexpr.go_to_dataframe()
+   coexpr.plot_go_enrichment(n=10)
+
+   # Cell type enrichment
+   ct_df = coexpr.cell_type_enrichment_to_dataframe()
+
+   # Tissue breakdown
+   tissue_df = coexpr.tissue_breakdown_to_dataframe()
 
 Coverage Analysis
 -----------------
@@ -482,7 +561,7 @@ All core functionality is also available from the terminal:
    malva_client search "BRCA1" --output results.csv --format csv
 
    # With tuning parameters
-   malva_client search "ATCGATCG..." --window-size 24 --threshold 1.0 --stranded
+   malva_client search "ATCGATCG..." --max-kmer-presence 10000 --stranded
 
    # Async workflow
    malva_client search "FOXP3" --no-wait

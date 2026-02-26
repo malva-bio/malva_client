@@ -61,6 +61,8 @@ Key Features
 
 **Coverage** -- Genomic region and sequence coverage across cell types, filterable by organ, study, and disease.
 
+**Coexpression** -- Gene coexpression analysis, metacell UMAP visualization, and GO enrichment.
+
 **Dataset Discovery** -- Browse datasets, studies, samples, and harmonized metadata.
 
 .. toctree::

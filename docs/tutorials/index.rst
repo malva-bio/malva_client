@@ -29,6 +29,12 @@ Interactive Jupyter notebooks demonstrating common Malva Client workflows.
 
       Single-cell resolution analysis and projection.
 
+   .. grid-item-card:: Coexpression Analysis
+      :link: 04_coexpression_analysis
+      :link-type: doc
+
+      Coexpression networks, correlated genes, GO enrichment, and UMAP visualization.
+
 .. toctree::
    :maxdepth: 1
    :hidden:
@@ -37,3 +43,4 @@ Interactive Jupyter notebooks demonstrating common Malva Client workflows.
    01_expression_analysis
    02_querying_covid
    03_projecting_to_cells
+   04_coexpression_analysis
