@@ -89,7 +89,7 @@ so you can filter, aggregate, and plot straight away.
 
       .. code-block:: python
 
-         result = client.search_sequence(
+         result = client.search_sequences(
              "ATCGATCGATCGATCGATCGATCG"
          )
 
@@ -145,8 +145,9 @@ Batch sequences
 .. tip::
 
    The total nucleotide count across all sequences must be 100 kb or
-   less.  If you need to search longer sequences, use
-   ``search_sequence()`` individually.
+   less.  If you need to search a longer sequence, pass it as a single
+   string: ``client.search_sequences("ATCG..." * 1000)`` — single strings
+   are not subject to the 100 kb batch limit (max 500 kb).
 
 Batch genes
 ^^^^^^^^^^^
@@ -171,35 +172,39 @@ Batch genes
 Tuning Search Parameters
 -------------------------
 
-Malva's index uses fixed-length k-mers (k = 24).  Two parameters let you
-control the sensitivity/specificity trade-off:
+Malva's index uses fixed-length k-mers (k = 24).  Three parameters let you
+filter which k-mers participate in the search:
 
-* **window_size** -- number of consecutive k-mers evaluated per sliding window
-* **threshold** -- fraction of k-mers in a window that must match (0.0--1.0)
+* **min_kmer_presence** -- exclude k-mers appearing in fewer than N cells
+  (removes rare / error k-mers)
+* **max_kmer_presence** -- exclude k-mers appearing in more than N cells
+  (removes repetitive / ubiquitous k-mers)
+* **stranded** -- restrict to forward strand (``True``) or search both
+  strands (``False``)
 
 See :doc:`query_parameters` for recommended values per use case.
 
 .. tab-set::
 
-   .. tab-item:: Expression (permissive)
+   .. tab-item:: Expression (default)
 
       .. code-block:: python
 
-         result = client.search("BRCA1", window_size=96, threshold=0.55)
+         result = client.search("BRCA1")
 
-   .. tab-item:: Exact match (junctions / SNVs)
+   .. tab-item:: Filter repetitive k-mers
 
       .. code-block:: python
 
-         result = client.search_sequence(
-             junction_seq, window_size=24, threshold=1.0
+         result = client.search_sequences(
+             junction_seq, max_kmer_presence=10000
          )
 
    .. tab-item:: Strand-specific
 
       .. code-block:: python
 
-         result = client.search_sequence(probe, stranded=True)
+         result = client.search_sequences(probe, stranded=True)
 
 Working with Results
 --------------------
@@ -556,7 +561,7 @@ All core functionality is also available from the terminal:
    malva_client search "BRCA1" --output results.csv --format csv
 
    # With tuning parameters
-   malva_client search "ATCGATCG..." --window-size 24 --threshold 1.0 --stranded
+   malva_client search "ATCGATCG..." --max-kmer-presence 10000 --stranded
 
    # Async workflow
    malva_client search "FOXP3" --no-wait

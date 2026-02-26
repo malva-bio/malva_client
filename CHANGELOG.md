@@ -5,6 +5,42 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-02-26
+
+### Added
+- **`min_kmer_presence` / `max_kmer_presence`** parameters on `search()`,
+  `search_sequences()`, `search_cells()`, `search_genes()` — filter k-mers
+  by database prevalence to reduce noise from rare errors or ubiquitous
+  repeats
+- **Unified `search_sequences()`** now accepts either a single `str` or a
+  `List[str]`.  A single string (up to 500 kb) is sent directly; a list
+  (total ≤ 100 kb) is submitted as a FASTA batch.  `search_sequence()` is
+  removed; pass a string to `search_sequences()` instead
+
+### Changed
+- **All search methods submit jobs asynchronously** (`wait_for_completion`
+  is now handled by client-side polling only).  This prevents 502 Bad
+  Gateway errors from nginx proxy read timeouts on long-running searches
+- `stranded` parameter now correctly maps to server's `unstranded_mode`
+  field (previously the key was sent verbatim and ignored by the server)
+- `window_size` and `threshold` parameters removed — these were server-
+  internal and never had any effect on results
+
+### Fixed
+- **502 Bad Gateway on long searches**: POST `/search` no longer holds
+  the connection open; the server starts the job and returns a `job_id`
+  immediately
+- **"still running" after Redis write failure**: `GET /search/{job_id}`
+  now falls back to the on-disk result file when Redis holds a stale
+  `running`/`pending` entry (happens when the Redis connection resets
+  after a long job)
+- **Empty results for all searches**: `SearchResult._convert_to_dataframe`
+  now handles the `_fmt: col` columnar expression format returned by the
+  server (previously every gene was silently skipped)
+- **Non-JSON error responses**: `_request` now catches
+  `requests.exceptions.JSONDecodeError` (simplejson variant) and reports
+  the HTTP status code and body instead of a cryptic "Request failed" error
+
 ## [0.2.0] - 2026-02-06
 
 ### Added
