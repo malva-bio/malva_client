@@ -1115,27 +1115,24 @@ class MalvaClient:
         """
         from malva_client.storage import get_job_status as get_local_status, save_job_status
 
-        # First check if we have results cached locally
+        # Check local cache — always use lazy loading via job_id
         local_status = get_local_status(job_id)
-        if local_status and local_status.get('results_data'):
-            logger.info(f"Using cached results for job {job_id}")
-            return SearchResult(local_status['results_data'], self)
+        if local_status and local_status.get('status') == 'completed':
+            logger.info(f"Job {job_id} found in local cache, using lazy load")
+            return SearchResult({'job_id': job_id, 'status': 'completed'}, self)
 
         # Otherwise fetch from server
         status_response = self.get_job_status(job_id)
 
         if status_response['status'] == 'completed':
-            results_data = status_response.get('results', {})
-
-            # Cache results locally
+            # Use lazy loading — SearchResult will fetch /api/expression-data/{job_id}/results
             save_job_status(
                 job_id=job_id,
                 status='completed',
                 server_url=self.base_url,
-                results_data=results_data
+                results_data={}
             )
-
-            return SearchResult(results_data, self)
+            return SearchResult({'job_id': job_id, 'status': 'completed'}, self)
 
         elif status_response['status'] == 'error':
             error_msg = status_response.get('error', 'Unknown error')

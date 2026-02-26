@@ -808,6 +808,7 @@ class SearchResult(MalvaDataFrame):
         return self
     
     def __repr__(self) -> str:
+        self._ensure_loaded()
         if self._df.empty:
             return "SearchResult: No data found"
         
@@ -864,6 +865,7 @@ class SearchResult(MalvaDataFrame):
     
     def _repr_html_(self) -> str:
         """HTML representation for Jupyter notebooks"""
+        self._ensure_loaded()
         if self._df.empty:
             return "<div><strong>SearchResult:</strong> No data found</div>"
         
