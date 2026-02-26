@@ -42,13 +42,97 @@ def _expr_data_from_columnar(expr_col: dict) -> dict:
     }
 
 
+class GeneResult:
+    """Lazy per-gene view over compact_v2 data; per-cell arrays expanded on access."""
+
+    def __init__(self, gdata: dict, global_cells, global_samples):
+        self._d = gdata
+        self._gc = global_cells
+        self._gs = global_samples
+
+    @property
+    def ncells(self) -> int:
+        return len(self._d.get('_ci') or self._d.get('cell') or [])
+
+    @property
+    def expression_data(self) -> dict:
+        ed = self._d.get('expression_data', {})
+        if isinstance(ed, dict) and ed.get('_fmt') == 'col':
+            return _expr_data_from_columnar(ed)
+        return ed
+
+    @property
+    def cells(self) -> np.ndarray:
+        ci = self._d.get('_ci')
+        if ci is not None and self._gc is not None:
+            return np.asarray(self._gc, dtype=np.uint32)[np.asarray(ci, dtype=np.int32)]
+        return np.asarray(self._d.get('cell', []), dtype=np.uint64)
+
+    @property
+    def samples(self) -> np.ndarray:
+        ci = self._d.get('_ci')
+        if ci is not None and self._gs is not None:
+            return np.asarray(self._gs, dtype=np.uint64)[np.asarray(ci, dtype=np.int32)]
+        return np.asarray(self._d.get('sample', []), dtype=np.uint64)
+
+    @property
+    def expression(self) -> np.ndarray:
+        return np.asarray(self._d.get('expression', []), dtype=np.float32)
+
+    # Allow dict-style access for backward-compatible code that does result['cell']
+    def __getitem__(self, key: str):
+        if key == 'cell':
+            return self.cells.tolist()
+        if key == 'sample':
+            return self.samples.tolist()
+        if key == 'expression':
+            return self.expression.tolist()
+        if key == 'expression_data':
+            return self.expression_data
+        if key == 'ncells':
+            return self.ncells
+        return self._d[key]
+
+    def get(self, key: str, default=None):
+        try:
+            return self[key]
+        except KeyError:
+            return default
+
+
+class SearchResults:
+    """Lazy wrapper for compact_v2 search results.  Instantiation is O(1)."""
+
+    def __init__(self, data: dict):
+        r = data.get('results', data)
+        self._compact = isinstance(r, dict) and r.get('_format') == 'compact_v2'
+        self._gc = r.get('_global_cells') if self._compact else None
+        self._gs = r.get('_global_samples') if self._compact else None
+        self._r = r
+        self.sample_metadata = r.get('_sample_metadata', {})
+
+    @property
+    def genes(self) -> list:
+        return [k for k, v in self._r.items() if not k.startswith('_') and isinstance(v, dict)]
+
+    def __getitem__(self, gene: str) -> GeneResult:
+        return GeneResult(self._r[gene], self._gc, self._gs)
+
+    def __contains__(self, gene: str) -> bool:
+        return gene in self._r and not gene.startswith('_')
+
+    def items(self):
+        for g in self.genes:
+            yield g, self[g]
+
+    def __iter__(self):
+        return iter(self.genes)
+
+
 def _reconstruct_compact_v2(data: dict) -> dict:
     """Reconstruct compact_v2 search result to dense format in-place.
 
-    The search server stores results in compact_v2 (deduplicated cell/sample
-    arrays + columnar expression_data) and now serves it directly.  This
-    function expands it back to the dense per-gene format the rest of the
-    client code expects.  No-op for any other format.
+    Kept for backward compatibility; prefer SearchResults for new code.
     """
     if not isinstance(data, dict) or data.get('_format') != 'compact_v2':
         return data
@@ -215,9 +299,10 @@ class MalvaClient:
             
             try:
                 result = response.json()
-                # Transparently reconstruct compact_v2 to dense format.
-                if isinstance(result, dict) and result.get('_format') == 'compact_v2':
-                    _reconstruct_compact_v2(result)
+                # Return a lazy SearchResults wrapper for compact_v2 to avoid
+                # O(N_cells × N_genes) list expansion at parse time.
+                if isinstance(result, dict) and result.get('results', {}).get('_format') == 'compact_v2':
+                    return SearchResults(result)
                 return result
             except json.JSONDecodeError as e:
                 content_type = response.headers.get('content-type', 'unknown')
