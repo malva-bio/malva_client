@@ -335,12 +335,16 @@ class MalvaClient:
                               stranded: Optional[bool],
                               min_kmer_presence: int,
                               max_kmer_presence: int) -> dict:
-        """Build the POST /search payload with correctly mapped parameters."""
+        """Build the POST /search payload with correctly mapped parameters.
+
+        Always submits the job asynchronously (wait_for_completion=False at
+        the HTTP level) to avoid holding a long-lived connection that would
+        hit nginx proxy_read_timeout on slow queries.  The client-level
+        wait_for_completion flag is handled by polling after submission.
+        """
         payload = {
             'query': query,
-            'wait_for_completion': wait_for_completion,
-            'max_wait': max_wait,
-            'poll_interval': poll_interval,
+            'wait_for_completion': False,   # never block the HTTP POST
             'aggregate_expression': aggregate_expression,
             'min_kmer_presence': min_kmer_presence,
             'max_kmer_presence': max_kmer_presence,
@@ -441,14 +445,14 @@ class MalvaClient:
         status = response.get('status')
         logger.info(f"Search submitted: job_id={job_id}, status={status}")
 
+        if status == 'error':
+            raise MalvaAPIError(f"Search failed: {response.get('error', 'unknown')}")
+
         if status == 'completed':
             return SearchResult({'job_id': job_id, 'status': 'completed'}, self)
 
-        if not wait_for_completion or status == 'pending':
+        if not wait_for_completion:
             return SearchResult({'job_id': job_id, 'status': 'pending'}, self)
-
-        if status == 'error':
-            raise MalvaAPIError(f"Search failed: {response.get('error', 'unknown')}")
 
         return self._poll_until_complete(job_id, poll_interval, max_wait, "search")
     
@@ -523,14 +527,14 @@ class MalvaClient:
         status = response.get('status')
         logger.info(f"Cell search submitted: job_id={job_id}, status={status}")
 
+        if status == 'error':
+            raise MalvaAPIError(f"Search failed: {response.get('error', 'unknown')}")
+
         if status == 'completed':
             return SingleCellResult(response, self)
 
-        if not wait_for_completion or status == 'pending':
+        if not wait_for_completion:
             return SingleCellResult({'job_id': job_id, 'status': 'pending'}, self)
-
-        if status == 'error':
-            raise MalvaAPIError(f"Search failed: {response.get('error', 'unknown')}")
 
         start_time = time.time()
         while time.time() - start_time < max_wait:
@@ -551,56 +555,7 @@ class MalvaClient:
 
         raise MalvaAPIError(f"Search timed out after {max_wait} seconds")
     
-    def search_sequence(self, sequence: str,
-                        wait_for_completion: bool = True,
-                        poll_interval: int = 2, max_wait: int = 300,
-                        aggregate_expression: bool = True,
-                        stranded: Optional[bool] = None,
-                        min_kmer_presence: int = 0,
-                        max_kmer_presence: int = 100000) -> SearchResult:
-        """
-        Search for a single DNA sequence.
-
-        For multiple sequences or very long sequences, prefer
-        :meth:`search_sequences`.
-
-        Args:
-            sequence: DNA sequence (max 500,000 nt).
-                Valid characters: A, T, G, C, U, N.
-            wait_for_completion: Block until finished.
-            poll_interval: Seconds between status polls.
-            max_wait: Maximum seconds to wait before raising a timeout error.
-            aggregate_expression: If ``True`` (default), returns per-(sample,
-                cell-type) aggregate scores.
-            stranded: Strand mode for k-mer matching.
-                ``True``  → forward strand only.
-                ``False`` → both strands (reverse-complement included).
-                ``None``  (default) → server default (currently forward only).
-            min_kmer_presence: Exclude k-mers appearing in fewer than this
-                many cells.  Default ``0``.
-            max_kmer_presence: Exclude k-mers appearing in more than this
-                many cells.  Default ``100000``.
-
-        Returns:
-            :class:`SearchResult`.
-        """
-        if len(sequence) > 500_000:
-            raise ValueError("Sequence length cannot exceed 500,000 nucleotides")
-        valid_nucleotides = set('ATGCUN')
-        if not all(c.upper() in valid_nucleotides for c in sequence):
-            raise ValueError("Sequence contains invalid nucleotides. Only A, T, G, C, U, N are allowed.")
-        return self.search(
-            sequence,
-            wait_for_completion=wait_for_completion,
-            poll_interval=poll_interval,
-            max_wait=max_wait,
-            aggregate_expression=aggregate_expression,
-            stranded=stranded,
-            min_kmer_presence=min_kmer_presence,
-            max_kmer_presence=max_kmer_presence,
-        )
-
-    def search_sequences(self, sequences: List[str],
+    def search_sequences(self, sequences: Union[str, List[str]],
                          wait_for_completion: bool = True,
                          poll_interval: int = 2, max_wait: int = 300,
                          aggregate_expression: bool = True,
@@ -608,36 +563,85 @@ class MalvaClient:
                          min_kmer_presence: int = 0,
                          max_kmer_presence: int = 100000) -> SearchResult:
         """
-        Search for multiple DNA sequences in a single batch request.
+        Search for one or more DNA sequences.
 
-        All sequences are submitted as FASTA content in one API call; only
-        one search quota slot is consumed.
+        Accepts either a single sequence string or a list of sequences.
+        Multiple sequences are submitted as a single FASTA batch request
+        (only one search quota slot consumed).
 
         Args:
-            sequences: List of DNA sequences.  Each must contain only A, T,
-                G, C, U, N characters.  Total nucleotides must not exceed
-                100,000.
-            wait_for_completion: Block until finished.
+            sequences: A single DNA sequence string **or** a list of DNA
+                sequence strings.
+
+                - Single string: up to 500,000 nt.
+                - List: each entry up to 500,000 nt; total across all
+                  sequences must not exceed 100,000 nt.
+
+                Valid nucleotide characters: ``A``, ``T``, ``G``, ``C``,
+                ``U``, ``N`` (case-insensitive).
+            wait_for_completion: Block until the search finishes.
             poll_interval: Seconds between status polls.
             max_wait: Maximum seconds to wait before raising a timeout error.
             aggregate_expression: If ``True`` (default), returns per-(sample,
-                cell-type) aggregate scores.
+                cell-type) aggregate scores.  If ``False``, use
+                :meth:`search_cells` for raw per-cell hits.
             stranded: Strand mode for k-mer matching.
                 ``True``  → forward strand only.
                 ``False`` → both strands (reverse-complement included).
                 ``None``  (default) → server default (currently forward only).
-            min_kmer_presence: Exclude k-mers appearing in fewer than this
-                many cells.  Default ``0``.
-            max_kmer_presence: Exclude k-mers appearing in more than this
+            min_kmer_presence: Exclude k-mers that appear in fewer than this
+                many cells.  Default ``0`` (no lower filter).
+            max_kmer_presence: Exclude k-mers that appear in more than this
                 many cells.  Default ``100000``.
 
         Returns:
-            :class:`SearchResult`.
+            :class:`SearchResult` with per-(sample, cell-type) aggregates.
+
+        Examples::
+
+            # Single sequence
+            results = client.search_sequences("ATGCATGCATGC")
+
+            # Multiple sequences (FASTA batch)
+            results = client.search_sequences([
+                "ATGCATGCATGC",
+                "GCTAGCTAGCTA",
+            ])
+
+            # Both strands, filter common k-mers
+            results = client.search_sequences("GATTACA" * 20,
+                                              stranded=False,
+                                              max_kmer_presence=50000)
         """
+        valid_nucleotides = set('ATGCUN')
+
+        # ── Single sequence ────────────────────────────────────────────────
+        if isinstance(sequences, str):
+            sequence = sequences
+            if not sequence:
+                raise ValueError("Sequence must not be empty")
+            if len(sequence) > 500_000:
+                raise ValueError("Sequence length cannot exceed 500,000 nucleotides")
+            if not all(c.upper() in valid_nucleotides for c in sequence):
+                raise ValueError(
+                    "Sequence contains invalid nucleotides. "
+                    "Only A, T, G, C, U, N are allowed."
+                )
+            return self.search(
+                sequence,
+                wait_for_completion=wait_for_completion,
+                poll_interval=poll_interval,
+                max_wait=max_wait,
+                aggregate_expression=aggregate_expression,
+                stranded=stranded,
+                min_kmer_presence=min_kmer_presence,
+                max_kmer_presence=max_kmer_presence,
+            )
+
+        # ── Batch (list of sequences) ──────────────────────────────────────
         if not sequences:
             raise ValueError("At least one sequence is required")
 
-        valid_nucleotides = set('ATGCUN')
         total_nt = 0
         for i, seq in enumerate(sequences):
             if not seq:
@@ -650,7 +654,11 @@ class MalvaClient:
             total_nt += len(seq)
 
         if total_nt > 100_000:
-            raise ValueError(f"Total nucleotides ({total_nt:,}) exceed the 100,000 limit")
+            raise ValueError(
+                f"Total nucleotides ({total_nt:,}) exceed the 100,000 nt batch limit. "
+                "Submit fewer or shorter sequences, or call search_sequences() "
+                "separately for each sequence."
+            )
 
         fasta_lines = []
         for i, seq in enumerate(sequences, 1):
@@ -678,14 +686,14 @@ class MalvaClient:
         status = response.get('status')
         logger.info(f"Batch search submitted: job_id={job_id}, status={status}")
 
+        if status == 'error':
+            raise MalvaAPIError(f"Batch search failed: {response.get('error', 'unknown')}")
+
         if status == 'completed':
             return SearchResult({'job_id': job_id, 'status': 'completed'}, self)
 
-        if not wait_for_completion or status == 'pending':
+        if not wait_for_completion:
             return SearchResult({'job_id': job_id, 'status': 'pending'}, self)
-
-        if status == 'error':
-            raise MalvaAPIError(f"Batch search failed: {response.get('error', 'unknown')}")
 
         return self._poll_until_complete(job_id, poll_interval, max_wait, "batch search")
 
@@ -740,14 +748,14 @@ class MalvaClient:
         status = response.get('status')
         logger.info(f"Gene search submitted: job_id={job_id}, status={status}")
 
+        if status == 'error':
+            raise MalvaAPIError(f"Gene search failed: {response.get('error', 'unknown')}")
+
         if status == 'completed':
             return SearchResult({'job_id': job_id, 'status': 'completed'}, self)
 
-        if not wait_for_completion or status == 'pending':
+        if not wait_for_completion:
             return SearchResult({'job_id': job_id, 'status': 'pending'}, self)
-
-        if status == 'error':
-            raise MalvaAPIError(f"Gene search failed: {response.get('error', 'unknown')}")
 
         return self._poll_until_complete(job_id, poll_interval, max_wait, "gene search")
     
@@ -1603,7 +1611,7 @@ def search_gene(gene: str, base_url: str = "https://malva.mdc-berlin.de") -> Sea
 
 def search_sequence(sequence: str, base_url: str = "https://malva.mdc-berlin.de") -> SearchResult:
     """
-    Quick sequence search
+    Quick sequence search (convenience wrapper around :meth:`MalvaClient.search_sequences`).
 
     Args:
         sequence: DNA sequence to search for
@@ -1613,4 +1621,4 @@ def search_sequence(sequence: str, base_url: str = "https://malva.mdc-berlin.de"
         SearchResult object
     """
     client = MalvaClient(base_url)
-    return client.search_sequence(sequence)
+    return client.search_sequences(sequence)
