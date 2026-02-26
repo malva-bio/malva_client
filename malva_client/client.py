@@ -104,6 +104,7 @@ class SearchResults:
     """Lazy wrapper for compact_v2 search results.  Instantiation is O(1)."""
 
     def __init__(self, data: dict):
+        self._data = data          # full top-level response dict (job_id, status, …)
         r = data.get('results', data)
         self._compact = isinstance(r, dict) and r.get('_format') == 'compact_v2'
         self._gc = r.get('_global_cells') if self._compact else None
@@ -111,12 +112,20 @@ class SearchResults:
         self._r = r
         self.sample_metadata = r.get('_sample_metadata', {})
 
+    # Allow dict-style field access for top-level metadata (status, job_id, …)
+    def get(self, key, default=None):
+        return self._data.get(key, default)
+
     @property
     def genes(self) -> list:
         return [k for k, v in self._r.items() if not k.startswith('_') and isinstance(v, dict)]
 
-    def __getitem__(self, gene: str) -> GeneResult:
-        return GeneResult(self._r[gene], self._gc, self._gs)
+    def __getitem__(self, key):
+        # Gene access (primary use case)
+        if key in self._r and not key.startswith('_') and isinstance(self._r.get(key), dict):
+            return GeneResult(self._r[key], self._gc, self._gs)
+        # Top-level metadata access (job_id, status, …)
+        return self._data[key]
 
     def __contains__(self, gene: str) -> bool:
         return gene in self._r and not gene.startswith('_')
@@ -361,8 +370,9 @@ class MalvaClient:
         response = self._request('POST', '/search', json=data)
         
         if response.get('status') == 'completed':
-            logger.info(f"Search completed with job ID: {response['job_id']}")
-            return SearchResult(response['results'], self)
+            job_id = response.get('job_id')
+            logger.info(f"Search completed with job ID: {job_id}")
+            return SearchResult({'job_id': job_id, 'status': 'completed'}, self)
         
         job_id = response['job_id']
         logger.info(f"Search submitted with job ID: {job_id}")
@@ -383,8 +393,13 @@ class MalvaClient:
                 logger.info(f"Search status: {status}")
                 
                 if status == 'completed':
-                    logger.info(f"Search completed with job ID: {response['job_id']}")
-                    return SearchResult(response, self)
+                    logger.info(f"Search completed with job ID: {job_id}")
+                    # Use the results_response (has job_id + status); expression data
+                    # is fetched lazily via /api/expression-data/<job_id>/results on
+                    # first access to SearchResult.df
+                    return SearchResult(
+                        {'job_id': job_id, 'status': 'completed'}, self
+                    )
                 elif status == 'error':
                     error_msg = results_response.get('error', 'Unknown error')
                     raise MalvaAPIError(f"Search failed: {error_msg}")

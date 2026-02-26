@@ -12,6 +12,9 @@ import anndata as ad
 
 from malva_client.exceptions import MalvaAPIError, AuthenticationError, SearchError, QuotaExceededError
 
+logger = logging.getLogger(__name__)
+
+
 class MalvaDataFrame:
     """
     Wrapper around pandas DataFrame with sample metadata enrichment and analysis methods
@@ -601,18 +604,58 @@ class MalvaDataFrame:
         return self._df[field].value_counts().head(limit)
 
 class SearchResult(MalvaDataFrame):
-    """Container for search results that extends MalvaDataFrame for direct analysis"""
-    
+    """Container for search results that extends MalvaDataFrame for direct analysis.
+
+    Data loading is lazy: if raw_data contains no 'results' (e.g. it is the
+    initial POST response or a lightweight status response), the DataFrame is
+    populated on first access to .df by fetching
+    /api/expression-data/<job_id>/results from the server.
+    """
+
     def __init__(self, raw_data: Dict[str, Any], client: 'MalvaClient'):
         self.raw_data = raw_data
         self.client = client
         self._enriched = False
-        
-        # Convert to DataFrame immediately
+        self._job_id = raw_data.get('job_id') if isinstance(raw_data, dict) else None
+
+        # Try to build DataFrame immediately; mark for lazy fetch if no data yet.
         expr_df = self._convert_to_dataframe()
-        
-        # Initialize as MalvaDataFrame (without metadata initially)
+        self._needs_lazy_fetch = expr_df.empty and bool(self._job_id)
+
         super().__init__(expr_df, client, sample_metadata={})
+
+    def _ensure_loaded(self):
+        """Lazily fetch expression data from the server if not yet loaded."""
+        if not self._needs_lazy_fetch:
+            return
+        self._needs_lazy_fetch = False
+        try:
+            import time as _time
+            logger.info(f"Fetching results for job {self._job_id} ...")
+            t0 = _time.time()
+            response = self.client._request(
+                'GET', f'/api/expression-data/{self._job_id}/results'
+            )
+            # response may be a dict or a SearchResults wrapper
+            if hasattr(response, '_data'):
+                response = response._data
+            n_genes = len(response.get('results', {})) if isinstance(response, dict) else 0
+            logger.info(
+                f"Results parsed in {_time.time() - t0:.1f}s: {n_genes} genes"
+            )
+            self.raw_data = response
+            self._df = self._convert_to_dataframe()
+            sample_meta = response.get('_sample_metadata', {}) if isinstance(response, dict) else {}
+            self._sample_metadata = sample_meta
+            self._enrich_with_metadata()
+        except Exception as exc:
+            logger.error(f"Failed to fetch results for job {self._job_id}: {exc}")
+
+    @property
+    def df(self) -> 'pd.DataFrame':
+        """Return the expression DataFrame, fetching lazily if needed."""
+        self._ensure_loaded()
+        return self._df
     
     def _convert_to_dataframe(self) -> pd.DataFrame:
         """Convert raw search results to DataFrame - keep sample-level aggregates"""
