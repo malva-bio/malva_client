@@ -826,10 +826,13 @@ class SearchResult(MalvaDataFrame):
         """
         if self._enriched:
             return self
-            
+
+        # Ensure lazy-loaded data is available before checking emptiness
+        self._ensure_loaded()
+
         if self._df.empty:
             return self
-        
+
         # Get unique sample IDs
         sample_ids = self._df['sample_id'].unique().tolist()
         
