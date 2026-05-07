@@ -235,15 +235,37 @@ then filter, aggregate, and plot:
 Single-Cell Resolution
 ----------------------
 
-By default, Malva aggregates expression per sample and cell type.  Use
-``search_cells()`` to retrieve individual cell-level hits instead:
+By default, Malva returns expression aggregated by sample and cell type.
+Use ``retrieve_cells()`` when downstream analysis needs the positive cells,
+cell IDs, and sample metadata. Run the search first, then pass the returned
+search result or job ID to ``retrieve_cells()``:
 
 .. code-block:: python
 
-   cells = client.search_cells("SPP1")
-   cells.enrich_with_metadata()
-   df = cells.to_pandas()
-   print(df[["cell_type", "organ", "pseudocount"]].head())
+   result = client.search("SPP1")
+
+   # Restrict to one encoded sample ID, or omit sample_ids for all samples
+   cells = client.retrieve_cells(result, sample_ids=[123456])
+
+   # Matrix rows are cells. Matrix columns are searched features.
+   cell_ids = cells.get_cell_ids(sample_ids=[123456])
+   df = cells.to_dataframe()
+
+   # Project the selected cells onto a coexpression index
+   coexpr = cells.project("human_cortex", sample_ids=[123456], top_n_genes=50)
+
+   # If you only need projection, keep the cell transfer server-side
+   coexpr = client.get_coexpression(
+       result.job_id,
+       "human_cortex",
+       filter_sample_ids=[123456],
+       top_n_genes=50,
+   )
+
+Cell-level workflows should use this two-step search-then-retrieve pattern so
+downstream analysis receives the original cell identifiers. If downstream code
+needs per-feature cell values, run the search with
+``aggregate_expression=False`` and pass that result to ``retrieve_cells()``.
 
 Coexpression Analysis
 ---------------------

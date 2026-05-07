@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.2] - 2026-05-07
+### Added
+- `retrieve_cells()` for direct per-cell retrieval from an existing search job,
+  including cell IDs, feature metadata, sample metadata, and per-cell
+  normalization factors when the metadata endpoint is available.
+- `project_cells()` and sample-scoped `get_coexpression(..., filter_sample_ids=...)`
+  support for projecting selected cells or selected samples onto coexpression
+  indices.
+
+### Changed
+- Cell-level workflows now use the two-step search-then-retrieve path
+  consistently across docs, examples, and tests.
+
 ## [0.3.1] - 2026-02-27
 ### Bugfix
 - [Internal] An issue where the availability of lazy-loaded data was not checked before loading the dataframe
@@ -13,7 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **`min_kmer_presence` / `max_kmer_presence`** parameters on `search()`,
-  `search_sequences()`, `search_cells()`, `search_genes()` — filter k-mers
+  `search_sequences()`, and `search_genes()` - filter k-mers
   by database prevalence to reduce noise from rare errors or ubiquitous
   repeats
 - **Unified `search_sequences()`** now accepts either a single `str` or a
@@ -27,7 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Gateway errors from nginx proxy read timeouts on long-running searches
 - `stranded` parameter now correctly maps to server's `unstranded_mode`
   field (previously the key was sent verbatim and ignored by the server)
-- `window_size` and `threshold` parameters removed — these were server-
+- `window_size` and `threshold` parameters removed - these were server-
   internal and never had any effect on results
 
 ### Fixed
@@ -48,7 +61,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.2.0] - 2026-02-06
 
 ### Added
-- **Search parameters**: `window_size`, `threshold`, and `stranded` options on `search()`, `search_cells()`, `submit_search()`, and all methods that delegate to them
+- **Search parameters**: `window_size`, `threshold`, and `stranded` options on `search()`, `submit_search()`, and all methods that delegate to them
 - **Batch sequence search**: `search_sequences()` method for querying multiple DNA sequences at once
 - **Coverage analysis**: `get_coverage()`, `get_sequence_coverage()`, `get_coverage_data()`, `download_coverage_wig()`, and `get_coverage_filter_options()` methods on `MalvaClient`
 - **`CoverageResult` model**: with `to_dataframe()`, `plot()`, `download_wig()`, and `get_filter_options()` methods

@@ -53,6 +53,27 @@ results = client.search("ATCGATCGATCGCCACATGGACTTGAC")
 results = client.search("cells expressing markers of neurodegeneration")
 ```
 
+### Per-cell matrices
+
+```python
+# First run a normal expression search
+result = client.search("SPP1")
+
+# Retrieve positive cells from that search job
+cells = client.retrieve_cells(result, sample_ids=[123456])
+
+# Inspect positive cells or project them onto a coexpression index
+cell_ids = cells.get_cell_ids(sample_ids=[123456])
+coexpr = cells.project("human_cortex", sample_ids=[123456], top_n_genes=50)
+
+# If you only need projection, keep the cell transfer server-side
+coexpr = client.get_coexpression(result.job_id, "human_cortex", filter_sample_ids=[123456])
+
+# If downstream code needs per-feature cell values, store them in the search job
+value_result = client.search("SPP1", aggregate_expression=False)
+value_cells = client.retrieve_cells(value_result, sample_ids=[123456])
+```
+
 ### Working with Results
 
 ```python

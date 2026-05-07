@@ -1,17 +1,24 @@
 import json
 import time
 import requests
+import msgpack
 import numpy as np
 import pandas as pd
 from typing import Dict, List, Any, Optional, Union, Tuple
 from pathlib import Path
 import logging
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse, urlunparse
 import h5py
 import anndata as ad
 
 from malva_client.exceptions import MalvaAPIError, AuthenticationError, SearchError, QuotaExceededError
-from malva_client.models import SearchResult, SingleCellResult, CoverageResult, CoexpressionResult, UMAPCoordinates
+from malva_client.models import (
+    CellExpressionMatrixResult,
+    SearchResult,
+    CoverageResult,
+    CoexpressionResult,
+    UMAPCoordinates,
+)
 from malva_client.config import Config
 
 
@@ -179,7 +186,8 @@ class MalvaClient:
     Provides methods for searching, retrieving samples, and downloading data files.
     """
 
-    def __init__(self, base_url: str = None, api_token: str = None, timeout: int = 300, verify_ssl: bool = True):
+    def __init__(self, base_url: str = None, api_token: str = None, timeout: int = 300,
+                 verify_ssl: bool = True):
         """
         Initialize the Malva client
         
@@ -405,8 +413,9 @@ class MalvaClient:
             max_wait: Maximum seconds to wait before raising a timeout error.
             aggregate_expression: If ``True`` (default), returns per-(sample,
                 cell-type) aggregate scores suitable for plotting.  If
-                ``False``, returns raw per-cell hit arrays (use
-                :meth:`search_cells` for the cell-level API instead).
+                ``False``, returns raw per-cell hit arrays. For downstream
+                cell-level analysis, use :meth:`retrieve_cells` on the search
+                result.
             stranded: Strand mode for k-mer matching.
                 ``True``  → forward strand only.
                 ``False`` → both strands (reverse-complement included).
@@ -449,12 +458,22 @@ class MalvaClient:
             raise MalvaAPIError(f"Search failed: {response.get('error', 'unknown')}")
 
         if status == 'completed':
-            return SearchResult({'job_id': job_id, 'status': 'completed'}, self)
+            return SearchResult({
+                'job_id': job_id,
+                'status': 'completed',
+                'aggregate_expression': aggregate_expression,
+            }, self)
 
         if not wait_for_completion:
-            return SearchResult({'job_id': job_id, 'status': 'pending'}, self)
+            return SearchResult({
+                'job_id': job_id,
+                'status': 'pending',
+                'aggregate_expression': aggregate_expression,
+            }, self)
 
-        return self._poll_until_complete(job_id, poll_interval, max_wait, "search")
+        result = self._poll_until_complete(job_id, poll_interval, max_wait, "search")
+        result.raw_data['aggregate_expression'] = aggregate_expression
+        return result
     
     def print_dict_summary(self, d, max_items=3, indent=0):
         """
@@ -481,79 +500,513 @@ class MalvaClient:
             else:
                 print(f"{spacing}{key}: {value}")
 
-    def search_cells(self, query: str,
-                     wait_for_completion: bool = True,
-                     poll_interval: int = 2, max_wait: int = 300,
-                     stranded: Optional[bool] = None,
-                     min_kmer_presence: int = 0,
-                     max_kmer_presence: int = 100000) -> SingleCellResult:
-        """
-        Search and return individual cell hits (no expression aggregation).
+    @staticmethod
+    def _is_not_found_error(exc: Exception) -> bool:
+        msg = str(exc).lower()
+        return "endpoint not found" in msg or "not found" in msg or "404" in msg
 
-        Use this when you need raw per-cell resolution.  For aggregated
-        per-(sample, cell-type) expression data, use :meth:`search`.
-
-        Args:
-            query: Gene symbol, comma-separated genes, natural-language
-                description, or DNA sequence.
-            wait_for_completion: Block until finished.
-            poll_interval: Seconds between status polls.
-            max_wait: Maximum seconds to wait before raising a timeout error.
-            stranded: Strand mode for k-mer matching.
-                ``True``  → forward strand only.
-                ``False`` → both strands (reverse-complement included).
-                ``None``  (default) → server default (currently forward only).
-            min_kmer_presence: Exclude k-mers appearing in fewer than this
-                many cells.  Default ``0`` (no lower filter).
-            max_kmer_presence: Exclude k-mers appearing in more than this
-                many cells.  Default ``100000``.
-
-        Returns:
-            :class:`SingleCellResult` with cell-level resolution.
-        """
-        payload = self._build_search_payload(
-            query, wait_for_completion, max_wait, poll_interval,
-            aggregate_expression=False,
-            stranded=stranded,
-            min_kmer_presence=min_kmer_presence,
-            max_kmer_presence=max_kmer_presence,
-        )
-        response = self._request('POST', '/search', json=payload)
-
-        job_id = response.get('job_id')
-        if not job_id:
-            raise MalvaAPIError("No job_id received from server")
-
-        status = response.get('status')
-        logger.info(f"Cell search submitted: job_id={job_id}, status={status}")
-
-        if status == 'error':
-            raise MalvaAPIError(f"Search failed: {response.get('error', 'unknown')}")
-
-        if status == 'completed':
-            return SingleCellResult(response, self)
-
-        if not wait_for_completion:
-            return SingleCellResult({'job_id': job_id, 'status': 'pending'}, self)
-
-        start_time = time.time()
-        while time.time() - start_time < max_wait:
+    def _request_first_available(self, method: str, endpoints: List[str], **kwargs) -> Tuple[Dict[str, Any], str]:
+        """Try equivalent endpoint paths for explorer-backed and search-backed URLs."""
+        last_error = None
+        for endpoint in endpoints:
             try:
-                resp = self._request('GET', f'/search/{job_id}')
-                s = resp.get('status')
-                logger.info(f"Cell search status: {s}")
-                if s == 'completed':
-                    return SingleCellResult(resp, self)
-                elif s == 'error':
-                    raise MalvaAPIError(f"Search failed: {resp.get('error', 'unknown')}")
-            except MalvaAPIError as e:
-                if "404" in str(e) or "not found" in str(e).lower():
-                    pass
-                else:
-                    raise
-            time.sleep(poll_interval)
+                return self._request(method, endpoint, **kwargs), endpoint
+            except MalvaAPIError as exc:
+                last_error = exc
+                if self._is_not_found_error(exc):
+                    continue
+                raise
+        if last_error:
+            raise last_error
+        raise MalvaAPIError("No endpoint candidates were provided")
 
-        raise MalvaAPIError(f"Search timed out after {max_wait} seconds")
+    def _request_raw(self, method: str, endpoint: str, **kwargs) -> requests.Response:
+        """Make a request and return the raw response for binary endpoints."""
+        if endpoint.startswith(('http://', 'https://')):
+            url = endpoint
+        else:
+            url = urljoin(self.base_url, endpoint.lstrip('/'))
+        try:
+            response = self.session.request(method, url, timeout=self.timeout, **kwargs)
+        except requests.exceptions.Timeout:
+            raise MalvaAPIError(f"Request timed out after {self.timeout} seconds")
+        except requests.exceptions.ConnectionError:
+            raise MalvaAPIError(f"Could not connect to {self.base_url}. Check if the server is running.")
+        except requests.exceptions.RequestException as exc:
+            raise MalvaAPIError(f"Request failed: {exc}")
+
+        logger.debug(f"{method} {url} -> {response.status_code}")
+        if response.status_code == 404:
+            raise MalvaAPIError(f"Endpoint not found: {endpoint}")
+        if response.status_code in [401, 403]:
+            raise AuthenticationError("Authentication failed")
+        if response.status_code == 429:
+            raise QuotaExceededError("Search quota exceeded")
+        if not response.ok:
+            try:
+                error_data = response.json()
+                msg = error_data.get('detail', error_data.get('error', f'HTTP {response.status_code}'))
+            except (json.JSONDecodeError, ValueError):
+                msg = response.text[:200] if response.text else f'HTTP {response.status_code}'
+            raise MalvaAPIError(f"API error: {msg}")
+        return response
+
+    @staticmethod
+    def _normalise_id_list(values: Optional[Union[int, str, List[Union[int, str]]]]) -> Optional[List[int]]:
+        if values is None:
+            return None
+        if isinstance(values, (int, np.integer, str)):
+            values = [values]
+        return [int(v) for v in values]
+
+    @staticmethod
+    def _normalise_feature_list(features: Optional[Union[str, List[str]]]) -> Optional[List[str]]:
+        if features is None:
+            return None
+        if isinstance(features, str):
+            return [features]
+        return [str(f) for f in features]
+
+    def _resolve_search_job(self, search_job: Union[str, SearchResult, Dict[str, Any]],
+                            poll_interval: int,
+                            max_wait: int) -> Tuple[str, Optional[SearchResult]]:
+        if isinstance(search_job, SearchResult):
+            aggregate_expression = (
+                search_job.raw_data.get('aggregate_expression')
+                if isinstance(search_job.raw_data, dict)
+                else None
+            )
+            if search_job.status in {'pending', 'running'}:
+                search_job = self.wait_for_job(
+                    search_job.job_id,
+                    poll_interval=poll_interval,
+                    max_wait=max_wait,
+                )
+                if aggregate_expression is not None:
+                    search_job.raw_data['aggregate_expression'] = aggregate_expression
+            return search_job.job_id, search_job
+        if isinstance(search_job, dict):
+            job_id = search_job.get('job_id')
+            if not job_id:
+                raise ValueError("search_job dictionary must include job_id")
+            return str(job_id), SearchResult(search_job, self)
+        if isinstance(search_job, str):
+            if not search_job.strip():
+                raise ValueError("search_job must be a SearchResult or a non-empty job_id")
+            return search_job.strip(), None
+        raise TypeError("search_job must be a SearchResult, job_id string, or job response dictionary")
+
+    def _sample_metadata_frame(self, sample_ids: List[int]) -> pd.DataFrame:
+        if not sample_ids:
+            return pd.DataFrame()
+        try:
+            metadata = self.get_sample_metadata(sample_ids)
+        except Exception as exc:
+            logger.warning(f"Sample metadata lookup failed during cell retrieval: {exc}")
+            return pd.DataFrame()
+
+        rows = []
+        for sample_id, values in metadata.items():
+            if isinstance(values, dict):
+                row = {'sample_id': int(sample_id)}
+                row.update(values)
+                rows.append(row)
+        return pd.DataFrame(rows) if rows else pd.DataFrame()
+
+    def _cell_barcodes_frame(self, cells: pd.DataFrame, batch_size: int = 100000) -> pd.DataFrame:
+        if cells.empty:
+            return pd.DataFrame()
+        rows = []
+        for start in range(0, len(cells), batch_size):
+            batch = cells.iloc[start:start + batch_size]
+            payload = {
+                'sample_ids': batch['sample_id'].astype(int).tolist(),
+                'cell_ids': batch['cell_id'].astype(int).tolist(),
+            }
+            try:
+                response = self._request('POST', '/api/cells/barcodes', json=payload)
+            except Exception as exc:
+                logger.warning(f"Barcode lookup failed during cell retrieval: {exc}")
+                return pd.DataFrame()
+            barcodes = response.get('barcodes', [])
+            for row_index, sample_id, cell_id, barcode in zip(
+                batch['row_index'].tolist(),
+                payload['sample_ids'],
+                payload['cell_ids'],
+                barcodes,
+            ):
+                rows.append({
+                    'row_index': int(row_index),
+                    'sample_id': int(sample_id),
+                    'cell_id': int(cell_id),
+                    'barcode': barcode,
+                })
+        return pd.DataFrame(rows) if rows else pd.DataFrame()
+
+    def _result_from_entry_rows(self, job_id: str,
+                                entries: pd.DataFrame,
+                                features: pd.DataFrame,
+                                source: str,
+                                include_barcodes: bool,
+                                include_sample_metadata: bool) -> CellExpressionMatrixResult:
+        if entries.empty:
+            cells = pd.DataFrame(columns=['row_index', 'sample_id', 'cell_id'])
+            matrix_entries = pd.DataFrame(columns=['row_index', 'feature_index', 'value'])
+        else:
+            cells = (
+                entries[['sample_id', 'cell_id']]
+                .drop_duplicates()
+                .sort_values(['sample_id', 'cell_id'])
+                .reset_index(drop=True)
+            )
+            cells.insert(0, 'row_index', np.arange(1, len(cells) + 1, dtype=np.int64))
+            matrix_entries = entries.merge(cells, on=['sample_id', 'cell_id'], how='left')
+            matrix_entries = matrix_entries[['row_index', 'feature_index', 'value']]
+            matrix_entries = matrix_entries.sort_values(['feature_index', 'row_index']).reset_index(drop=True)
+
+        sample_ids = cells['sample_id'].astype(int).drop_duplicates().tolist() if not cells.empty else []
+        sample_metadata = self._sample_metadata_frame(sample_ids) if include_sample_metadata else pd.DataFrame()
+        normalization = pd.DataFrame()
+        barcodes = self._cell_barcodes_frame(cells) if include_barcodes else pd.DataFrame()
+
+        return CellExpressionMatrixResult(
+            cells=cells,
+            features=features,
+            matrix_entries=matrix_entries,
+            normalization_factors=normalization,
+            sample_metadata=sample_metadata,
+            barcodes=barcodes,
+            client=self,
+            job_id=job_id,
+            source=source,
+        )
+
+    def _retrieve_cells_from_full_search_endpoint(self, job_id: str,
+                                                  features: Optional[List[str]],
+                                                  sample_ids: Optional[List[int]],
+                                                  include_barcodes: bool,
+                                                  include_sample_metadata: bool) -> CellExpressionMatrixResult:
+        response = self._request('GET', f'/search/{job_id}', params={'max_cells': 0})
+        status = response.get('status') if hasattr(response, 'get') else None
+        if status and status != 'completed':
+            raise MalvaAPIError(f"Search job {job_id} is {status}")
+
+        feature_filter = set(features) if features else None
+        sample_filter = set(sample_ids) if sample_ids else None
+        feature_rows = []
+        entry_frames = []
+        feature_index = 1
+
+        if isinstance(response, dict):
+            results = response.get('results', {}) if isinstance(response, dict) else {}
+            iterator = (
+                (feature, data) for feature, data in results.items()
+                if isinstance(feature, str) and not feature.startswith('_') and isinstance(data, dict)
+            )
+        elif hasattr(response, 'items'):
+            iterator = response.items()
+        else:
+            iterator = iter(())
+
+        for feature, data in iterator:
+            if feature_filter is not None and feature not in feature_filter:
+                continue
+
+            if hasattr(data, 'cells') and hasattr(data, 'samples'):
+                cells = np.asarray(data.cells, dtype=np.int64)
+                samples = np.asarray(data.samples, dtype=np.int64)
+                values = np.asarray(getattr(data, 'expression', np.ones(len(cells))), dtype=np.float32)
+            else:
+                cells = np.asarray(data.get('cell', []), dtype=np.int64)
+                samples = np.asarray(data.get('sample', []), dtype=np.int64)
+                values = np.asarray(data.get('expression', np.ones(len(cells))), dtype=np.float32)
+
+            n = min(len(cells), len(samples), len(values))
+            if n == 0:
+                continue
+            cells = cells[:n]
+            samples = samples[:n]
+            values = values[:n]
+
+            if sample_filter is not None:
+                mask = np.isin(samples, np.fromiter(sample_filter, dtype=np.int64))
+                cells = cells[mask]
+                samples = samples[mask]
+                values = values[mask]
+            if len(cells) == 0:
+                continue
+
+            feature_rows.append({
+                'feature_index': feature_index,
+                'job_id': job_id,
+                'feature': feature,
+                'label': feature,
+                'source': 'search_full',
+            })
+            entry_frames.append(pd.DataFrame({
+                'sample_id': samples,
+                'cell_id': cells,
+                'feature_index': feature_index,
+                'value': values,
+            }))
+            feature_index += 1
+
+        if not entry_frames:
+            raise MalvaAPIError("No cells matched the requested feature or sample filter")
+
+        return self._result_from_entry_rows(
+            job_id=job_id,
+            entries=pd.concat(entry_frames, ignore_index=True),
+            features=pd.DataFrame(feature_rows),
+            source='search_full',
+            include_barcodes=include_barcodes,
+            include_sample_metadata=include_sample_metadata,
+        )
+
+    def _retrieve_cells_from_cell_ids_endpoint(self, job_id: str,
+                                               features: Optional[List[str]],
+                                               sample_ids: Optional[List[int]],
+                                               include_barcodes: bool,
+                                               include_sample_metadata: bool) -> CellExpressionMatrixResult:
+        response = self._request('GET', f'/search/{job_id}/cell-ids')
+        results = response.get('results', {}) if isinstance(response, dict) else {}
+        if not results:
+            raise MalvaAPIError("No cell IDs returned for this search job")
+
+        feature_filter = set(features) if features else None
+        sample_filter = set(sample_ids) if sample_ids else None
+        feature_rows = []
+        entry_frames = []
+        feature_index = 1
+
+        for feature, data in results.items():
+            if feature_filter is not None and feature not in feature_filter:
+                continue
+            if not isinstance(data, dict):
+                continue
+            cells = np.asarray(data.get('cell', []), dtype=np.int64)
+            samples = np.asarray(data.get('sample', []), dtype=np.int64)
+            n = min(len(cells), len(samples))
+            if n == 0:
+                continue
+            cells = cells[:n]
+            samples = samples[:n]
+            values_raw = data.get('expression')
+            if values_raw is not None and len(values_raw) >= n:
+                values = np.asarray(values_raw[:n], dtype=np.float32)
+            else:
+                values = np.ones(n, dtype=np.float32)
+
+            if sample_filter is not None:
+                mask = np.isin(samples, np.fromiter(sample_filter, dtype=np.int64))
+                cells = cells[mask]
+                samples = samples[mask]
+                values = values[mask]
+            if len(cells) == 0:
+                continue
+
+            feature_rows.append({
+                'feature_index': feature_index,
+                'job_id': job_id,
+                'feature': feature,
+                'label': feature,
+                'source': 'search_cell_ids',
+            })
+            entry_frames.append(pd.DataFrame({
+                'sample_id': samples,
+                'cell_id': cells,
+                'feature_index': feature_index,
+                'value': values,
+            }))
+            feature_index += 1
+
+        if not entry_frames:
+            raise MalvaAPIError("No cells matched the requested feature or sample filter")
+
+        return self._result_from_entry_rows(
+            job_id=job_id,
+            entries=pd.concat(entry_frames, ignore_index=True),
+            features=pd.DataFrame(feature_rows),
+            source='search_cell_ids',
+            include_barcodes=include_barcodes,
+            include_sample_metadata=include_sample_metadata,
+        )
+
+    def _retrieve_cells_from_global_ids_endpoint(self, job_id: str,
+                                                features: Optional[List[str]],
+                                                sample_ids: Optional[List[int]],
+                                                include_barcodes: bool,
+                                                include_sample_metadata: bool) -> CellExpressionMatrixResult:
+        response = self._request_raw('GET', f'/search/{job_id}/global-cell-ids')
+        decoded = msgpack.unpackb(response.content, raw=False, strict_map_key=False)
+        cells = np.frombuffer(decoded.get('c', b''), dtype=np.int64)
+        samples = np.frombuffer(decoded.get('s', b''), dtype=np.int64)
+        n = min(len(cells), len(samples))
+        if n == 0:
+            raise MalvaAPIError("No cell IDs returned for this search job")
+        cells = cells[:n]
+        samples = samples[:n]
+        if sample_ids:
+            mask = np.isin(samples, np.asarray(sample_ids, dtype=np.int64))
+            cells = cells[mask]
+            samples = samples[mask]
+        if len(cells) == 0:
+            raise MalvaAPIError("No cells matched the requested sample filter")
+
+        label = features[0] if features and len(features) == 1 else 'positive_cells'
+        entries = pd.DataFrame({
+            'sample_id': samples,
+            'cell_id': cells,
+            'feature_index': 1,
+            'value': np.ones(len(cells), dtype=np.float32),
+        })
+        feature_df = pd.DataFrame([{
+            'feature_index': 1,
+            'job_id': job_id,
+            'feature': label,
+            'label': label,
+            'source': 'global_cell_ids',
+        }])
+        return self._result_from_entry_rows(
+            job_id=job_id,
+            entries=entries,
+            features=feature_df,
+            source='global_cell_ids',
+            include_barcodes=include_barcodes,
+            include_sample_metadata=include_sample_metadata,
+        )
+
+    def _retrieve_cells_from_explorer_endpoint(self, job_id: str,
+                                               features: Optional[List[str]],
+                                               sample_ids: Optional[List[int]],
+                                               include_barcodes: bool,
+                                               include_sample_metadata: bool) -> CellExpressionMatrixResult:
+        params = {}
+        if sample_ids:
+            params['sample_ids'] = ','.join(str(s) for s in sample_ids)
+        if include_barcodes:
+            params['barcodes'] = '1'
+
+        response = self._request('GET', f'/api/expression/results/{job_id}/cells', params=params)
+        samples_payload = response.get('samples', {}) if isinstance(response, dict) else {}
+        entries = []
+        barcode_rows = []
+        for sample_id, payload in samples_payload.items():
+            if not isinstance(payload, dict):
+                continue
+            cell_ids = payload.get('cell_ids') or []
+            barcodes = payload.get('barcodes') or []
+            for idx, cell_id in enumerate(cell_ids):
+                entries.append({
+                    'sample_id': int(sample_id),
+                    'cell_id': int(cell_id),
+                    'feature_index': 1,
+                    'value': 1.0,
+                })
+                if include_barcodes and idx < len(barcodes):
+                    barcode_rows.append({
+                        'sample_id': int(sample_id),
+                        'cell_id': int(cell_id),
+                        'barcode': barcodes[idx],
+                    })
+
+        if not entries:
+            raise MalvaAPIError("No cells returned for this search job")
+
+        label = features[0] if features and len(features) == 1 else 'positive_cells'
+        result = self._result_from_entry_rows(
+            job_id=job_id,
+            entries=pd.DataFrame(entries),
+            features=pd.DataFrame([{
+                'feature_index': 1,
+                'job_id': job_id,
+                'feature': label,
+                'label': label,
+                'source': 'expression_cells',
+            }]),
+            source='expression_cells',
+            include_barcodes=False,
+            include_sample_metadata=include_sample_metadata,
+        )
+        if barcode_rows:
+            barcode_df = pd.DataFrame(barcode_rows)
+            result._barcodes_df = result.cells.merge(
+                barcode_df,
+                on=['sample_id', 'cell_id'],
+                how='inner',
+            )
+        return result
+
+    def retrieve_cells(self, search_job: Union[str, SearchResult, Dict[str, Any]],
+                       features: Optional[Union[str, List[str]]] = None,
+                       sample_ids: Optional[Union[int, str, List[Union[int, str]]]] = None,
+                       include_barcodes: bool = False,
+                       include_sample_metadata: bool = True,
+                       poll_interval: int = 2,
+                       max_wait: int = 300) -> CellExpressionMatrixResult:
+        """
+        Retrieve positive cells for an existing search job.
+
+        Run :meth:`search` or :meth:`search_sequences` first, then pass the
+        returned SearchResult or its job_id here. This method does not start a
+        new search and does not use the ZIP export workflow. Aggregate jobs use
+        the fast binary cell-ID endpoint when feature-level values are not
+        present. Jobs created with ``aggregate_expression=False`` can provide
+        per-feature values when the search service exposes them.
+        """
+        job_id, result = self._resolve_search_job(search_job, poll_interval, max_wait)
+        feature_list = self._normalise_feature_list(features)
+        if feature_list is None and result is not None:
+            raw_results = result.raw_data.get('results', {}) if isinstance(result.raw_data, dict) else {}
+            feature_list = [
+                key for key, value in raw_results.items()
+                if isinstance(key, str) and not key.startswith('_') and isinstance(value, dict)
+            ] or None
+        sample_id_list = self._normalise_id_list(sample_ids)
+
+        errors = []
+        aggregate_job = None
+        if result is not None and isinstance(result.raw_data, dict):
+            aggregate_job = result.raw_data.get('aggregate_expression')
+
+        if aggregate_job is True and feature_list is None:
+            fetchers = (
+                self._retrieve_cells_from_global_ids_endpoint,
+                self._retrieve_cells_from_explorer_endpoint,
+                self._retrieve_cells_from_cell_ids_endpoint,
+                self._retrieve_cells_from_full_search_endpoint,
+            )
+        else:
+            fetchers = (
+                self._retrieve_cells_from_full_search_endpoint,
+                self._retrieve_cells_from_cell_ids_endpoint,
+                self._retrieve_cells_from_global_ids_endpoint,
+                self._retrieve_cells_from_explorer_endpoint,
+            )
+
+        for fetcher in fetchers:
+            try:
+                return fetcher(
+                    job_id,
+                    feature_list,
+                    sample_id_list,
+                    include_barcodes,
+                    include_sample_metadata,
+                )
+            except MalvaAPIError as exc:
+                message = str(exc)
+                errors.append(message)
+                recoverable = (
+                    self._is_not_found_error(exc)
+                    or "No cell IDs returned" in message
+                    or "No cells returned" in message
+                    or "No cells matched" in message
+                )
+                if not recoverable:
+                    raise
+
+        detail = '; '.join(errors[-3:]) if errors else 'No retrieval endpoint was available'
+        raise MalvaAPIError(f"Could not retrieve cells for search job {job_id}: {detail}")
     
     def search_sequences(self, sequences: Union[str, List[str]],
                          wait_for_completion: bool = True,
@@ -583,8 +1036,8 @@ class MalvaClient:
             poll_interval: Seconds between status polls.
             max_wait: Maximum seconds to wait before raising a timeout error.
             aggregate_expression: If ``True`` (default), returns per-(sample,
-                cell-type) aggregate scores.  If ``False``, use
-                :meth:`search_cells` for raw per-cell hits.
+                cell-type) aggregate scores. For downstream cell-level
+                analysis, use :meth:`retrieve_cells` on the search result.
             stranded: Strand mode for k-mer matching.
                 ``True``  → forward strand only.
                 ``False`` → both strands (reverse-complement included).
@@ -690,12 +1143,22 @@ class MalvaClient:
             raise MalvaAPIError(f"Batch search failed: {response.get('error', 'unknown')}")
 
         if status == 'completed':
-            return SearchResult({'job_id': job_id, 'status': 'completed'}, self)
+            return SearchResult({
+                'job_id': job_id,
+                'status': 'completed',
+                'aggregate_expression': aggregate_expression,
+            }, self)
 
         if not wait_for_completion:
-            return SearchResult({'job_id': job_id, 'status': 'pending'}, self)
+            return SearchResult({
+                'job_id': job_id,
+                'status': 'pending',
+                'aggregate_expression': aggregate_expression,
+            }, self)
 
-        return self._poll_until_complete(job_id, poll_interval, max_wait, "batch search")
+        result = self._poll_until_complete(job_id, poll_interval, max_wait, "batch search")
+        result.raw_data['aggregate_expression'] = aggregate_expression
+        return result
 
     def search_genes(self, genes: List[str],
                      wait_for_completion: bool = True,
@@ -752,12 +1215,22 @@ class MalvaClient:
             raise MalvaAPIError(f"Gene search failed: {response.get('error', 'unknown')}")
 
         if status == 'completed':
-            return SearchResult({'job_id': job_id, 'status': 'completed'}, self)
+            return SearchResult({
+                'job_id': job_id,
+                'status': 'completed',
+                'aggregate_expression': aggregate_expression,
+            }, self)
 
         if not wait_for_completion:
-            return SearchResult({'job_id': job_id, 'status': 'pending'}, self)
+            return SearchResult({
+                'job_id': job_id,
+                'status': 'pending',
+                'aggregate_expression': aggregate_expression,
+            }, self)
 
-        return self._poll_until_complete(job_id, poll_interval, max_wait, "gene search")
+        result = self._poll_until_complete(job_id, poll_interval, max_wait, "gene search")
+        result.raw_data['aggregate_expression'] = aggregate_expression
+        return result
     
     def get_samples(self, page: int = 1, page_size: int = 50, 
                    filters: Dict[str, Any] = None, search_query: str = "") -> Dict[str, Any]:
@@ -853,6 +1326,52 @@ class MalvaClient:
         response = self._request('GET', '/samples/api/studies')
         studies = response.get('studies', [])
         return pd.DataFrame(studies)
+
+    def _normalise_sample_download_response(self, sample_uuid: str, response: Dict[str, Any]) -> Dict[str, Any]:
+        """Normalize explorer and metadata-service sample download responses."""
+        download_url = response.get('download_url')
+        token = response.get('download_token')
+        if not download_url and token:
+            download_url = f'/api/download/{token}'
+        if not download_url:
+            raise MalvaAPIError("Download URL not provided by server")
+        parsed_download = urlparse(download_url)
+        if parsed_download.scheme and parsed_download.netloc:
+            if parsed_download.path.startswith('/api/download/'):
+                parsed_base = urlparse(self.base_url)
+                download_url = urlunparse((
+                    parsed_base.scheme,
+                    parsed_base.netloc,
+                    parsed_download.path,
+                    '',
+                    parsed_download.query,
+                    parsed_download.fragment,
+                ))
+        else:
+            download_url = urljoin(self.base_url, download_url.lstrip('/'))
+
+        expires_in = response.get('expires_in_seconds')
+        if expires_in is None and response.get('expires_at') is not None:
+            expires_in = max(0, int(float(response['expires_at']) - time.time()))
+        if expires_in is None:
+            expires_in = 0
+
+        return {
+            'download_url': download_url,
+            'filename': response.get('filename', f'{sample_uuid}.h5ad'),
+            'file_size': response.get('file_size', 0),
+            'expires_in_seconds': expires_in,
+        }
+
+    def _request_sample_download(self, sample_uuid: str) -> Dict[str, Any]:
+        """Request sample download metadata from either compatibility API shape."""
+        try:
+            response = self._request('GET', f'/api/samples/{sample_uuid}/download')
+        except MalvaAPIError as exc:
+            if not self._is_not_found_error(exc):
+                raise
+            response = self._request('POST', f'/api/samples/{sample_uuid}/request-download')
+        return self._normalise_sample_download_response(sample_uuid, response)
     
     def download_sample(self, sample_uuid: str, output_path: Optional[str] = None, 
                     chunk_size: int = 8192, show_progress: bool = True) -> Union[str, 'ad.AnnData']:
@@ -869,12 +1388,7 @@ class MalvaClient:
             File path if saved to disk, or AnnData object if loaded in memory
         """
         try:
-            # Request the download URL from frontend
-            response = self._request('GET', f'/api/samples/{sample_uuid}/download')
-            
-            if 'download_url' not in response:
-                raise MalvaAPIError("Download URL not provided by server")
-            
+            response = self._request_sample_download(sample_uuid)
             download_url = response['download_url']
             filename = response.get('filename', f'{sample_uuid}.h5ad')
             file_size = response.get('file_size', 0)
@@ -886,14 +1400,14 @@ class MalvaClient:
             logger.info(f"Downloading {filename} ({file_size:,} bytes)")
             
             # Download the file with progress tracking
-            file_response = self.session.get(download_url, stream=True)
-            file_response.raise_for_status()
+            file_response = self.session.get(download_url, stream=True, timeout=self.timeout)
             
             # Handle download errors
             if file_response.status_code == 404:
                 raise MalvaAPIError("Download token expired or file not found")
             elif file_response.status_code == 403:
                 raise MalvaAPIError("Access denied to file")
+            file_response.raise_for_status()
             
             if output_path:
                 # Save to disk
@@ -1543,7 +2057,82 @@ class MalvaClient:
         response = self._request('GET', f'/api/coexpression/umap/{dataset_id}')
         return UMAPCoordinates(response, self)
 
-    def get_coexpression(self, job_id: str, dataset_id: str) -> 'CoexpressionResult':
+    def _coexpression_from_response(self, response: Dict[str, Any],
+                                    task_endpoint: str,
+                                    poll_interval: int = 2,
+                                    max_wait: int = 300) -> 'CoexpressionResult':
+        """Poll async coexpression task responses and return a result object."""
+        status = response.get('status')
+        task_id = response.get('task_id')
+        if status not in {'pending', 'running'} or not task_id:
+            return CoexpressionResult(response, self)
+
+        start_time = time.time()
+        while time.time() - start_time < max_wait:
+            task = self._request('GET', f'{task_endpoint.rstrip("/")}/{task_id}')
+            task_status = task.get('status')
+            if task_status == 'completed':
+                return CoexpressionResult(task, self)
+            if task_status in {'failed', 'error'}:
+                raise MalvaAPIError(f"Coexpression task failed: {task.get('error', 'unknown')}")
+            logger.info(f"Coexpression task {task_id} status: {task_status}")
+            time.sleep(poll_interval)
+        raise MalvaAPIError(f"Coexpression task {task_id} timed out after {max_wait} seconds")
+
+    @staticmethod
+    def _coexpression_task_endpoint(endpoint: str) -> str:
+        if endpoint.startswith('/api/coexpression/'):
+            return '/api/coexpression/tasks'
+        return '/tasks'
+
+    def project_cells(self, cell_ids: List[int], sample_ids: List[int],
+                      dataset_id: str,
+                      poll_interval: int = 2,
+                      max_wait: int = 300,
+                      **kwargs) -> 'CoexpressionResult':
+        """
+        Project explicit cells onto a coexpression index.
+
+        Args:
+            cell_ids: Cell IDs to project.
+            sample_ids: Encoded sample IDs corresponding to cell_ids.
+            dataset_id: Coexpression index or dataset identifier.
+            poll_interval: Seconds between task polls when the service runs
+                asynchronously.
+            max_wait: Maximum seconds to wait for completion.
+            **kwargs: Coexpression parameters such as top_n_genes,
+                include_go_enrichment, include_umap_scores, and
+                min_abs_correlation.
+        """
+        if len(cell_ids) != len(sample_ids):
+            raise ValueError("cell_ids and sample_ids must have the same length")
+        if not cell_ids:
+            raise ValueError("At least one cell_id is required")
+
+        data = {
+            'dataset_id': dataset_id,
+            'cell_ids': [int(c) for c in cell_ids],
+            'sample_ids': [int(s) for s in sample_ids],
+        }
+        data.update(kwargs)
+
+        response, endpoint = self._request_first_available(
+            'POST',
+            ['/api/coexpression/query', '/query'],
+            json=data,
+        )
+        return self._coexpression_from_response(
+            response,
+            task_endpoint=self._coexpression_task_endpoint(endpoint),
+            poll_interval=poll_interval,
+            max_wait=max_wait,
+        )
+
+    def get_coexpression(self, job_id: str, dataset_id: str,
+                         filter_sample_ids: Optional[List[int]] = None,
+                         poll_interval: int = 2,
+                         max_wait: int = 300,
+                         **kwargs) -> 'CoexpressionResult':
         """
         Run a full coexpression analysis for a search job on a dataset.
 
@@ -1554,6 +2143,12 @@ class MalvaClient:
         Args:
             job_id: Job ID from a previous search
             dataset_id: Dataset identifier to run coexpression against
+            filter_sample_ids: Optional encoded sample IDs. When provided,
+                only cells from those samples are projected.
+            poll_interval: Seconds between task polls when the service runs
+                asynchronously.
+            max_wait: Maximum seconds to wait for completion.
+            **kwargs: Additional coexpression parameters.
 
         Returns:
             CoexpressionResult with correlated genes, UMAP scores, GO
@@ -1563,10 +2158,26 @@ class MalvaClient:
             'job_id': job_id,
             'dataset_id': dataset_id,
         }
-        response = self._request('POST', '/api/coexpression/query-by-job', json=data)
-        return CoexpressionResult(response, self)
+        if filter_sample_ids:
+            data['filter_sample_ids'] = [int(s) for s in filter_sample_ids]
+        data.update(kwargs)
+        response, endpoint = self._request_first_available(
+            'POST',
+            ['/api/coexpression/query-by-job', '/query-by-job'],
+            json=data,
+        )
+        return self._coexpression_from_response(
+            response,
+            task_endpoint=self._coexpression_task_endpoint(endpoint),
+            poll_interval=poll_interval,
+            max_wait=max_wait,
+        )
 
-    def get_coexpression_genes(self, job_id: str, dataset_id: str) -> 'CoexpressionResult':
+    def get_coexpression_genes(self, job_id: str, dataset_id: str,
+                               filter_sample_ids: Optional[List[int]] = None,
+                               poll_interval: int = 2,
+                               max_wait: int = 300,
+                               **kwargs) -> 'CoexpressionResult':
         """
         Lightweight coexpression query returning only correlated genes.
 
@@ -1577,6 +2188,12 @@ class MalvaClient:
         Args:
             job_id: Job ID from a previous search
             dataset_id: Dataset identifier
+            filter_sample_ids: Optional encoded sample IDs. When provided,
+                only cells from those samples are projected.
+            poll_interval: Seconds between task polls when the service runs
+                asynchronously.
+            max_wait: Maximum seconds to wait for completion.
+            **kwargs: Additional coexpression parameters.
 
         Returns:
             CoexpressionResult with only the correlated_genes field populated
@@ -1589,8 +2206,20 @@ class MalvaClient:
             'include_cell_type_enrichment': False,
             'include_tissue_breakdown': False,
         }
-        response = self._request('POST', '/api/coexpression/query-by-job', json=data)
-        return CoexpressionResult(response, self)
+        if filter_sample_ids:
+            data['filter_sample_ids'] = [int(s) for s in filter_sample_ids]
+        data.update(kwargs)
+        response, endpoint = self._request_first_available(
+            'POST',
+            ['/api/coexpression/query-by-job', '/query-by-job'],
+            json=data,
+        )
+        return self._coexpression_from_response(
+            response,
+            task_endpoint=self._coexpression_task_endpoint(endpoint),
+            poll_interval=poll_interval,
+            max_wait=max_wait,
+        )
 
 
 # Convenience functions for common operations

@@ -6,7 +6,7 @@ try:
     from importlib.metadata import version as _get_version
     __version__ = _get_version("malva_client")
 except Exception:
-    __version__ = "0.2.0"
+    __version__ = "0.3.2"
 __author__ = "Malva Team"
 __email__ = "hello@malva.bio"
 
@@ -20,6 +20,7 @@ __all__ = [
     'ValidationError',
     'ConfigurationError',
     'SearchResult',
+    'CellExpressionMatrixResult',
     'CoverageResult',
     'SingleCellResult',
     'CoexpressionResult',
@@ -48,9 +49,10 @@ def __getattr__(name):
         )
         return locals()[name]
 
-    elif name in ('SearchResult', 'CoverageResult', 'SingleCellResult',
+    elif name in ('SearchResult', 'CellExpressionMatrixResult', 'CoverageResult', 'SingleCellResult',
                   'CoexpressionResult', 'UMAPCoordinates'):
-        from .models import (SearchResult, CoverageResult, SingleCellResult,
+        from .models import (SearchResult, CellExpressionMatrixResult,
+                             CoverageResult, SingleCellResult,
                              CoexpressionResult, UMAPCoordinates)
         return locals()[name]
 

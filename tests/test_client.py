@@ -5,12 +5,20 @@ import time
 from pathlib import Path
 from unittest.mock import patch, MagicMock, PropertyMock
 
+import msgpack
+import numpy as np
 import pytest
 import responses
 from responses import matchers
 
 from malva_client.client import MalvaClient
-from malva_client.models import SearchResult, SingleCellResult, CoverageResult, CoexpressionResult, UMAPCoordinates
+from malva_client.models import (
+    CellExpressionMatrixResult,
+    SearchResult,
+    CoverageResult,
+    CoexpressionResult,
+    UMAPCoordinates,
+)
 from malva_client.exceptions import (
     MalvaAPIError,
     AuthenticationError,
@@ -111,6 +119,28 @@ class TestSearch:
 
         result = mock_client.search("BRCA1", poll_interval=0, max_wait=10)
         assert isinstance(result, SearchResult)
+        assert result.job_id == 'j1'
+
+    @responses.activate
+    def test_search_result_keeps_job_id_after_lazy_load(self, mock_client):
+        responses.add(
+            responses.POST, f"{BASE}/search",
+            json={'job_id': 'j1', 'status': 'running'},
+        )
+        responses.add(
+            responses.GET, f"{BASE}/search/j1",
+            json={'status': 'completed', 'results': {}},
+        )
+        responses.add(
+            responses.GET,
+            f"{BASE}/api/expression-data/j1/results",
+            json={'status': 'completed', 'results': {}},
+        )
+
+        result = mock_client.search("BRCA1", poll_interval=0, max_wait=10)
+        assert result.job_id == 'j1'
+        _ = result.df
+        assert result.job_id == 'j1'
 
     @responses.activate
     def test_search_timeout(self, mock_client):
@@ -165,24 +195,167 @@ class TestSearch:
             mock_client.search("BRCA1", threshold=1.5)
 
     @responses.activate
-    def test_search_cells(self, mock_client):
+    def test_retrieve_cells_from_search_result(self, mock_client):
         responses.add(
             responses.POST, f"{BASE}/search",
             json={
                 'status': 'completed',
                 'job_id': 'j1',
+            },
+        )
+        search_result = mock_client.search(
+            "BRCA1",
+            poll_interval=0,
+            aggregate_expression=False,
+        )
+        responses.add(
+            responses.GET,
+            f"{BASE}/search/j1",
+            json={
+                'status': 'completed',
+                'job_id': 'j1',
                 'results': {
-                    'seq_1': {
-                        'cell': [1, 2],
-                        'expression': [0.5, 0.8],
+                    'BRCA1': {
+                        'cell': [101, 102],
                         'sample': [10, 10],
-                        'ncells': 2,
+                        'expression': [4.0, 3.0],
                     }
                 },
             },
+            match=[matchers.query_param_matcher({'max_cells': '0'})],
         )
-        result = mock_client.search_cells("BRCA1")
-        assert isinstance(result, SingleCellResult)
+        responses.add(
+            responses.POST,
+            f"{BASE}/api/sample-metadata",
+            json={'metadata': {'10': {'uuid': 'sample-10'}}},
+        )
+        result = mock_client.retrieve_cells(search_result)
+        assert isinstance(result, CellExpressionMatrixResult)
+        assert len(result.cells) == 2
+        assert result.get_cell_ids()['cell_id'].astype(str).tolist() == ['101', '102']
+        df = result.to_dataframe(include_sample_metadata=True)
+        assert list(df['value']) == [4.0, 3.0]
+        assert set(df['uuid']) == {'sample-10'}
+        assert result.normalization_factors.empty
+
+    @responses.activate
+    def test_retrieve_cells_uses_binary_global_ids_for_aggregate_search(self, mock_client):
+        responses.add(
+            responses.POST, f"{BASE}/search",
+            json={
+                'status': 'completed',
+                'job_id': 'j1',
+            },
+        )
+        search_result = mock_client.search("BRCA1", poll_interval=0)
+        responses.add(
+            responses.GET,
+            f"{BASE}/search/j1/global-cell-ids",
+            body=msgpack.packb({
+                'c': np.array([101, 102], dtype=np.int64).tobytes(),
+                's': np.array([10, 10], dtype=np.int64).tobytes(),
+                'n': 2,
+            }, use_bin_type=True),
+            content_type="application/x-msgpack",
+        )
+        result = mock_client.retrieve_cells(
+            search_result,
+            include_sample_metadata=False,
+        )
+
+        assert result.source == 'global_cell_ids'
+        assert result.cells['cell_id'].tolist() == [101, 102]
+        assert result.to_dataframe()['value'].tolist() == [1.0, 1.0]
+
+    @responses.activate
+    def test_retrieve_cells_does_not_request_normalization_by_default(self, mock_client):
+        responses.add(
+            responses.POST, f"{BASE}/search",
+            json={
+                'status': 'completed',
+                'job_id': 'j1',
+            },
+        )
+        search_result = mock_client.search("BRCA1", poll_interval=0)
+        responses.add(
+            responses.GET,
+            f"{BASE}/search/j1/global-cell-ids",
+            body=msgpack.packb({
+                'c': np.array([101, 102], dtype=np.int64).tobytes(),
+                's': np.array([10, 10], dtype=np.int64).tobytes(),
+                'n': 2,
+            }, use_bin_type=True),
+            content_type="application/x-msgpack",
+        )
+        result = mock_client.retrieve_cells(
+            search_result,
+            include_sample_metadata=False,
+        )
+
+        assert result.source == 'global_cell_ids'
+        assert result.cells['cell_id'].tolist() == [101, 102]
+        assert result.normalization_factors.empty
+
+    @responses.activate
+    def test_retrieve_cells_filters_sample_from_job_id(self, mock_client):
+        responses.add(
+            responses.GET,
+            f"{BASE}/search/j1",
+            json={
+                'status': 'completed',
+                'job_id': 'j1',
+                'results': {
+                    'BRCA1': {
+                        'cell': [101, 202],
+                        'sample': [10, 20],
+                        'expression': [4.0, 9.0],
+                    }
+                },
+            },
+            match=[matchers.query_param_matcher({'max_cells': '0'})],
+        )
+        result = mock_client.retrieve_cells(
+            'j1',
+            features='BRCA1',
+            sample_ids=[10],
+            include_sample_metadata=False,
+        )
+        assert isinstance(result, CellExpressionMatrixResult)
+        assert result.cells['sample_id'].tolist() == [10]
+        assert result.cells['cell_id'].tolist() == [101]
+        assert result.to_dataframe()['value'].tolist() == [4.0]
+
+    @responses.activate
+    def test_project_cells_polls_async_coexpression_task(self, mock_client, sample_coexpression_response):
+        def check_query_payload(request):
+            body = json.loads(request.body)
+            assert body['dataset_id'] == 'human_cortex'
+            assert body['cell_ids'] == [101, 102]
+            assert body['sample_ids'] == [10, 10]
+            return (200, {}, json.dumps({'task_id': 'task1', 'status': 'pending'}))
+
+        completed = dict(sample_coexpression_response)
+        completed['status'] = 'completed'
+        responses.add_callback(
+            responses.POST,
+            f"{BASE}/api/coexpression/query",
+            callback=check_query_payload,
+        )
+        responses.add(
+            responses.GET,
+            f"{BASE}/api/coexpression/tasks/task1",
+            json=completed,
+        )
+
+        result = mock_client.project_cells(
+            [101, 102],
+            [10, 10],
+            dataset_id='human_cortex',
+            poll_interval=0,
+        )
+
+        assert isinstance(result, CoexpressionResult)
+        assert result.n_mapped_metacells == 120
 
     def test_search_sequence_validation(self, mock_client):
         with pytest.raises(ValueError, match="invalid nucleotides"):
@@ -503,6 +676,18 @@ class TestDatasetDiscovery:
         result = mock_client.get_sample_metadata([101, 102])
         assert 101 in result
         assert result[101]['organ'] == 'brain'
+
+    def test_sample_download_rewrites_internal_token_url(self, mock_client):
+        response = mock_client._normalise_sample_download_response(
+            'sample-uuid',
+            {
+                'download_url': 'http://malva_3030/api/download/token123',
+                'filename': 'sample.h5ad',
+                'file_size': 123,
+                'expires_in_seconds': 3600,
+            },
+        )
+        assert response['download_url'] == f'{BASE}/api/download/token123'
 
     @responses.activate
     def test_get_studies(self, mock_client):

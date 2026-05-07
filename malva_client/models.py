@@ -1,5 +1,8 @@
 import json
 import time
+import gzip
+import io
+import zipfile
 import requests
 import numpy as np
 import pandas as pd
@@ -661,6 +664,11 @@ class SearchResult(MalvaDataFrame):
         if not self._needs_lazy_fetch:
             return
         self._needs_lazy_fetch = False
+        aggregate_expression = (
+            self.raw_data.get('aggregate_expression')
+            if isinstance(self.raw_data, dict)
+            else None
+        )
         try:
             import time as _time
             logger.info(f"Fetching results for job {self._job_id} ...")
@@ -675,7 +683,13 @@ class SearchResult(MalvaDataFrame):
             logger.info(
                 f"Results parsed in {_time.time() - t0:.1f}s: {n_genes} genes"
             )
+            if aggregate_expression is not None and isinstance(response, dict):
+                response.setdefault('aggregate_expression', aggregate_expression)
+            if isinstance(response, dict):
+                response.setdefault('job_id', self._job_id)
             self.raw_data = response
+            if isinstance(response, dict) and response.get('job_id'):
+                self._job_id = response.get('job_id')
             self._df = self._convert_to_dataframe()
             sample_meta = response.get('_sample_metadata', {}) if isinstance(response, dict) else {}
             self._sample_metadata = sample_meta
@@ -790,7 +804,9 @@ class SearchResult(MalvaDataFrame):
     @property
     def job_id(self) -> str:
         """Get the job ID for this search"""
-        return self.raw_data.get('job_id', '')
+        if isinstance(self.raw_data, dict) and self.raw_data.get('job_id'):
+            return str(self.raw_data.get('job_id'))
+        return str(self._job_id or '')
     
     @property
     def status(self) -> str:
@@ -947,6 +963,351 @@ from typing import Dict, List, Any, Optional, Union, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from malva_client.client import MalvaClient
+
+
+class CellExpressionMatrixResult:
+    """
+    Per-cell result returned by MalvaClient.retrieve_cells().
+
+    New results are built directly from search and metadata endpoints. The
+    older ZIP-backed constructor remains supported for compatibility.
+    """
+
+    def __init__(self, archive_path: Optional[Union[str, Path]] = None,
+                 export_record: Optional[Dict[str, Any]] = None,
+                 client: Optional['MalvaClient'] = None,
+                 *,
+                 cells: Optional[pd.DataFrame] = None,
+                 features: Optional[pd.DataFrame] = None,
+                 matrix_entries: Optional[pd.DataFrame] = None,
+                 normalization_factors: Optional[pd.DataFrame] = None,
+                 sample_metadata: Optional[pd.DataFrame] = None,
+                 barcodes: Optional[pd.DataFrame] = None,
+                 job_id: Optional[str] = None,
+                 source: str = 'direct'):
+        self.archive_path = Path(archive_path) if archive_path is not None else None
+        self.export_record = export_record or {}
+        self.client = client
+        self.export_id = self.export_record.get('export_id')
+        self.job_id = job_id or self.export_record.get('job_id')
+        self.source = source or self.export_record.get('source', 'direct')
+        self.status = self.export_record.get('status', 'completed')
+
+        self._cells_df: Optional[pd.DataFrame] = cells.copy() if cells is not None else None
+        self._features_df: Optional[pd.DataFrame] = features.copy() if features is not None else None
+        self._normalization_df: Optional[pd.DataFrame] = (
+            normalization_factors.copy() if normalization_factors is not None else None
+        )
+        self._sample_metadata_df: Optional[pd.DataFrame] = (
+            sample_metadata.copy() if sample_metadata is not None else None
+        )
+        self._barcodes_df: Optional[pd.DataFrame] = barcodes.copy() if barcodes is not None else None
+        self._matrix_entries_df: Optional[pd.DataFrame] = (
+            matrix_entries.copy() if matrix_entries is not None else None
+        )
+
+    def _read_gz_tsv(self, member: str) -> pd.DataFrame:
+        if self.archive_path is None:
+            return pd.DataFrame()
+
+        if not self.archive_path.exists():
+            raise FileNotFoundError(f"Archive not found: {self.archive_path}")
+        with zipfile.ZipFile(self.archive_path) as zf:
+            if member not in zf.namelist():
+                return pd.DataFrame()
+            with zf.open(member) as raw:
+                with gzip.GzipFile(fileobj=raw, mode='rb') as gz:
+                    return pd.read_csv(gz, sep='\t')
+
+    @property
+    def cells(self) -> pd.DataFrame:
+        """Rows of the matrix: row_index, sample_id, cell_id."""
+        if self._cells_df is None:
+            self._cells_df = self._read_gz_tsv('cells.tsv.gz')
+        return self._cells_df.copy()
+
+    @property
+    def features(self) -> pd.DataFrame:
+        """Columns of the matrix: feature_index, job_id, feature, label, and source."""
+        if self._features_df is None:
+            self._features_df = self._read_gz_tsv('features.tsv.gz')
+        return self._features_df.copy()
+
+    @property
+    def normalization_factors(self) -> pd.DataFrame:
+        """Per-cell size factors aligned by row_index, when available."""
+        if self._normalization_df is None:
+            self._normalization_df = self._read_gz_tsv('normalization_factors.tsv.gz')
+        return self._normalization_df.copy()
+
+    @property
+    def sample_metadata(self) -> pd.DataFrame:
+        """Sample metadata table keyed by sample_id, when available."""
+        if self._sample_metadata_df is None:
+            self._sample_metadata_df = self._read_gz_tsv('sample_metadata.tsv.gz')
+        return self._sample_metadata_df.copy()
+
+    @property
+    def barcodes(self) -> pd.DataFrame:
+        """Optional barcode table aligned by row_index."""
+        if self._barcodes_df is None:
+            self._barcodes_df = self._read_gz_tsv('barcodes.tsv.gz')
+        return self._barcodes_df.copy()
+
+    @property
+    def matrix_entries(self) -> pd.DataFrame:
+        """
+        Sparse matrix entries as row_index, feature_index, value.
+
+        Values are raw per-cell expression or k-mer hit counts. Missing
+        row/feature pairs are zero.
+        """
+        if self._matrix_entries_df is not None:
+            return self._matrix_entries_df.copy()
+
+        if self.archive_path is None:
+            self._matrix_entries_df = pd.DataFrame(columns=['row_index', 'feature_index', 'value'])
+            return self._matrix_entries_df.copy()
+
+        if not self.archive_path.exists():
+            raise FileNotFoundError(f"Archive not found: {self.archive_path}")
+
+        with zipfile.ZipFile(self.archive_path) as zf:
+            if 'matrix.mtx.gz' not in zf.namelist():
+                self._matrix_entries_df = pd.DataFrame(columns=['row_index', 'feature_index', 'value'])
+                return self._matrix_entries_df.copy()
+
+            with zf.open('matrix.mtx.gz') as raw:
+                with gzip.GzipFile(fileobj=raw, mode='rb') as gz:
+                    text = io.TextIOWrapper(gz, encoding='utf-8')
+                    for line in text:
+                        if not line.startswith('%'):
+                            break
+                    try:
+                        entries = pd.read_csv(
+                            text,
+                            sep=r'\s+',
+                            names=['row_index', 'feature_index', 'value'],
+                            engine='python',
+                        )
+                    except pd.errors.EmptyDataError:
+                        entries = pd.DataFrame(columns=['row_index', 'feature_index', 'value'])
+
+        if entries.empty:
+            entries = pd.DataFrame(columns=['row_index', 'feature_index', 'value'])
+        else:
+            entries['row_index'] = entries['row_index'].astype('int64')
+            entries['feature_index'] = entries['feature_index'].astype('int64')
+            entries['value'] = entries['value'].astype('float32')
+
+        self._matrix_entries_df = entries
+        return self._matrix_entries_df.copy()
+
+    def get_cell_ids(self, sample_ids: Optional[Union[int, List[int]]] = None) -> pd.DataFrame:
+        """
+        Return sample_id/cell_id pairs from the matrix rows.
+
+        Args:
+            sample_ids: Optional encoded sample ID or list of sample IDs.
+        """
+        cells = self.cells
+        if sample_ids is None or cells.empty:
+            return cells
+        if isinstance(sample_ids, (int, np.integer)):
+            sample_set = {int(sample_ids)}
+        else:
+            sample_set = {int(s) for s in sample_ids}
+        return cells[cells['sample_id'].isin(sample_set)].copy()
+
+    def positive_cells(self, feature: Optional[Union[str, int]] = None,
+                       sample_ids: Optional[Union[int, List[int]]] = None) -> pd.DataFrame:
+        """
+        Return cells with non-zero expression in any retrieved feature or one feature.
+
+        Args:
+            feature: Feature label/name or feature_index. If omitted, returns
+                all cells that are present in the retrieved matrix rows.
+            sample_ids: Optional encoded sample ID or list of sample IDs.
+        """
+        cells = self.get_cell_ids(sample_ids)
+        if feature is None or cells.empty:
+            return cells
+
+        features = self.features
+        if isinstance(feature, (int, np.integer)):
+            feature_indices = {int(feature)}
+        else:
+            feature_text = str(feature)
+            mask = (
+                features.get('feature', pd.Series(dtype=object)).astype(str).eq(feature_text)
+                | features.get('label', pd.Series(dtype=object)).astype(str).eq(feature_text)
+            )
+            feature_indices = set(features.loc[mask, 'feature_index'].astype(int).tolist())
+        if not feature_indices:
+            raise ValueError(f"Feature not found in result: {feature}")
+
+        entries = self.matrix_entries
+        row_ids = set(entries.loc[entries['feature_index'].isin(feature_indices), 'row_index'].astype(int).tolist())
+        return cells[cells['row_index'].isin(row_ids)].copy()
+
+    def to_dataframe(self, normalized: bool = False,
+                     include_sample_metadata: bool = False) -> pd.DataFrame:
+        """
+        Convert the sparse matrix to a long DataFrame.
+
+        Args:
+            normalized: Add normalized_value = value / size_factor when
+                normalization factors are available.
+            include_sample_metadata: Merge sample metadata by sample_id.
+        """
+        entries = self.matrix_entries
+        cells = self.cells
+        features = self.features
+
+        if entries.empty:
+            columns = ['row_index', 'sample_id', 'cell_id', 'feature_index', 'feature', 'label', 'value']
+            return pd.DataFrame(columns=columns)
+
+        df = entries.merge(cells, on='row_index', how='left')
+        df = df.merge(features, on='feature_index', how='left')
+
+        if normalized:
+            norm = self.normalization_factors
+            if not norm.empty and 'size_factor' in norm.columns:
+                norm = norm[['row_index', 'total_counts', 'size_factor']].copy()
+                df = df.merge(norm, on='row_index', how='left')
+                sf = pd.to_numeric(df['size_factor'], errors='coerce')
+                df['normalized_value'] = df['value'] / sf.replace(0, np.nan)
+
+        if include_sample_metadata:
+            meta = self.sample_metadata
+            if not meta.empty and 'sample_id' in meta.columns:
+                df = df.merge(meta, on='sample_id', how='left', suffixes=('', '_sample'))
+
+        return df
+
+    def for_sample(self, sample_id: int, normalized: bool = False,
+                   include_sample_metadata: bool = False) -> pd.DataFrame:
+        """Return long matrix entries for one encoded sample ID."""
+        cells = self.get_cell_ids(int(sample_id))
+        if cells.empty:
+            return pd.DataFrame()
+        row_ids = set(cells['row_index'].astype(int).tolist())
+        entries = self.matrix_entries
+        subset = entries[entries['row_index'].isin(row_ids)]
+        if subset.empty:
+            return pd.DataFrame()
+
+        original_entries = self._matrix_entries_df
+        try:
+            self._matrix_entries_df = subset
+            return self.to_dataframe(
+                normalized=normalized,
+                include_sample_metadata=include_sample_metadata,
+            )
+        finally:
+            self._matrix_entries_df = original_entries
+
+    def to_single_cell_result(self, feature: Optional[Union[str, int]] = None,
+                              sample_ids: Optional[Union[int, List[int]]] = None,
+                              normalized: bool = False) -> 'SingleCellResult':
+        """
+        Convert one retrieved feature to the legacy SingleCellResult shape.
+
+        This is useful for existing downstream code that expects columns
+        cell_id, expression, and sample_id.
+        """
+        features = self.features
+        if features.empty:
+            return SingleCellResult({'status': 'completed', 'results': {}}, self.client)
+
+        if feature is None:
+            if len(features) != 1:
+                raise ValueError("feature is required when the result has multiple features")
+            feature_index = int(features.iloc[0]['feature_index'])
+            feature_label = str(features.iloc[0].get('label') or features.iloc[0].get('feature'))
+        elif isinstance(feature, (int, np.integer)):
+            feature_index = int(feature)
+            row = features[features['feature_index'] == feature_index]
+            feature_label = str(row.iloc[0].get('label') or row.iloc[0].get('feature')) if not row.empty else str(feature)
+        else:
+            feature_text = str(feature)
+            mask = (
+                features.get('feature', pd.Series(dtype=object)).astype(str).eq(feature_text)
+                | features.get('label', pd.Series(dtype=object)).astype(str).eq(feature_text)
+            )
+            rows = features.loc[mask]
+            if rows.empty:
+                raise ValueError(f"Feature not found in result: {feature}")
+            feature_index = int(rows.iloc[0]['feature_index'])
+            feature_label = str(rows.iloc[0].get('label') or rows.iloc[0].get('feature'))
+
+        df = self.to_dataframe(normalized=normalized)
+        df = df[df['feature_index'] == feature_index]
+        if sample_ids is not None:
+            if isinstance(sample_ids, (int, np.integer)):
+                sample_set = {int(sample_ids)}
+            else:
+                sample_set = {int(s) for s in sample_ids}
+            df = df[df['sample_id'].isin(sample_set)]
+
+        expr_col = 'normalized_value' if normalized and 'normalized_value' in df.columns else 'value'
+        result_data = {
+            'status': 'completed',
+            'results': {
+                feature_label: {
+                    'cell': df['cell_id'].astype(int).tolist(),
+                    'sample': df['sample_id'].astype(int).tolist(),
+                    'expression': df[expr_col].astype(float).tolist(),
+                    'ncells': int(len(df)),
+                }
+            }
+        }
+        return SingleCellResult(result_data, self.client)
+
+    def project(self, dataset_id: str,
+                sample_ids: Optional[Union[int, List[int]]] = None,
+                feature: Optional[Union[str, int]] = None,
+                **kwargs) -> 'CoexpressionResult':
+        """
+        Project retrieved positive cells onto a coexpression index.
+
+        Args:
+            dataset_id: Coexpression index or dataset identifier.
+            sample_ids: Optional encoded sample ID or IDs to restrict cells.
+            feature: Optional feature to restrict to cells positive for that
+                feature. If omitted, uses all retrieved positive cells.
+            **kwargs: Additional coexpression parameters, such as top_n_genes.
+        """
+        if self.client is None:
+            raise MalvaAPIError("A MalvaClient is required for projection")
+        cells = self.positive_cells(feature=feature, sample_ids=sample_ids)
+        return self.client.project_cells(
+            cells['cell_id'].astype(int).tolist(),
+            cells['sample_id'].astype(int).tolist(),
+            dataset_id=dataset_id,
+            **kwargs,
+        )
+
+    def __repr__(self) -> str:
+        n_cells = self.export_record.get('cell_count')
+        n_features = self.export_record.get('feature_count')
+        if n_cells is None:
+            try:
+                n_cells = len(self.cells)
+            except Exception:
+                n_cells = 'unknown'
+        if n_features is None:
+            try:
+                n_features = len(self.features)
+            except Exception:
+                n_features = 'unknown'
+        if self.archive_path is not None:
+            location = f"archive_path='{self.archive_path}'"
+        else:
+            location = f"job_id='{self.job_id}', source='{self.source}'"
+        return f"CellExpressionMatrixResult(cells={n_cells}, features={n_features}, {location})"
+
 
 class SingleCellResult:
     """
