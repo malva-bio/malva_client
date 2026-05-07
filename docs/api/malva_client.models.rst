@@ -35,6 +35,26 @@ MalvaDataFrame
    .. automethod:: unique_values
    .. automethod:: value_counts
 
+CellExpressionMatrixResult
+--------------------------
+
+.. autoclass:: malva_client.models.CellExpressionMatrixResult
+   :no-members:
+   :show-inheritance:
+
+   .. automethod:: __init__
+   .. autoproperty:: cells
+   .. autoproperty:: features
+   .. autoproperty:: normalization_factors
+   .. autoproperty:: sample_metadata
+   .. autoproperty:: matrix_entries
+   .. automethod:: get_cell_ids
+   .. automethod:: positive_cells
+   .. automethod:: to_dataframe
+   .. automethod:: for_sample
+   .. automethod:: to_single_cell_result
+   .. automethod:: project
+
 SingleCellResult
 ----------------
 

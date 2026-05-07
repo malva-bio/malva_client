@@ -10,7 +10,7 @@ Client
    .. rubric:: Search
 
    .. automethod:: search
-   .. automethod:: search_cells
+   .. automethod:: retrieve_cells
    .. automethod:: search_sequence
    .. automethod:: search_sequences
    .. automethod:: search_genes
@@ -35,6 +35,7 @@ Client
    .. rubric:: Coexpression Analysis
 
    .. automethod:: get_umap_coordinates
+   .. automethod:: project_cells
    .. automethod:: get_coexpression
    .. automethod:: get_coexpression_genes
 
