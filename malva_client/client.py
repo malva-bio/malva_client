@@ -366,13 +366,35 @@ class MalvaClient:
             payload['unstranded_mode'] = True
         return payload
 
+    def _get_job_status_lightweight(self, job_id: str) -> Dict[str, Any]:
+        """Fetch job status without forcing the server to return result data."""
+        try:
+            return self._request('GET', f'/search/{job_id}/status')
+        except MalvaAPIError as exc:
+            if self._is_not_found_error(exc):
+                return self._request('GET', f'/search/{job_id}')
+            raise
+
+    @staticmethod
+    def _adaptive_poll_delay(elapsed: float, poll_interval: int) -> float:
+        max_delay = max(float(poll_interval), 0.0)
+        if max_delay <= 0:
+            return 0.0
+        if elapsed < 2:
+            return min(max_delay, 0.2)
+        if elapsed < 5:
+            return min(max_delay, 0.5)
+        if elapsed < 15:
+            return min(max_delay, 1.0)
+        return max_delay
+
     def _poll_until_complete(self, job_id: str, poll_interval: int,
                              max_wait: int, context: str = "search") -> SearchResult:
         """Poll GET /search/<job_id> until completed, return lazy SearchResult."""
         start_time = time.time()
         while time.time() - start_time < max_wait:
             try:
-                resp = self._request('GET', f'/search/{job_id}')
+                resp = self._get_job_status_lightweight(job_id)
                 status = resp.get('status')
                 logger.info(f"{context} status: {status}")
                 if status == 'completed':
@@ -385,7 +407,9 @@ class MalvaClient:
                     pass  # job not yet visible, keep polling
                 else:
                     raise
-            time.sleep(poll_interval)
+            delay = self._adaptive_poll_delay(time.time() - start_time, poll_interval)
+            if delay > 0:
+                time.sleep(delay)
         raise MalvaAPIError(f"{context} timed out after {max_wait} seconds")
 
     def search(self, query: str,
@@ -837,7 +861,10 @@ class MalvaClient:
                                                 sample_ids: Optional[List[int]],
                                                 include_barcodes: bool,
                                                 include_sample_metadata: bool) -> CellExpressionMatrixResult:
-        response = self._request_raw('GET', f'/search/{job_id}/global-cell-ids')
+        params = {}
+        if sample_ids:
+            params['sample_ids'] = ','.join(str(s) for s in sample_ids)
+        response = self._request_raw('GET', f'/search/{job_id}/global-cell-ids', params=params)
         decoded = msgpack.unpackb(response.content, raw=False, strict_map_key=False)
         cells = np.frombuffer(decoded.get('c', b''), dtype=np.int64)
         samples = np.frombuffer(decoded.get('s', b''), dtype=np.int64)
@@ -1600,14 +1627,14 @@ class MalvaClient:
         from malva_client.storage import save_job_status
 
         try:
-            response = self._request('GET', f'/search/{job_id}')
+            response = self._get_job_status_lightweight(job_id)
 
             # Update local storage
             save_job_status(
                 job_id=job_id,
                 status=response.get('status', 'unknown'),
                 server_url=self.base_url,
-                results_data=response.get('results') if response.get('status') == 'completed' else None,
+                results_data=None,
                 error_message=response.get('error') if response.get('status') == 'error' else None
             )
 
@@ -1718,6 +1745,7 @@ class MalvaClient:
         start_time = time.time()
 
         while time.time() - start_time < max_wait:
+            elapsed = time.time() - start_time
             status_response = self.get_job_status(job_id)
             status = status_response.get('status')
 
@@ -1728,7 +1756,9 @@ class MalvaClient:
                 raise SearchError(f"Job {job_id} failed: {error_msg}")
             elif status in ['pending', 'running']:
                 logger.info(f"Job {job_id} status: {status}")
-                time.sleep(poll_interval)
+                delay = self._adaptive_poll_delay(elapsed, poll_interval)
+                if delay > 0:
+                    time.sleep(delay)
             else:
                 raise SearchError(f"Job {job_id} has unexpected status: {status}")
 
