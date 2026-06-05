@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - All-cell metadata decoding uses categorical cell types and rounded/clipped `uint16` total counts for lower memory use and faster DataFrame construction.
 
 ### Fixed
-- `retrieve_cells()` now prefers per-feature cell/sample/expression arrays so aggregate searches return raw per-cell values instead of all `1.0` positive indicators when values are available.
+- `retrieve_cells()` now prefers the direct msgpack per-cell expression values endpoint, which uses the same raw k-mer value resolver as the Explorer matrix export without generating a ZIP. Aggregate searches therefore return raw per-cell values instead of all `1.0` positive indicators when values are available.
 - Removed stale docs examples that produced errors with placeholder IDs or non-existent tutorial links.
 
 ## [0.3.2] - 2026-05-07
