@@ -173,6 +173,27 @@ Fetching every cell in the database is also supported through
 ``get_cells_by_metadata(include_all_database_cells=True)``, but it is a large
 operation and is intentionally not part of the quick-start workflow.
 
+Coverage Results
+----------------
+
+Coverage queries return aggregate tracks, not single-cell coverage. Use
+``to_dataframe()`` for the cell-type × position display matrix and
+``to_long_dataframe()`` when you need sample-aware downstream filtering:
+
+.. code-block:: python
+
+   coverage = client.get_coverage("chr11", 67435510, 67439682)
+
+   matrix = coverage.to_dataframe()
+   per_sample = coverage.to_long_dataframe()
+
+   sample_rows = per_sample[per_sample["sample_id"] == per_sample.iloc[0]["sample_id"]]
+   print(matrix.head())
+   print(sample_rows.head())
+
+The long table has one row per genomic position × sample × cell type and
+includes ``raw_signal``, ``cell_count``, and ``mean_signal``.
+
 Asynchronous Jobs
 -----------------
 

@@ -369,6 +369,29 @@ class TestCoverageResult:
         df = cr.to_dataframe()
         assert df.empty
 
+    def test_to_long_dataframe(self):
+        cr = CoverageResult({
+            'positions': [100, 200],
+            'cell_types': ['A', 'B'],
+            'sample_celltype_coverage': {
+                'samples': ['10', '20'],
+                'cell_types': ['A', 'B'],
+                'positions': [100, 200],
+                'columns': ['position_idx', 'sample_idx', 'cell_type_idx', 'raw_signal', 'cell_count', 'mean_signal'],
+                'data': [[0, 0, 1, 7.0, 3, 2.333333], [1, 1, 0, 11.0, 4, 2.75]],
+            },
+        })
+        df = cr.to_long_dataframe()
+        assert list(df.columns) == [
+            'position', 'position_idx', 'sample_id', 'sample_idx',
+            'cell_type', 'cell_type_idx', 'raw_signal', 'cell_count',
+            'mean_signal',
+        ]
+        assert df.iloc[0]['position'] == 100
+        assert df.iloc[0]['sample_id'] == '10'
+        assert df.iloc[0]['cell_type'] == 'B'
+        assert df.iloc[0]['raw_signal'] == 7.0
+
 
 # ===========================================================================
 # UMAPCoordinates

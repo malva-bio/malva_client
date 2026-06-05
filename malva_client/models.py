@@ -1764,7 +1764,44 @@ class CoverageResult:
         self.positions = raw_data.get('positions', [])
         self.cell_types = raw_data.get('cell_types', [])
         self.coverage_matrix = raw_data.get('coverage_matrix', [])
+        self.sample_celltype_coverage = raw_data.get('sample_celltype_coverage', {})
         self.total_windows = raw_data.get('total_windows', len(self.positions))
+
+    def to_long_dataframe(self) -> pd.DataFrame:
+        """Return compact coverage rows by position, sample, and cell type.
+
+        The server does not return single-cell coverage here. Rows are aggregate
+        sample x cell-type values for each genomic position/probe, with raw
+        signal, positive-cell count, and mean signal per positive cell.
+        """
+        agg = self.sample_celltype_coverage or {}
+        rows = agg.get('data') or []
+        if not rows:
+            return pd.DataFrame(columns=[
+                'position', 'position_idx', 'sample_id', 'sample_idx',
+                'cell_type', 'cell_type_idx', 'raw_signal', 'cell_count',
+                'mean_signal',
+            ])
+        positions = agg.get('positions') or self.positions or []
+        samples = agg.get('samples') or []
+        cell_types = agg.get('cell_types') or self.cell_types or []
+        records = []
+        for row in rows:
+            if len(row) < 6:
+                continue
+            pi, si, ci = int(row[0]), int(row[1]), int(row[2])
+            records.append({
+                'position': positions[pi] if pi < len(positions) else pi,
+                'position_idx': pi,
+                'sample_id': samples[si] if si < len(samples) else si,
+                'sample_idx': si,
+                'cell_type': cell_types[ci] if ci < len(cell_types) else ci,
+                'cell_type_idx': ci,
+                'raw_signal': float(row[3]),
+                'cell_count': int(row[4]),
+                'mean_signal': float(row[5]),
+            })
+        return pd.DataFrame.from_records(records)
 
     def to_dataframe(self) -> pd.DataFrame:
         """

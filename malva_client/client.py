@@ -660,6 +660,104 @@ class MalvaClient:
         )
         return result
 
+    def _request_msgpack_with_transfer_timing(self, method: str, endpoint: str,
+                                              stage_callback: Optional[Callable[[str, Dict[str, Any]], None]] = None,
+                                              stage_prefix: str = 'coverage_result',
+                                              **kwargs) -> Dict[str, Any]:
+        """Request msgpack while reporting response, download, and parse stages."""
+        if endpoint.startswith(('http://', 'https://')):
+            url = endpoint
+        else:
+            url = urljoin(self.base_url, endpoint.lstrip('/'))
+
+        request_started = time.time()
+        try:
+            response = self.session.request(
+                method,
+                url,
+                timeout=self.timeout,
+                stream=True,
+                **kwargs,
+            )
+        except requests.exceptions.Timeout:
+            raise MalvaAPIError(f"Request timed out after {self.timeout} seconds")
+        except requests.exceptions.ConnectionError:
+            raise MalvaAPIError(f"Could not connect to {self.base_url}. Check if the server is running.")
+        except requests.exceptions.RequestException as exc:
+            raise MalvaAPIError(f"Request failed: {exc}")
+
+        first_byte_elapsed = time.time() - request_started
+        self._emit_stage(
+            stage_callback,
+            f'{stage_prefix}_response_started',
+            elapsed_seconds=round(first_byte_elapsed, 3),
+            status_code=response.status_code,
+            encoding='msgpack',
+        )
+
+        if response.status_code == 404:
+            response.close()
+            raise MalvaAPIError(f"Endpoint not found: {endpoint}")
+        if response.status_code in [401, 403]:
+            response.close()
+            raise AuthenticationError("Authentication failed")
+        if response.status_code == 429:
+            response.close()
+            raise QuotaExceededError("Search quota exceeded")
+        if not response.ok:
+            try:
+                error_data = response.json()
+                msg = error_data.get('detail', error_data.get('error', f'HTTP {response.status_code}'))
+            except (json.JSONDecodeError, ValueError):
+                msg = response.text[:200] if response.text else f'HTTP {response.status_code}'
+            finally:
+                response.close()
+            raise MalvaAPIError(f"API error: {msg}")
+
+        chunks = []
+        bytes_read = 0
+        download_started = time.time()
+        last_report = download_started
+        try:
+            for chunk in response.iter_content(chunk_size=1024 * 1024):
+                if not chunk:
+                    continue
+                chunks.append(chunk)
+                bytes_read += len(chunk)
+                now = time.time()
+                if now - last_report >= 5:
+                    self._emit_stage(
+                        stage_callback,
+                        f'{stage_prefix}_downloading',
+                        bytes=bytes_read,
+                        elapsed_seconds=round(now - download_started, 3),
+                    )
+                    last_report = now
+        finally:
+            response.close()
+
+        self._emit_stage(
+            stage_callback,
+            f'{stage_prefix}_downloaded',
+            bytes=bytes_read,
+            elapsed_seconds=round(time.time() - download_started, 3),
+            encoding='msgpack',
+        )
+
+        parse_started = time.time()
+        body = b''.join(chunks)
+        try:
+            result = msgpack.unpackb(body, raw=False, strict_map_key=False)
+        except Exception as exc:
+            raise MalvaAPIError("Server returned invalid msgpack response") from exc
+        self._emit_stage(
+            stage_callback,
+            f'{stage_prefix}_parsed',
+            elapsed_seconds=round(time.time() - parse_started, 3),
+            encoding='msgpack',
+        )
+        return result
+
     def _request_raw(self, method: str, endpoint: str, **kwargs) -> requests.Response:
         """Make a request and return the raw response for binary endpoints."""
         if endpoint.startswith(('http://', 'https://')):
@@ -2262,6 +2360,23 @@ class MalvaClient:
         """
         start_time = time.time()
 
+        def _fetch_binary_compact_coverage() -> Optional['CoverageResult']:
+            try:
+                result = self._request_msgpack_with_transfer_timing(
+                    'GET',
+                    f'/api/genome-browser/coverage-compact/{job_id}',
+                    stage_callback=stage_callback,
+                    stage_prefix='coverage_result',
+                )
+            except MalvaAPIError as exc:
+                if self._is_not_found_error(exc):
+                    return None
+                raise
+            coverage_data = result.get('coverage', result.get('coverage_data', result))
+            coverage_data['job_id'] = job_id
+            coverage_data['region'] = region
+            return CoverageResult(coverage_data, self)
+
         if positions is not None:
             try:
                 while time.time() - start_time < max_wait:
@@ -2269,6 +2384,9 @@ class MalvaClient:
                     status = response.get('status')
                     if status == 'completed':
                         self._emit_stage(stage_callback, 'coverage_search_completed', job_id=job_id)
+                        compact = _fetch_binary_compact_coverage()
+                        if compact is not None:
+                            return compact
                         result = self._request_json_with_transfer_timing(
                             'POST',
                             f'/api/coverage/results/{job_id}',
@@ -2294,6 +2412,10 @@ class MalvaClient:
                 self._emit_stage(stage_callback, 'coverage_result_fallback', job_id=job_id)
 
         while time.time() - start_time < max_wait:
+            compact = _fetch_binary_compact_coverage()
+            if compact is not None:
+                return compact
+
             response = self._request('GET', f'/api/genome-browser/coverage/{job_id}')
             status = response.get('status')
 
