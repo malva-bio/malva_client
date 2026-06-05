@@ -4,7 +4,7 @@ import requests
 import msgpack
 import numpy as np
 import pandas as pd
-from typing import Dict, List, Any, Optional, Union, Tuple
+from typing import Dict, List, Any, Optional, Union, Tuple, Callable
 from pathlib import Path
 import logging
 from urllib.parse import urljoin, urlparse, urlunparse
@@ -544,6 +544,122 @@ class MalvaClient:
             raise last_error
         raise MalvaAPIError("No endpoint candidates were provided")
 
+    @staticmethod
+    def _emit_stage(callback: Optional[Callable[[str, Dict[str, Any]], None]],
+                    stage: str, **details) -> None:
+        payload = {'stage': stage}
+        payload.update(details)
+        msg = f"Coverage stage: {stage}"
+        if details:
+            compact = ", ".join(f"{k}={v}" for k, v in details.items() if v is not None)
+            msg = f"{msg} ({compact})"
+        logger.info(msg)
+        if callback:
+            callback(stage, payload)
+
+    def _request_json_with_transfer_timing(self, method: str, endpoint: str,
+                                           stage_callback: Optional[Callable[[str, Dict[str, Any]], None]] = None,
+                                           stage_prefix: str = 'coverage_result',
+                                           **kwargs) -> Dict[str, Any]:
+        """Request JSON while reporting server-generation, download, and parse stages.
+
+        With requests, time-to-first-byte approximates server-side result
+        generation. The streamed body read then measures the actual transfer
+        time, which is what users notice for large coverage responses.
+        """
+        if endpoint.startswith(('http://', 'https://')):
+            url = endpoint
+        else:
+            url = urljoin(self.base_url, endpoint.lstrip('/'))
+
+        request_started = time.time()
+        try:
+            response = self.session.request(
+                method,
+                url,
+                timeout=self.timeout,
+                stream=True,
+                **kwargs,
+            )
+        except requests.exceptions.Timeout:
+            raise MalvaAPIError(f"Request timed out after {self.timeout} seconds")
+        except requests.exceptions.ConnectionError:
+            raise MalvaAPIError(f"Could not connect to {self.base_url}. Check if the server is running.")
+        except requests.exceptions.RequestException as exc:
+            raise MalvaAPIError(f"Request failed: {exc}")
+
+        first_byte_elapsed = time.time() - request_started
+        self._emit_stage(
+            stage_callback,
+            f'{stage_prefix}_response_started',
+            elapsed_seconds=round(first_byte_elapsed, 3),
+            status_code=response.status_code,
+        )
+
+        if response.status_code == 404:
+            response.close()
+            raise MalvaAPIError(f"Endpoint not found: {endpoint}")
+        if response.status_code in [401, 403]:
+            response.close()
+            raise AuthenticationError("Authentication failed")
+        if response.status_code == 429:
+            response.close()
+            raise QuotaExceededError("Search quota exceeded")
+        if not response.ok:
+            try:
+                error_data = response.json()
+                msg = error_data.get('detail', error_data.get('error', f'HTTP {response.status_code}'))
+            except (json.JSONDecodeError, ValueError):
+                msg = response.text[:200] if response.text else f'HTTP {response.status_code}'
+            finally:
+                response.close()
+            raise MalvaAPIError(f"API error: {msg}")
+
+        chunks = []
+        bytes_read = 0
+        download_started = time.time()
+        last_report = download_started
+        try:
+            for chunk in response.iter_content(chunk_size=1024 * 1024):
+                if not chunk:
+                    continue
+                chunks.append(chunk)
+                bytes_read += len(chunk)
+                now = time.time()
+                if now - last_report >= 5:
+                    self._emit_stage(
+                        stage_callback,
+                        f'{stage_prefix}_downloading',
+                        bytes=bytes_read,
+                        elapsed_seconds=round(now - download_started, 3),
+                    )
+                    last_report = now
+        finally:
+            encoding = response.encoding or 'utf-8'
+            response.close()
+
+        download_elapsed = time.time() - download_started
+        self._emit_stage(
+            stage_callback,
+            f'{stage_prefix}_downloaded',
+            bytes=bytes_read,
+            elapsed_seconds=round(download_elapsed, 3),
+        )
+
+        parse_started = time.time()
+        body = b''.join(chunks)
+        try:
+            result = json.loads(body.decode(encoding))
+        except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+            preview = body[:200].decode(encoding, errors='replace') if body else '(empty body)'
+            raise MalvaAPIError(f"Server returned invalid JSON response: {preview}") from exc
+        self._emit_stage(
+            stage_callback,
+            f'{stage_prefix}_parsed',
+            elapsed_seconds=round(time.time() - parse_started, 3),
+        )
+        return result
+
     def _request_raw(self, method: str, endpoint: str, **kwargs) -> requests.Response:
         """Make a request and return the raw response for binary endpoints."""
         if endpoint.startswith(('http://', 'https://')):
@@ -976,10 +1092,12 @@ class MalvaClient:
 
         Run :meth:`search` or :meth:`search_sequences` first, then pass the
         returned SearchResult or its job_id here. This method does not start a
-        new search and does not use the ZIP export workflow. Aggregate jobs use
-        the fast binary cell-ID endpoint when feature-level values are not
-        present. Jobs created with ``aggregate_expression=False`` can provide
-        per-feature values when the search service exposes them.
+        new search and does not use the ZIP export workflow. The client first
+        asks the search service for per-feature cell/sample/expression arrays so
+        the ``value`` column contains raw per-cell expression/k-mer counts when
+        available. The fast global cell-ID endpoint is used only as a fallback;
+        it cannot carry per-cell expression values and therefore reports
+        positive-cell indicators.
 
         """
         job_id, result = self._resolve_search_job(search_job, poll_interval, max_wait)
@@ -993,24 +1111,12 @@ class MalvaClient:
         sample_id_list = self._normalise_id_list(sample_ids)
 
         errors = []
-        aggregate_job = None
-        if result is not None and isinstance(result.raw_data, dict):
-            aggregate_job = result.raw_data.get('aggregate_expression')
-
-        if aggregate_job is True and feature_list is None:
-            fetchers = (
-                self._retrieve_cells_from_global_ids_endpoint,
-                self._retrieve_cells_from_explorer_endpoint,
-                self._retrieve_cells_from_cell_ids_endpoint,
-                self._retrieve_cells_from_full_search_endpoint,
-            )
-        else:
-            fetchers = (
-                self._retrieve_cells_from_full_search_endpoint,
-                self._retrieve_cells_from_cell_ids_endpoint,
-                self._retrieve_cells_from_global_ids_endpoint,
-                self._retrieve_cells_from_explorer_endpoint,
-            )
+        fetchers = (
+            self._retrieve_cells_from_full_search_endpoint,
+            self._retrieve_cells_from_cell_ids_endpoint,
+            self._retrieve_cells_from_global_ids_endpoint,
+            self._retrieve_cells_from_explorer_endpoint,
+        )
 
         for fetcher in fetchers:
             try:
@@ -1944,7 +2050,8 @@ class MalvaClient:
     def get_coverage(self, chr: str, start: int, end: int,
                      strand: str = '+', zoom: int = 1,
                      metadata_filters: Optional[Dict[str, Any]] = None,
-                     poll_interval: int = 2, max_wait: int = 300) -> 'CoverageResult':
+                     poll_interval: int = 2, max_wait: int = 300,
+                     stage_callback: Optional[Callable[[str, Dict[str, Any]], None]] = None) -> 'CoverageResult':
         """
         Get genomic region coverage across cell types.
 
@@ -1957,6 +2064,9 @@ class MalvaClient:
             metadata_filters: Optional metadata filters (e.g., {'organ': ['brain']})
             poll_interval: How often to check for completion (seconds)
             max_wait: Maximum time to wait for completion (seconds)
+            stage_callback: Optional callable receiving coverage stage updates
+                as ``callback(stage, payload)``. Stages include search polling,
+                result generation, response download, and local JSON parsing.
 
         Returns:
             CoverageResult object
@@ -1974,11 +2084,13 @@ class MalvaClient:
         if metadata_filters:
             data['metadata_filters'] = metadata_filters
 
+        self._emit_stage(stage_callback, 'coverage_search_submitting', region=f'{chr}:{start}-{end}')
         response = self._request('POST', '/api/genome-browser/search', json=data)
         job_id = response.get('job_id')
 
         if not job_id:
             raise MalvaAPIError("No job_id received from coverage search")
+        self._emit_stage(stage_callback, 'coverage_search_submitted', job_id=job_id, probes=len(response.get('positions') or []))
 
         region = f"{chr}:{start}-{end}({strand})"
         return self._poll_coverage(
@@ -1987,11 +2099,13 @@ class MalvaClient:
             positions=response.get('positions'),
             poll_interval=poll_interval,
             max_wait=max_wait,
+            stage_callback=stage_callback,
         )
 
     def get_sequence_coverage(self, sequence: str, sequence_name: str = '',
                               metadata_filters: Optional[Dict[str, Any]] = None,
-                              poll_interval: int = 2, max_wait: int = 300) -> 'CoverageResult':
+                              poll_interval: int = 2, max_wait: int = 300,
+                              stage_callback: Optional[Callable[[str, Dict[str, Any]], None]] = None) -> 'CoverageResult':
         """
         Get coverage for an arbitrary DNA sequence.
 
@@ -2001,6 +2115,7 @@ class MalvaClient:
             metadata_filters: Optional metadata filters
             poll_interval: How often to check for completion (seconds)
             max_wait: Maximum time to wait for completion (seconds)
+            stage_callback: Optional callable receiving coverage stage updates
 
         Returns:
             CoverageResult object
@@ -2013,11 +2128,13 @@ class MalvaClient:
         if metadata_filters:
             data['metadata_filters'] = metadata_filters
 
+        self._emit_stage(stage_callback, 'coverage_search_submitting', region=sequence_name or f'seq:{len(sequence)}bp')
         response = self._request('POST', '/api/genome-browser/search-sequence', json=data)
         job_id = response.get('job_id')
 
         if not job_id:
             raise MalvaAPIError("No job_id received from sequence coverage search")
+        self._emit_stage(stage_callback, 'coverage_search_submitted', job_id=job_id, probes=len(response.get('positions') or []))
 
         region = sequence_name or f"seq:{sequence[:20]}..."
         return self._poll_coverage(
@@ -2026,11 +2143,13 @@ class MalvaClient:
             positions=response.get('positions'),
             poll_interval=poll_interval,
             max_wait=max_wait,
+            stage_callback=stage_callback,
         )
 
     def _poll_coverage(self, job_id: str, region: str = '',
                        positions: Optional[List[int]] = None,
-                       poll_interval: int = 2, max_wait: int = 300) -> 'CoverageResult':
+                       poll_interval: int = 2, max_wait: int = 300,
+                       stage_callback: Optional[Callable[[str, Dict[str, Any]], None]] = None) -> 'CoverageResult':
         """
         Internal helper to poll for coverage results.
 
@@ -2047,10 +2166,13 @@ class MalvaClient:
                     response = self._request('GET', f'/api/coverage/status/{job_id}')
                     status = response.get('status')
                     if status == 'completed':
-                        result = self._request(
+                        self._emit_stage(stage_callback, 'coverage_search_completed', job_id=job_id)
+                        result = self._request_json_with_transfer_timing(
                             'POST',
                             f'/api/coverage/results/{job_id}',
                             json={'positions': positions, 'filters': {}},
+                            stage_callback=stage_callback,
+                            stage_prefix='coverage_result',
                         )
                         coverage_data = result.get('coverage', result.get('coverage_data', result))
                         coverage_data['job_id'] = job_id
@@ -2061,13 +2183,13 @@ class MalvaClient:
                     if status == 'error':
                         error_msg = response.get('error', 'Unknown error')
                         raise MalvaAPIError(f"Coverage job failed: {error_msg}")
-                    logger.info(f"Coverage job {job_id} status: {status}")
+                    self._emit_stage(stage_callback, 'coverage_search_polling', job_id=job_id, status=status)
                     time.sleep(poll_interval)
                 raise MalvaAPIError(f"Coverage job {job_id} timed out after {max_wait} seconds")
             except MalvaAPIError as exc:
                 if not self._is_not_found_error(exc):
                     raise
-                logger.info("Explorer coverage result endpoint unavailable; falling back to genome-browser coverage endpoint")
+                self._emit_stage(stage_callback, 'coverage_result_fallback', job_id=job_id)
 
         while time.time() - start_time < max_wait:
             response = self._request('GET', f'/api/genome-browser/coverage/{job_id}')

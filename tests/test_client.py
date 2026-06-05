@@ -239,7 +239,7 @@ class TestSearch:
         assert result.normalization_factors.empty
 
     @responses.activate
-    def test_retrieve_cells_uses_binary_global_ids_for_aggregate_search(self, mock_client):
+    def test_retrieve_cells_preserves_values_for_aggregate_search(self, mock_client):
         responses.add(
             responses.POST, f"{BASE}/search",
             json={
@@ -250,22 +250,28 @@ class TestSearch:
         search_result = mock_client.search("BRCA1", poll_interval=0)
         responses.add(
             responses.GET,
-            f"{BASE}/search/j1/global-cell-ids",
-            body=msgpack.packb({
-                'c': np.array([101, 102], dtype=np.int64).tobytes(),
-                's': np.array([10, 10], dtype=np.int64).tobytes(),
-                'n': 2,
-            }, use_bin_type=True),
-            content_type="application/x-msgpack",
+            f"{BASE}/search/j1",
+            json={
+                'status': 'completed',
+                'job_id': 'j1',
+                'results': {
+                    'BRCA1': {
+                        'cell': [101, 102],
+                        'sample': [10, 10],
+                        'expression': [4.0, 3.0],
+                    }
+                },
+            },
+            match=[matchers.query_param_matcher({'max_cells': '0'})],
         )
         result = mock_client.retrieve_cells(
             search_result,
             include_sample_metadata=False,
         )
 
-        assert result.source == 'global_cell_ids'
+        assert result.source == 'search_full'
         assert result.cells['cell_id'].tolist() == [101, 102]
-        assert result.to_dataframe()['value'].tolist() == [1.0, 1.0]
+        assert result.to_dataframe()['value'].tolist() == [4.0, 3.0]
 
     @responses.activate
     def test_get_cells_by_metadata_returns_all_matching_cells(self, mock_client):
@@ -376,21 +382,28 @@ class TestSearch:
         search_result = mock_client.search("BRCA1", poll_interval=0)
         responses.add(
             responses.GET,
-            f"{BASE}/search/j1/global-cell-ids",
-            body=msgpack.packb({
-                'c': np.array([101, 102], dtype=np.int64).tobytes(),
-                's': np.array([10, 10], dtype=np.int64).tobytes(),
-                'n': 2,
-            }, use_bin_type=True),
-            content_type="application/x-msgpack",
+            f"{BASE}/search/j1",
+            json={
+                'status': 'completed',
+                'job_id': 'j1',
+                'results': {
+                    'BRCA1': {
+                        'cell': [101, 102],
+                        'sample': [10, 10],
+                        'expression': [4.0, 3.0],
+                    }
+                },
+            },
+            match=[matchers.query_param_matcher({'max_cells': '0'})],
         )
         result = mock_client.retrieve_cells(
             search_result,
             include_sample_metadata=False,
         )
 
-        assert result.source == 'global_cell_ids'
+        assert result.source == 'search_full'
         assert result.cells['cell_id'].tolist() == [101, 102]
+        assert result.to_dataframe()['value'].tolist() == [4.0, 3.0]
         assert result.normalization_factors.empty
 
     @responses.activate
@@ -706,10 +719,21 @@ class TestCoverage:
             },
             match=[matchers.json_params_matcher({'positions': [100, 200], 'filters': {}})],
         )
-        result = mock_client.get_coverage('chr1', 100, 200, poll_interval=0)
+        events = []
+        result = mock_client.get_coverage(
+            'chr1',
+            100,
+            200,
+            poll_interval=0,
+            stage_callback=lambda stage, payload: events.append(stage),
+        )
         assert isinstance(result, CoverageResult)
         assert result.coverage_matrix == [[0.5, 1.0]]
         assert result.raw_data['probe_data']['samples'] == ['10']
+        assert 'coverage_search_completed' in events
+        assert 'coverage_result_response_started' in events
+        assert 'coverage_result_downloaded' in events
+        assert 'coverage_result_parsed' in events
 
     @responses.activate
     def test_get_sequence_coverage(self, mock_client):

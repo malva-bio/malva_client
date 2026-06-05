@@ -7,15 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.3.4] - 2026-06-05
 ### Added
+- Coverage APIs accept `stage_callback` and log separate search, server-result generation, download, and parse stages for large coverage responses.
 - `get_cells_by_metadata()` for search-independent all-cell denominator retrieval by sample and/or cell type. Database-wide retrieval is available with explicit `include_all_database_cells=True`.
 - Aggregate result columns now expose Expression Explorer-style metrics and aliases: `norm_expr`/`rel`, `kpt_expr`/`raw_expr`/`exp`, `cell_count`, `fraction_positive`, `pct_positive`/`pct`, and `raw_kmer_mean`/`raw_kmers`.
 
 ### Changed
 - Quickstart and tutorials now avoid placeholder sample IDs and document the meaning of aggregate and per-cell expression values.
-- `retrieve_cells()` documentation clarifies that aggregate-search `value=1` is a positive-cell indicator, while denominator cells should be fetched independently with `get_cells_by_metadata()`.
+- `retrieve_cells()` documentation clarifies that denominator cells should be fetched independently with `get_cells_by_metadata()`, while fallback positive-cell-only endpoints may report `value=1`.
 - All-cell metadata decoding uses categorical cell types and rounded/clipped `uint16` total counts for lower memory use and faster DataFrame construction.
 
 ### Fixed
+- `retrieve_cells()` now prefers per-feature cell/sample/expression arrays so aggregate searches return raw per-cell values instead of all `1.0` positive indicators when values are available.
 - Removed stale docs examples that produced errors with placeholder IDs or non-existent tutorial links.
 
 ## [0.3.2] - 2026-05-07
