@@ -268,6 +268,103 @@ class TestSearch:
         assert result.to_dataframe()['value'].tolist() == [1.0, 1.0]
 
     @responses.activate
+    def test_get_cells_by_metadata_returns_all_matching_cells(self, mock_client):
+        responses.add(
+            responses.POST,
+            f"{BASE}/api/cells/by-filter",
+            body=msgpack.packb({
+                'c': np.array([101, 102, 103], dtype=np.int64).tobytes(),
+                's': np.array([10, 10, 10], dtype=np.int64).tobytes(),
+                'n': 3,
+                '_bin_vi': np.array([0, 1, 2], dtype=np.int64).tobytes(),
+                '_bin_ct': np.array([7, 7, 8], dtype=np.int32).tobytes(),
+                '_bin_tc': np.array([1000.0, 2000.0, 3000.0], dtype=np.float32).tobytes(),
+                'cell_type_mapping': {7: 'macrophage', 8: 'fibroblast'},
+            }, use_bin_type=True),
+            content_type="application/x-msgpack",
+            match=[matchers.json_params_matcher({
+                'sample_ids': [10],
+                'cell_types': ['macrophage'],
+                'include_cell_metadata': True,
+                'include_all_database_cells': False,
+            })],
+        )
+
+        cells = mock_client.get_cells_by_metadata(sample_ids=[10], cell_types=['macrophage'])
+
+        assert cells['cell_id'].tolist() == [101, 102, 103]
+        assert cells['sample_id'].tolist() == [10, 10, 10]
+        assert cells['cell_type'].tolist() == ['macrophage', 'macrophage', 'fibroblast']
+        assert cells['total_counts'].tolist() == [1000.0, 2000.0, 3000.0]
+
+    @responses.activate
+    def test_get_cells_by_metadata_decodes_dense_compact_metadata(self, mock_client):
+        responses.add(
+            responses.POST,
+            f"{BASE}/api/cells/by-filter",
+            body=msgpack.packb({
+                'c': np.array([101, 102, 103], dtype=np.int64).tobytes(),
+                's': np.array([10, 10, 10], dtype=np.int64).tobytes(),
+                'n': 3,
+                '_vi_dense': True,
+                '_bin_ct_i16': np.array([7, 7, 8], dtype=np.int16).tobytes(),
+                '_bin_tc_u16': np.array([1000, 2000, 3000], dtype=np.uint16).tobytes(),
+                'cell_type_mapping': {7: 'macrophage', 8: 'fibroblast'},
+            }, use_bin_type=True),
+            content_type="application/x-msgpack",
+        )
+
+        cells = mock_client.get_cells_by_metadata(sample_ids=[10])
+
+        assert cells['cell_type'].dtype.name == 'category'
+        assert str(cells['total_counts'].dtype) == 'uint16'
+        assert cells['cell_type'].astype(str).tolist() == ['macrophage', 'macrophage', 'fibroblast']
+        assert cells['total_counts'].tolist() == [1000, 2000, 3000]
+
+    @responses.activate
+    def test_get_cells_by_metadata_requires_explicit_all_database_flag(self, mock_client):
+        responses.add(
+            responses.POST,
+            f"{BASE}/exports/all-cells",
+            json={
+                'export_id': 'e1',
+                'status': 'pending',
+                'status_url': '/exports/all-cells/e1',
+            },
+            match=[matchers.json_params_matcher({
+                'sample_ids': [],
+                'cell_types': [],
+                'include_cell_metadata': False,
+                'include_all_database_cells': True,
+            })],
+        )
+        responses.add(
+            responses.GET,
+            f"{BASE}/exports/all-cells/e1",
+            json={'export_id': 'e1', 'status': 'completed'},
+        )
+        responses.add(
+            responses.GET,
+            f"{BASE}/exports/all-cells/e1/download",
+            body=msgpack.packb({
+                'c': np.array([101], dtype=np.int64).tobytes(),
+                's': np.array([10], dtype=np.int64).tobytes(),
+                'n': 1,
+            }, use_bin_type=True),
+            content_type="application/x-msgpack",
+        )
+
+        with pytest.raises(ValueError):
+            mock_client.get_cells_by_metadata(include_cell_metadata=False)
+
+        cells = mock_client.get_cells_by_metadata(
+            include_cell_metadata=False,
+            include_all_database_cells=True,
+            poll_interval=0,
+        )
+        assert cells.to_dict('records') == [{'sample_id': 10, 'cell_id': 101}]
+
+    @responses.activate
     def test_retrieve_cells_does_not_request_normalization_by_default(self, mock_client):
         responses.add(
             responses.POST, f"{BASE}/search",

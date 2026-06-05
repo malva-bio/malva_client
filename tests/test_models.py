@@ -93,6 +93,36 @@ class TestSearchResultFromResponse:
         sr = SearchResult(data, _make_mock_client())
         assert sr.df['gene_sequence'].nunique() == 2
 
+    def test_aggregate_expression_metrics_are_exposed(self):
+        data = {
+            'results': {
+                'SPP1': {
+                    'expression_data': {
+                        'samples': [10],
+                        'cell_types': ['macrophage'],
+                        'columns': [
+                            'sample_idx', 'cell_type_idx', 'norm_expr', 'kpt_expr',
+                            'cell_count', 'fraction_positive', 'raw_kmer_mean',
+                        ],
+                        'data': [[0, 0, 1.25, 3.5, 7, 0.125, 4.75]],
+                    }
+                }
+            }
+        }
+        sr = SearchResult(data, _make_mock_client())
+        row = sr.df.iloc[0]
+        assert row['norm_expr'] == 1.25
+        assert row['rel'] == 1.25
+        assert row['kpt_expr'] == 3.5
+        assert row['raw_expr'] == 3.5
+        assert row['exp'] == 3.5
+        assert row['cell_count'] == 7
+        assert row['fraction_positive'] == 0.125
+        assert row['pct_positive'] == 12.5
+        assert row['pct'] == 12.5
+        assert row['raw_kmer_mean'] == 4.75
+        assert row['raw_kmers'] == 4.75
+
     def test_old_format_backward_compat(self):
         data = {
             'results': {

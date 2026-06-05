@@ -980,6 +980,7 @@ class MalvaClient:
         the fast binary cell-ID endpoint when feature-level values are not
         present. Jobs created with ``aggregate_expression=False`` can provide
         per-feature values when the search service exposes them.
+
         """
         job_id, result = self._resolve_search_job(search_job, poll_interval, max_wait)
         feature_list = self._normalise_feature_list(features)
@@ -1549,6 +1550,151 @@ class MalvaClient:
         
         return converted_metadata
     
+    def get_cells_by_metadata(self,
+                              sample_ids: Optional[Union[int, List[int]]] = None,
+                              cell_types: Optional[Union[str, List[str]]] = None,
+                              include_cell_metadata: bool = True,
+                              include_sample_metadata: bool = False,
+                              include_all_database_cells: bool = False,
+                              poll_interval: int = 2,
+                              max_wait: int = 900) -> pd.DataFrame:
+        """Fetch all cells matching metadata filters, independent of search jobs.
+
+        This is the denominator table for downstream calculations such as
+        fraction expressing or mean expression including zeros. Call it once for
+        a sample/cell-type selection and reuse it with any number of search
+        results. Database-wide retrieval requires the explicit
+        ``include_all_database_cells=True`` opt-in because it can return tens
+        of millions of rows.
+        """
+        sample_id_list = self._normalise_id_list(sample_ids)
+        if isinstance(cell_types, str):
+            cell_type_list = [cell_types]
+        elif cell_types is None:
+            cell_type_list = []
+        else:
+            cell_type_list = [str(ct) for ct in cell_types]
+        if not sample_id_list and not cell_type_list and not include_all_database_cells:
+            raise ValueError("Provide sample_ids/cell_types or set include_all_database_cells=True")
+
+        request_payload = {
+            'sample_ids': sample_id_list or [],
+            'cell_types': cell_type_list,
+            'include_cell_metadata': include_cell_metadata,
+            'include_all_database_cells': include_all_database_cells,
+        }
+        if include_all_database_cells and not sample_id_list and not cell_type_list:
+            queued = self._request('POST', '/exports/all-cells', json=request_payload)
+            export_id = queued.get('export_id')
+            if not export_id:
+                raise MalvaAPIError("No export_id received from server")
+            start_time = time.time()
+            status_payload = queued
+            while time.time() - start_time < max_wait:
+                status_payload = self._request('GET', f'/exports/all-cells/{export_id}')
+                status = status_payload.get('status')
+                if status == 'completed':
+                    break
+                if status == 'error':
+                    raise MalvaAPIError(f"All-cells export failed: {status_payload.get('error', 'unknown')}")
+                delay = self._adaptive_poll_delay(time.time() - start_time, poll_interval)
+                if delay > 0:
+                    time.sleep(delay)
+            else:
+                raise MalvaAPIError(f"All-cells export timed out after {max_wait} seconds")
+            response = self._request_raw('GET', f'/exports/all-cells/{export_id}/download')
+        else:
+            response = self._request_raw('POST', '/api/cells/by-filter', json=request_payload)
+        decoded = msgpack.unpackb(response.content, raw=False, strict_map_key=False)
+        cells = np.frombuffer(decoded.get('c', b''), dtype=np.int64)
+        samples = np.frombuffer(decoded.get('s', b''), dtype=np.int64)
+        n = min(len(cells), len(samples))
+        df = pd.DataFrame({'sample_id': samples[:n], 'cell_id': cells[:n]})
+
+        if include_cell_metadata and n:
+            dense_valid = bool(decoded.get('_vi_dense', False))
+            if decoded.get('_bin_ct_i16'):
+                ct_ids = np.frombuffer(decoded.get('_bin_ct_i16', b''), dtype=np.int16)
+            else:
+                ct_ids = np.frombuffer(decoded.get('_bin_ct', b''), dtype=np.int32)
+            if decoded.get('_bin_tc_u16'):
+                total_counts_u16 = np.frombuffer(decoded.get('_bin_tc_u16', b''), dtype=np.uint16)
+                total_counts = None
+            else:
+                total_counts = np.frombuffer(decoded.get('_bin_tc', b''), dtype=np.float32)
+                total_counts_u16 = None
+            valid_all = None if dense_valid else np.frombuffer(decoded.get('_bin_vi', b''), dtype=np.int64)
+            mapping = {int(k): v for k, v in (decoded.get('cell_type_mapping') or {}).items()}
+
+            m = min(n, len(ct_ids) if dense_valid else len(valid_all), len(ct_ids))
+            if m:
+                if dense_valid:
+                    valid_ct = None
+                    ids = ct_ids[:m]
+                else:
+                    valid_ct = valid_all[:m]
+                    ids = ct_ids[:m]
+                    in_bounds = (valid_ct >= 0) & (valid_ct < n)
+                    valid_ct = valid_ct[in_bounds]
+                    ids = ids[in_bounds]
+
+                sorted_ids = sorted(mapping)
+                categories = [mapping[i] for i in sorted_ids]
+                codes = np.full(n, -1, dtype=np.int16 if len(sorted_ids) <= np.iinfo(np.int16).max else np.int32)
+                if sorted_ids and len(ids):
+                    max_id = max(max(sorted_ids), int(ids.max(initial=0)))
+                    if max_id <= 1_000_000:
+                        remap = np.full(max_id + 1, -1, dtype=codes.dtype)
+                        remap[np.asarray(sorted_ids, dtype=np.int64)] = np.arange(len(sorted_ids), dtype=codes.dtype)
+                        known = ids >= 0
+                        known &= ids <= max_id
+                        if dense_valid:
+                            codes[np.nonzero(known)[0]] = remap[ids[known]]
+                        else:
+                            codes[valid_ct[known]] = remap[ids[known]]
+                    else:
+                        id_to_code = {ct_id: i for i, ct_id in enumerate(sorted_ids)}
+                        mapped = np.fromiter(
+                            (id_to_code.get(int(x), -1) for x in ids),
+                            dtype=codes.dtype,
+                            count=len(ids),
+                        )
+                        if dense_valid:
+                            codes[:len(mapped)] = mapped
+                        else:
+                            codes[valid_ct] = mapped
+                df['cell_type'] = pd.Categorical.from_codes(codes, categories=categories)
+
+            counts_u16 = np.zeros(n, dtype=np.uint16)
+            if total_counts_u16 is not None:
+                mt = min(n, len(total_counts_u16) if dense_valid else len(valid_all), len(total_counts_u16))
+                if mt:
+                    if dense_valid:
+                        counts_u16[:mt] = total_counts_u16[:mt]
+                    else:
+                        valid_tc = valid_all[:mt]
+                        in_bounds = (valid_tc >= 0) & (valid_tc < n)
+                        counts_u16[valid_tc[in_bounds]] = total_counts_u16[:mt][in_bounds]
+            else:
+                mt = min(n, len(total_counts) if dense_valid else len(valid_all), len(total_counts))
+                if mt:
+                    if dense_valid:
+                        counts = np.nan_to_num(total_counts[:mt], nan=0.0, posinf=65535.0, neginf=0.0)
+                        counts_u16[:mt] = np.rint(np.clip(counts, 0, 65535)).astype(np.uint16)
+                    else:
+                        valid_tc = valid_all[:mt]
+                        in_bounds = (valid_tc >= 0) & (valid_tc < n)
+                        valid_tc = valid_tc[in_bounds]
+                        counts = np.nan_to_num(total_counts[:mt][in_bounds], nan=0.0, posinf=65535.0, neginf=0.0)
+                        counts_u16[valid_tc] = np.rint(np.clip(counts, 0, 65535)).astype(np.uint16)
+            df['total_counts'] = counts_u16
+
+        if include_sample_metadata and n:
+            meta = self._sample_metadata_frame(df['sample_id'].drop_duplicates().astype(int).tolist())
+            if not meta.empty:
+                df = df.merge(meta, on='sample_id', how='left')
+        return df
+
     def get_database_stats(self) -> Dict[str, Any]:
         """Get database statistics"""
         return self._request('GET', '/api/stats')

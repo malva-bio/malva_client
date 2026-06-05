@@ -730,27 +730,48 @@ class SearchResult(MalvaDataFrame):
                 cell_types = expression_data.get('cell_types', [])
                 
                 if data and columns:
-                    # FIXED: Keep as sample-level aggregates, don't expand
+                    # Keep sample x cell-type aggregate rows and expose the same
+                    # metric columns used by Expression Explorer display modes.
+                    col_idx = {str(name): idx for idx, name in enumerate(columns)}
+
+                    def _value(row, name, default_idx=None, default=0.0):
+                        idx = col_idx.get(name, default_idx)
+                        if idx is None or idx >= len(row):
+                            return default
+                        return row[idx]
+
                     sample_rows = []
                     for row in data:
                         if len(row) >= 5:
-                            sample_idx = int(row[0])
-                            cell_type_idx = int(row[1]) 
-                            norm_expr = float(row[2])
-                            raw_expr = float(row[3]) if len(row) > 3 else norm_expr
-                            cell_count = int(row[4])  # This should be the actual cell count
-                            
+                            sample_idx = int(_value(row, 'sample_idx', 0, 0))
+                            cell_type_idx = int(_value(row, 'cell_type_idx', 1, 0))
+                            norm_expr = float(_value(row, 'norm_expr', 2, 0.0))
+                            kpt_expr = float(_value(row, 'kpt_expr', 3, norm_expr))
+                            cell_count = int(_value(row, 'cell_count', 4, 0))
+                            fraction_positive = float(_value(row, 'fraction_positive', 5, 0.0))
+                            raw_kmer_mean = float(_value(row, 'raw_kmer_mean', col_idx.get('raw_expr', 6), kpt_expr))
+                            sample_id = samples[sample_idx] if sample_idx < len(samples) else f"sample_{sample_idx}"
+                            cell_type = cell_types[cell_type_idx] if cell_type_idx < len(cell_types) else f"celltype_{cell_type_idx}"
+
                             sample_rows.append({
                                 'sample_idx': sample_idx,
                                 'cell_type_idx': cell_type_idx,
-                                'norm_expr': norm_expr,
-                                'cell_count': cell_count,
-                                'raw_expr': raw_expr,
-                                'sample_id': samples[sample_idx] if sample_idx < len(samples) else f"sample_{sample_idx}",
-                                'cell_type': cell_types[cell_type_idx] if cell_type_idx < len(cell_types) else f"celltype_{cell_type_idx}",
-                                'cell_count': cell_count,  # Track how many cells this represents
+                                'sample_id': sample_id,
+                                'cell_type': cell_type,
                                 'gene_sequence': gene_seq,
-                                'sample_celltype_id': f"{samples[sample_idx] if sample_idx < len(samples) else sample_idx}_{cell_types[cell_type_idx] if cell_type_idx < len(cell_types) else cell_type_idx}"
+                                'norm_expr': norm_expr,
+                                'kpt_expr': kpt_expr,
+                                'raw_expr': kpt_expr,
+                                'cell_count': cell_count,
+                                'fraction_positive': fraction_positive,
+                                'pct_positive': fraction_positive * 100.0,
+                                'raw_kmer_mean': raw_kmer_mean,
+                                # Short aliases mirroring Expression Explorer controls.
+                                'rel': norm_expr,
+                                'exp': kpt_expr,
+                                'pct': fraction_positive * 100.0,
+                                'raw_kmers': raw_kmer_mean,
+                                'sample_celltype_id': f"{sample_id}_{cell_type}",
                             })
                     
                     if sample_rows:
@@ -795,6 +816,18 @@ class SearchResult(MalvaDataFrame):
         
         if all_data:
             result_df = pd.concat(all_data, ignore_index=True)
+            if 'fraction_positive' in result_df.columns and 'pct_positive' not in result_df.columns:
+                result_df['pct_positive'] = result_df['fraction_positive'].astype(float) * 100.0
+            if 'norm_expr' in result_df.columns and 'rel' not in result_df.columns:
+                result_df['rel'] = result_df['norm_expr']
+            if 'kpt_expr' in result_df.columns and 'exp' not in result_df.columns:
+                result_df['exp'] = result_df['kpt_expr']
+            elif 'raw_expr' in result_df.columns and 'exp' not in result_df.columns:
+                result_df['exp'] = result_df['raw_expr']
+            if 'pct_positive' in result_df.columns and 'pct' not in result_df.columns:
+                result_df['pct'] = result_df['pct_positive']
+            if 'raw_kmer_mean' in result_df.columns and 'raw_kmers' not in result_df.columns:
+                result_df['raw_kmers'] = result_df['raw_kmer_mean']
             if 'cell_type' in result_df.columns:
                 result_df['cell_type'] = result_df['cell_type'].astype('category')
             return result_df
