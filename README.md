@@ -31,8 +31,8 @@ malva_client config --server https://malva.mdc-berlin.de --token YOUR_API_TOKEN
 
 ```bash
 malva_client search "CD3D" --output results.csv
-malva_client search "ATCGATCGATCGATCGATCGATCG" --format json
-malva_client search "CD4 T cells in brain tissue"
+malva_client search "ATCGATCGATCGATCGATCGATCG" --output sequence_results.json --format json
+malva_client search "CD4 T cells in brain tissue" --output nl_results.csv --format csv
 ```
 
 ## Quick Start (Python)
@@ -40,17 +40,15 @@ malva_client search "CD4 T cells in brain tissue"
 ```python
 from malva_client import MalvaClient
 
-client = MalvaClient("https://malva.mdc-berlin.de", "YOUR_API_TOKEN")
+client = MalvaClient()
 
-# Search for genes, sequences, or natural language queries
+# Search for a gene and inspect aggregate expression rows
 results = client.search("CD3D")
-print(results)
+print(results.df.head())
 
-# Search for sequences
-results = client.search("ATCGATCGATCGCCACATGGACTTGAC")
-
-# Natural language queries
-results = client.search("cells expressing markers of neurodegeneration")
+# Search a DNA sequence of at least 24 nt
+sequence_results = client.search_sequences("ATCGATCGATCGATCGATCGATCG")
+print(sequence_results.df.head())
 ```
 
 ### Per-cell matrices
@@ -60,18 +58,22 @@ results = client.search("cells expressing markers of neurodegeneration")
 result = client.search("SPP1")
 
 # Retrieve positive cells from that search job
-cells = client.retrieve_cells(result, sample_ids=[123456])
+cells = client.retrieve_cells(result, include_sample_metadata=False)
+sample_id = int(cells.cells.iloc[0]["sample_id"])
 
-# Inspect positive cells or project them onto a coexpression index
-cell_ids = cells.get_cell_ids(sample_ids=[123456])
-coexpr = cells.project("human_cortex", sample_ids=[123456], top_n_genes=50)
+# Inspect cells from one real encoded sample ID
+sample_cells = client.retrieve_cells(result, sample_ids=[sample_id], include_sample_metadata=True)
+cell_ids = sample_cells.get_cell_ids()
+cell_df = sample_cells.to_dataframe(include_sample_metadata=True)
+print(cell_ids.head())
+print(cell_df.head())
 
-# If you only need projection, keep the cell transfer server-side
-coexpr = client.get_coexpression(result.job_id, "human_cortex", filter_sample_ids=[123456])
+# Fetch all cells for that sample once from metadata for denominator analyses
+all_cells = client.get_cells_by_metadata(sample_ids=[sample_id])
+print(all_cells.head())
 
-# If downstream code needs per-feature cell values, store them in the search job
-value_result = client.search("SPP1", aggregate_expression=False)
-value_cells = client.retrieve_cells(value_result, sample_ids=[123456])
+# Full-database retrieval is also available; it queues a server-side export.
+# all_cells = client.get_cells_by_metadata(include_all_database_cells=True)
 ```
 
 ### Working with Results
@@ -79,10 +81,12 @@ value_cells = client.retrieve_cells(value_result, sample_ids=[123456])
 ```python
 # Enrich results with metadata
 results.enrich_with_metadata()
-fig = results.plot_expression_summary("cell_type")
 
 # Filter and aggregate
 filtered = results.filter_by(disease='normal', organ='brain')
+by_cell_type = results.aggregate_by('cell_type', agg_func='mean')
+print(filtered.df.head())
+print(by_cell_type.head())
 ```
 
 See the [tutorials](https://malva-client.readthedocs.io/en/latest/tutorials.html) for coverage analysis, dataset discovery, cell-level searches, and more.

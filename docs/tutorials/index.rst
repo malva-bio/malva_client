@@ -1,46 +1,40 @@
 Tutorials
 =========
 
-Interactive Jupyter notebooks demonstrating common Malva Client workflows.
+These pages contain maintained examples that are expected to run against the
+current public Malva API once authentication is configured.
 
 .. grid:: 2
 
    .. grid-item-card:: Setup & Configuration
-      :link: 00_setup_malva_client
+      :link: ../installation
       :link-type: doc
 
-      Install, configure, and authenticate the Malva Client.
+      Install the package and configure API credentials.
 
-   .. grid-item-card:: Expression Analysis
-      :link: 01_expression_analysis
+   .. grid-item-card:: Quick Start
+      :link: ../quickstart
       :link-type: doc
 
-      Search for gene expression across cell types and tissues.
+      Run gene, sequence, batch, metadata, and cell-retrieval workflows.
 
-   .. grid-item-card:: Querying COVID Data
-      :link: 02_querying_covid
+   .. grid-item-card:: Query Parameters
+      :link: ../query_parameters
       :link-type: doc
 
-      Query SARS-CoV-2 related expression data.
+      Tune k-mer filtering and stranded sequence search.
 
-   .. grid-item-card:: Projecting to Cells
-      :link: 03_projecting_to_cells
+   .. grid-item-card:: API Reference
+      :link: ../api/malva_client.client
       :link-type: doc
 
-      Single-cell resolution analysis and projection.
-
-   .. grid-item-card:: Coexpression Analysis
-      :link: 04_coexpression_analysis
-      :link-type: doc
-
-      Coexpression networks, correlated genes, GO enrichment, and UMAP visualization.
+      See the client methods, including independent metadata cell retrieval.
 
 .. toctree::
    :maxdepth: 1
    :hidden:
 
-   00_setup_malva_client
-   01_expression_analysis
-   02_querying_covid
-   03_projecting_to_cells
-   04_coexpression_analysis
+   ../installation
+   ../quickstart
+   ../query_parameters
+   ../api/malva_client.client

@@ -1,596 +1,209 @@
 Quick Start
 ===========
 
-This guide walks you through connecting to the Malva API, running your first
-searches, and exploring the results.  For installation instructions see
-:doc:`installation`.
+This guide shows a minimal Malva client workflow that can be run from top to
+bottom once your API credentials are configured. For installation instructions
+see :doc:`installation`.
 
 Authentication
 --------------
 
-Before you can query Malva you need an API token.  Get one from
-`malva.bio <https://malva.bio>`_ **> Profile > Generate API Token**, then
-store it in one of the following ways:
+Before querying Malva, create an API token at `malva.bio <https://malva.bio>`_
+(**Profile > Generate API Token**) and store it with the CLI:
 
-.. tab-set::
+.. code-block:: bash
 
-   .. tab-item:: CLI Config (recommended)
+   malva_client config --server https://malva.mdc-berlin.de --token YOUR_API_TOKEN
 
-      .. code-block:: bash
+Alternatively, set ``MALVA_API_TOKEN`` in your shell before running Python.
 
-         malva_client config --server https://malva.mdc-berlin.de --token YOUR_API_TOKEN
-
-   .. tab-item:: Environment Variable
-
-      .. code-block:: bash
-
-         export MALVA_API_TOKEN=YOUR_API_TOKEN
-
-   .. tab-item:: Interactive Login
-
-      .. code-block:: bash
-
-         malva_client login
-
-      Opens a browser window for ORCID authentication.
-
-Connecting
-----------
-
-Once your token is in place, create a client instance.  The constructor
-reads credentials from your CLI config or environment automatically:
+Connect
+-------
 
 .. code-block:: python
 
    from malva_client import MalvaClient
 
-   # Picks up token from CLI config / environment
    client = MalvaClient()
+   print(client.is_authenticated())
 
-   # Or pass credentials explicitly
-   client = MalvaClient("https://malva.mdc-berlin.de", "YOUR_API_TOKEN")
+Run Searches
+------------
 
-
-Running a Search
-----------------
-
-Malva accepts four kinds of queries.  Every search returns a
-:class:`~malva_client.models.SearchResult` that wraps a pandas DataFrame,
-so you can filter, aggregate, and plot straight away.
-
-.. tab-set::
-
-   .. tab-item:: Gene symbol
-
-      Search by gene name.  Malva resolves the symbol to its transcriptomic
-      sequence and returns expression across all indexed samples.
-
-      .. code-block:: python
-
-         result = client.search("BRCA1")
-         result.enrich_with_metadata()
-         result.plot_expression_summary("cell_type")
-
-   .. tab-item:: Natural language
-
-      Free-text queries interpreted by Malva's query engine.  Describe the
-      biology you are looking for.
-
-      .. code-block:: python
-
-         result = client.search(
-             "find cells with hallmarks of neurodegeneration"
-         )
-
-   .. tab-item:: DNA sequence
-
-      Raw nucleotide sequences up to 500 kb.  Useful for probes, splice
-      junctions, viral sequences, or any arbitrary DNA.
-
-      .. code-block:: python
-
-         result = client.search_sequences(
-             "ATCGATCGATCGATCGATCGATCG"
-         )
-
-   .. tab-item:: Batch
-
-      Query multiple sequences or genes in a single API call.  See
-      :ref:`batch-searches` below for details on working with the results.
-
-      .. code-block:: python
-
-         result = client.search_sequences([
-             "ATCGATCGATCGATCGATCGATCG",
-             "GCTAGCTAGCTAGCTAGCTAGCTA",
-         ])
-
-         result = client.search_genes(["BRCA1", "TP53"])
-
-
-.. _batch-searches:
-
-Batch Searches
---------------
-
-``search_sequences()`` and ``search_genes()`` send all items in **one
-request** and return a single :class:`~malva_client.models.SearchResult`.
-The underlying DataFrame contains a ``gene_sequence`` column that
-identifies which query each row belongs to, so you can inspect results
-per sequence or per gene.
-
-Batch sequences
-^^^^^^^^^^^^^^^
-
-.. code-block:: python
-
-   seqs = [
-       "ATCGATCGATCG" * 5,   # seq_1
-       "GCTAGCTAGCTA" * 5,   # seq_2
-   ]
-   result = client.search_sequences(seqs)
-   result.enrich_with_metadata()
-
-   # See which sequences are in the result
-   print(result.df["gene_sequence"].unique())
-
-   # Filter to a single sequence
-   seq1_only = result.filter_by(gene_sequence="seq_1")
-   seq1_only.plot_expression_by("cell_type", limit=10)
-
-   # Compare sequences side by side
-   comparison = result.aggregate_by(["gene_sequence", "cell_type"])
-   print(comparison.head(10))
-
-.. tip::
-
-   The total nucleotide count across all sequences must be 100 kb or
-   less.  If you need to search a longer sequence, pass it as a single
-   string: ``client.search_sequences("ATCG..." * 1000)`` — single strings
-   are not subject to the 100 kb batch limit (max 500 kb).
-
-Batch genes
+Gene search
 ^^^^^^^^^^^
 
-.. code-block:: python
-
-   result = client.search_genes(["BRCA1", "TP53", "MYC"])
-   result.enrich_with_metadata()
-
-   # Filter to a single gene
-   brca1 = result.filter_by(gene_sequence="BRCA1")
-   brca1.plot_expression_summary("organ")
-
-   # Aggregate across all genes
-   by_gene = result.aggregate_by("gene_sequence")
-   print(by_gene)
-
-.. tip::
-
-   Up to 10 genes can be queried per call.
-
-Tuning Search Parameters
--------------------------
-
-Malva's index uses fixed-length k-mers (k = 24).  Three parameters let you
-filter which k-mers participate in the search:
-
-* **min_kmer_presence** -- exclude k-mers appearing in fewer than N cells
-  (removes rare / error k-mers)
-* **max_kmer_presence** -- exclude k-mers appearing in more than N cells
-  (removes repetitive / ubiquitous k-mers)
-* **stranded** -- restrict to forward strand (``True``) or search both
-  strands (``False``)
-
-See :doc:`query_parameters` for recommended values per use case.
-
-.. tab-set::
-
-   .. tab-item:: Expression (default)
-
-      .. code-block:: python
-
-         result = client.search("BRCA1")
-
-   .. tab-item:: Filter repetitive k-mers
-
-      .. code-block:: python
-
-         result = client.search_sequences(
-             junction_seq, max_kmer_presence=10000
-         )
-
-   .. tab-item:: Strand-specific
-
-      .. code-block:: python
-
-         result = client.search_sequences(probe, stranded=True)
-
-Working with Results
---------------------
-
-Every search returns a :class:`~malva_client.models.SearchResult` that
-behaves like a pandas DataFrame.  Call ``enrich_with_metadata()`` to pull
-in harmonized sample annotations (organ, disease, species, study, etc.),
-then filter, aggregate, and plot:
+Search by gene symbol and inspect the aggregate expression table:
 
 .. code-block:: python
 
-   # Enrich with harmonized metadata
-   result.enrich_with_metadata()
+   result = client.search("BRCA1")
+   df = result.df
+   print(df.head())
+   print(df.columns.tolist())
 
-   # Filter by metadata fields
-   brain = result.filter_by(disease="normal", organ="brain")
+The default search result is aggregated by sample and cell type. Common columns
+include ``sample_id``, ``cell_type``, ``gene_sequence``, ``norm_expr``,
+``kpt_expr``, ``cell_count``, ``fraction_positive``, ``pct_positive``, and
+``raw_kmer_mean``. The short aliases ``rel``, ``exp``, ``pct``, and
+``raw_kmers`` mirror the Expression Explorer display modes.
 
-   # Aggregate across a category
-   by_cell_type = brain.aggregate_by("cell_type", agg_func="mean")
+Sequence search
+^^^^^^^^^^^^^^^
 
-   # Visualize
-   fig = result.plot_expression_summary("cell_type")
+Search a DNA sequence. The example sequence is at least 24 nt, matching the
+index k-mer size.
 
-   # Export
-   df = result.to_pandas()
-   df.to_csv("results.csv")
+.. code-block:: python
 
-Single-Cell Resolution
-----------------------
+   sequence = "ATCGATCGATCGATCGATCGATCG"
+   sequence_result = client.search_sequences(sequence)
+   print(sequence_result.df.head())
 
-By default, Malva returns expression aggregated by sample and cell type.
-Use ``retrieve_cells()`` when downstream analysis needs the positive cells,
-cell IDs, and sample metadata. Run the search first, then pass the returned
-search result or job ID to ``retrieve_cells()``:
+Batch search
+^^^^^^^^^^^^
+
+Submit multiple genes in one request and compare the returned rows by query:
+
+.. code-block:: python
+
+   batch = client.search_genes(["BRCA1", "TP53"])
+   batch_df = batch.df
+   print(batch_df[["gene_sequence", "sample_id", "cell_type", "norm_expr"]].head())
+
+Tune K-mer Filters
+------------------
+
+Use ``min_kmer_presence``, ``max_kmer_presence``, and ``stranded`` to control
+which k-mers participate in sequence matching:
+
+.. code-block:: python
+
+   filtered = client.search_sequences(
+       sequence,
+       max_kmer_presence=10000,
+       stranded=False,
+   )
+   print(filtered.df.head())
+
+See :doc:`query_parameters` for guidance on choosing these values.
+
+Work with Results
+-----------------
+
+Enrich aggregate search results with sample metadata, then filter and aggregate
+using pandas-like methods:
 
 .. code-block:: python
 
    result = client.search("SPP1")
+   result.enrich_with_metadata()
 
-   # Restrict to one encoded sample ID, or omit sample_ids for all samples
-   cells = client.retrieve_cells(result, sample_ids=[123456])
+   print(result.available_filter_fields())
 
-   # Matrix rows are cells. Matrix columns are searched features.
-   cell_ids = cells.get_cell_ids(sample_ids=[123456])
-   df = cells.to_dataframe()
+   # This may be empty if no matching rows exist in the current index.
+   brain = result.filter_by(organ="brain")
+   print(brain.to_pandas().head())
 
-   # Project the selected cells onto a coexpression index
-   coexpr = cells.project("human_cortex", sample_ids=[123456], top_n_genes=50)
+   by_cell_type = result.aggregate_by("cell_type", agg_func="mean")
+   print(by_cell_type.head())
 
-   # If you only need projection, keep the cell transfer server-side
-   coexpr = client.get_coexpression(
-       result.job_id,
-       "human_cortex",
-       filter_sample_ids=[123456],
-       top_n_genes=50,
-   )
 
-Cell-level workflows should use this two-step search-then-retrieve pattern so
-downstream analysis receives the original cell identifiers. If downstream code
-needs per-feature cell values, run the search with
-``aggregate_expression=False`` and pass that result to ``retrieve_cells()``.
+Expression Columns
+------------------
 
-Coexpression Analysis
----------------------
+Aggregate search results use one row per ``sample_id`` × ``cell_type`` × query.
+The main expression columns are:
 
-The coexpression API identifies genes that are co-expressed with your query
-across a dataset's metacell atlas.  All heavy computation happens on the
-server.
+``norm_expr`` / ``rel``
+   Relative normalized expression used by the default Explorer view.
 
-Basic workflow
-^^^^^^^^^^^^^^
+``kpt_expr`` / ``raw_expr`` / ``exp``
+   Raw aggregate expression value from the search result payload.
 
-.. code-block:: python
+``cell_count``
+   Number of positive cells in that sample × cell-type group.
 
-   # 1. Search for a gene
-   result = client.search("FOXP3")
+``fraction_positive`` and ``pct_positive`` / ``pct``
+   Fraction and percent of cells positive for the query in that group.
 
-   # 2. Run coexpression on a dataset
-   coexpr = client.get_coexpression(result.job_id, "DATASET_ID")
+``raw_kmer_mean`` / ``raw_kmers``
+   Mean raw k-mer hit count per expressing cell, without normalization.
 
-   # 3. Visualise the UMAP coloured by expression
-   coexpr.plot_umap(color_by='positive_fraction')
+Per-cell retrieval is different: ``retrieve_cells()`` returns positive cells,
+and its ``value`` column is ``1`` for aggregate searches. For per-cell value
+matrices exported from searches with stored per-cell arrays, values are raw
+per-cell expression/k-mer counts; missing cell × feature entries are zero.
 
-   # 4. Get the top correlated genes
-   top_genes = coexpr.get_top_genes(20)
-   print(top_genes)
-
-UMAP coordinates
-^^^^^^^^^^^^^^^^
-
-Fetch the base UMAP embedding for a dataset (useful for visualising cluster
-structure before running a coexpression query):
-
-.. code-block:: python
-
-   umap = client.get_umap_coordinates("DATASET_ID")
-   umap.plot(color_by='cluster')
-   df = umap.to_dataframe()
-
-Correlated genes
-^^^^^^^^^^^^^^^^
-
-Inspect and plot the correlated gene list:
-
-.. code-block:: python
-
-   genes_df = coexpr.genes_to_dataframe()
-   print(genes_df.head(20))
-   coexpr.plot_top_genes(n=20)
-
-Lightweight query
-^^^^^^^^^^^^^^^^^
-
-If you only need the correlated genes (no UMAP scores, GO enrichment,
-or cell-type breakdown), use the lightweight endpoint:
-
-.. code-block:: python
-
-   quick = client.get_coexpression_genes(result.job_id, "DATASET_ID")
-   quick.get_top_genes(5)
-
-GO and cell type enrichment
-^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-.. code-block:: python
-
-   # GO enrichment
-   go_df = coexpr.go_to_dataframe()
-   coexpr.plot_go_enrichment(n=10)
-
-   # Cell type enrichment
-   ct_df = coexpr.cell_type_enrichment_to_dataframe()
-
-   # Tissue breakdown
-   tissue_df = coexpr.tissue_breakdown_to_dataframe()
-
-Coverage Analysis
------------------
-
-The coverage API returns k-mer match density across a genomic region or
-an arbitrary sequence, broken down by cell type.  The result is a
-**position x cell-type matrix** that you can plot, convert to a DataFrame,
-or export as a WIG file.
-
-Basic usage
-^^^^^^^^^^^
-
-.. code-block:: python
-
-   # Genomic region
-   coverage = client.get_coverage("chr1", 1000000, 2000000)
-   coverage.plot()
-
-   # Arbitrary sequence
-   seq_cov = client.get_sequence_coverage(
-       "ATCGATCG" * 10, sequence_name="my_probe"
-   )
-   df = seq_cov.to_dataframe()
-   print(df.head())  # columns = cell types, index = positions
-
-Filtering by metadata
-^^^^^^^^^^^^^^^^^^^^^
-
-By default, coverage is aggregated across **all** samples in the
-database.  To restrict the analysis to a subset -- for example, only
-heart samples or a specific study -- pass ``metadata_filters`` at search
-time:
-
-.. code-block:: python
-
-   # Only heart samples
-   heart_cov = client.get_coverage(
-       "chr1", 1000000, 2000000,
-       metadata_filters={"organs": ["Heart"]}
-   )
-   heart_cov.plot()
-
-   # Only samples from a specific study
-   study_cov = client.get_coverage(
-       "chr1", 1000000, 2000000,
-       metadata_filters={"studies": ["Roussos-Human-10x3pv3"]}
-   )
-
-   # Combine filters
-   filtered_cov = client.get_coverage(
-       "chr1", 1000000, 2000000,
-       metadata_filters={
-           "organs": ["Brain"],
-           "disease": ["Normal"],
-       }
-   )
-
-.. note::
-
-   Metadata filters are applied **before** cell-type aggregation on the
-   server, so only matching samples contribute to the coverage matrix.
-   To discover which filter values are available for an existing job, use
-   ``coverage.get_filter_options()``.
-
-Plotting specific cell types
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-Once you have a :class:`~malva_client.models.CoverageResult`, you can
-select which cell types to display:
-
-.. code-block:: python
-
-   coverage = client.get_coverage("chr1", 1000000, 2000000)
-
-   # Plot only selected cell types
-   coverage.plot(cell_types=["Neuron", "Astrocyte"])
-
-   # Convert to DataFrame for custom analysis
-   df = coverage.to_dataframe()
-   df[["Neuron", "Astrocyte"]].plot(title="Coverage comparison")
-
-Exporting as WIG
-^^^^^^^^^^^^^^^^
-
-Download coverage tracks for viewing in a genome browser:
-
-.. code-block:: python
-
-   coverage.download_wig("coverage.wig")
-
-Dataset Discovery
------------------
-
-Browse the dataset, study, and sample hierarchy:
-
-.. code-block:: python
-
-   hierarchy = client.get_datasets_hierarchy()
-
-   studies = client.get_dataset_studies("human_cell_atlas")
-   samples = client.get_study_samples(
-       "human_cell_atlas", "Roussos-Human-10x3pv3"
-   )
-   details = client.get_sample_details(
-       "34f13021-4ea8-4fae-b990-33b4d6442621"
-   )
-
-   stats = client.get_overview_stats()
-
-Job Management
+Retrieve Cells
 --------------
 
-Every search creates a **job** on the server.  By default, methods like
-``search()`` block until the job completes, but you can also work
-asynchronously: submit a job, do other work, and retrieve results later.
-
-All job management methods work with **any** job, whether it was created
-by ``submit_search()``, ``search_sequences()``, ``search_genes()``, or
-any other search method.
-
-Submitting without waiting
-^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-Use ``submit_search()`` for a fire-and-forget single query:
+Use ``retrieve_cells()`` when you need cell IDs for downstream analysis. Start
+with a normal aggregate search, then choose an encoded sample ID from the cells
+that were returned.
 
 .. code-block:: python
 
-   job_id = client.submit_search("FOXP3")
-   print(job_id)  # UUID string
+   result = client.search("SPP1")
+   cells = client.retrieve_cells(result, include_sample_metadata=False)
 
-For batch methods, pass ``wait_for_completion=False``:
-
-.. code-block:: python
-
-   pending = client.search_sequences(
-       ["ATCGATCG" * 10, "GCTAGCTA" * 10],
-       wait_for_completion=False,
-   )
-   print(pending.job_id)   # UUID of the pending job
-   print(pending.status)   # "pending"
-
-   # Same for genes
-   pending = client.search_genes(
-       ["BRCA1", "TP53", "MYC"],
-       wait_for_completion=False,
+   sample_id = int(cells.cells.iloc[0]["sample_id"])
+   sample_cells = client.retrieve_cells(
+       result,
+       sample_ids=[sample_id],
+       include_sample_metadata=True,
    )
 
-Checking status
-^^^^^^^^^^^^^^^
+   cell_ids = sample_cells.get_cell_ids()
+   cell_df = sample_cells.to_dataframe(include_sample_metadata=True)
+   print(cell_ids.head())
+   print(cell_df.head())
 
-Poll a job to see whether it is still running:
+For aggregate searches, the ``value`` column is a positive-cell indicator:
+``1`` means the cell was positive for the query. To get the denominator cells
+for downstream fraction-expressing or mean-including-zero calculations, fetch
+the metadata-defined cell universe independently and reuse it across searches:
 
 .. code-block:: python
+
+   all_cells = client.get_cells_by_metadata(sample_ids=[sample_id])
+   print(all_cells[["sample_id", "cell_id", "cell_type", "total_counts"]].head())
+
+Fetching every cell in the database is also supported through
+``get_cells_by_metadata(include_all_database_cells=True)``, but it is a large
+operation and is intentionally not part of the quick-start workflow.
+
+Asynchronous Jobs
+-----------------
+
+Submit without waiting, poll status, and then fetch results:
+
+.. code-block:: python
+
+   pending = client.search("FOXP3", wait_for_completion=False)
+   job_id = pending.job_id
 
    status = client.get_job_status(job_id)
-   print(status["status"])  # "pending", "running", "completed", or "error"
-
-Retrieving results
-^^^^^^^^^^^^^^^^^^
-
-Once a job is complete, fetch the full result:
-
-.. code-block:: python
-
-   result = client.get_job_results(job_id)
-   result.enrich_with_metadata()
-   result.plot_expression_by("cell_type")
-
-Or block until it finishes:
-
-.. code-block:: python
-
-   result = client.wait_for_job(job_id, max_wait=600)
-
-Example: async batch workflow
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-Submit a batch sequence search, do other work, then come back for the
-results:
-
-.. code-block:: python
-
-   # Submit without waiting
-   pending = client.search_sequences(
-       ["ATCGATCG" * 10, "GCTAGCTA" * 10],
-       wait_for_completion=False,
-   )
-   batch_job_id = pending.job_id
-
-   # ... do other work ...
-
-   # Check on it later
-   status = client.get_job_status(batch_job_id)
    print(status["status"])
 
-   # Retrieve the batch result once complete
-   result = client.get_job_results(batch_job_id)
-   result.enrich_with_metadata()
-
-   # Work with individual sequences from the batch
-   print(result.df["gene_sequence"].unique())
-   seq1 = result.filter_by(gene_sequence="seq_1")
-   seq1.plot_expression_by("cell_type", limit=10)
-
-Listing and cancelling jobs
-^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-Browse your recent jobs or cancel a running one:
-
-.. code-block:: python
-
-   # List recent jobs on this server
-   jobs = client.list_jobs(limit=10)
-   for job in jobs:
-       print(f"{job['job_id']}  {job['status']}  {job['query']}")
-
-   # Cancel a running job
-   client.cancel_job(job_id)
-
-Sample Downloads
-----------------
-
-Download a complete single-cell sample for downstream analysis:
-
-.. code-block:: python
-
-   # Save to disk
-   path = client.download_sample("sample-uuid", output_path="sample.h5ad")
-
-   # Or load directly into memory as AnnData
-   adata = client.download_sample("sample-uuid")
+   completed = client.wait_for_job(job_id, max_wait=600)
+   completed_df = completed.df
+   print(completed_df.head())
 
 Command-Line Interface
 ----------------------
 
-All core functionality is also available from the terminal:
+The same basic search workflow is available from the terminal:
 
 .. code-block:: bash
 
-   # Basic search
    malva_client search "BRCA1" --output results.csv --format csv
-
-   # With tuning parameters
-   malva_client search "ATCGATCG..." --max-kmer-presence 10000 --stranded
-
-   # Async workflow
-   malva_client search "FOXP3" --no-wait
-   malva_client status <job_id>
-   malva_client results <job_id> --output results.xlsx --format excel
-
-   # Account management
+   malva_client search "ATCGATCGATCGATCGATCGATCG" --output sequence_results.json --format json
    malva_client quota
-   malva_client history
-   malva_client config --show
+
+Next Steps
+----------
+
+Coverage, coexpression, dataset discovery, and sample download workflows depend
+on the datasets and samples you want to analyze. See the dedicated tutorials and
+API reference for those workflows.

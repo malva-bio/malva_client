@@ -142,7 +142,8 @@ Probe Design Guidelines
 
       .. code-block:: python
 
-         snv_probe = ref_context[:24] + alt_base + ref_context[25:48]
+         # Example 48 nt probe with the variant centred in the sequence.
+         snv_probe = "ACGTACGTACGTACGTACGTACGT" + "T" + "CGTACGTACGTACGTACGTACGT"
          results = client.search_sequences(
              snv_probe,
              max_kmer_presence=50000,
@@ -166,6 +167,8 @@ transcript.
 Pass ``stranded=False`` when you want to include reverse-complement k-mers:
 
 .. code-block:: python
+
+   probe = "ACGTACGT" * 6  # 48 nt query sequence
 
    # Both strands — useful when orientation is ambiguous
    results = client.search_sequences(probe, stranded=False)

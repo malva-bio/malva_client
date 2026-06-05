@@ -11,7 +11,6 @@ Client
 
    .. automethod:: search
    .. automethod:: retrieve_cells
-   .. automethod:: search_sequence
    .. automethod:: search_sequences
    .. automethod:: search_genes
 
@@ -47,6 +46,7 @@ Client
    .. automethod:: download_sample
    .. automethod:: check_sample_availability
    .. automethod:: get_sample_metadata
+   .. automethod:: get_cells_by_metadata
    .. automethod:: get_sample_details
 
    .. rubric:: Dataset Discovery
