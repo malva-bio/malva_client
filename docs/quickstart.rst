@@ -43,10 +43,9 @@ Search by gene symbol and inspect the aggregate expression table:
    print(df.columns.tolist())
 
 The default search result is aggregated by sample and cell type. Common columns
-include ``sample_id``, ``cell_type``, ``gene_sequence``, ``norm_expr``,
-``kpt_expr``, ``cell_count``, ``fraction_positive``, ``pct_positive``, and
-``raw_kmer_mean``. The short aliases ``rel``, ``exp``, ``pct``, and
-``raw_kmers`` mirror the Expression Explorer display modes.
+include ``sample_id``, ``cell_type``, ``gene_sequence``, ``rel``, ``exp``,
+``pct``, ``raw_kmers``, and ``cell_count``. These expression columns match
+the Expression Explorer display modes.
 
 Sequence search
 ^^^^^^^^^^^^^^^
@@ -69,7 +68,7 @@ Submit multiple genes in one request and compare the returned rows by query:
 
    batch = client.search_genes(["BRCA1", "TP53"])
    batch_df = batch.df
-   print(batch_df[["gene_sequence", "sample_id", "cell_type", "norm_expr"]].head())
+   print(batch_df[["gene_sequence", "sample_id", "cell_type", "rel"]].head())
 
 Tune K-mer Filters
 ------------------
@@ -115,25 +114,26 @@ Expression Columns
 Aggregate search results use one row per ``sample_id`` × ``cell_type`` × query.
 The main expression columns are:
 
-``norm_expr`` / ``rel``
+``rel``
    Relative normalized expression used by the default Explorer view.
 
-``kpt_expr`` / ``raw_expr`` / ``exp``
+``exp``
    Raw aggregate expression value from the search result payload.
+
+``pct``
+   Percent of cells positive for the query in that sample × cell-type group.
+   Divide by 100 to obtain fraction expressing.
+
+``raw_kmers``
+   Mean raw k-mer hit count per expressing cell, without normalization.
 
 ``cell_count``
    Number of positive cells in that sample × cell-type group.
 
-``fraction_positive`` and ``pct_positive`` / ``pct``
-   Fraction and percent of cells positive for the query in that group.
-
-``raw_kmer_mean`` / ``raw_kmers``
-   Mean raw k-mer hit count per expressing cell, without normalization.
-
 Per-cell retrieval is different: ``retrieve_cells()`` returns positive cells,
-and its ``value`` column is ``1`` for aggregate searches. For per-cell value
-matrices exported from searches with stored per-cell arrays, values are raw
-per-cell expression/k-mer counts; missing cell × feature entries are zero.
+and its ``value`` column contains raw per-cell expression/k-mer counts when the
+server has stored per-cell values for that search. Missing cell × feature
+entries are zero.
 
 Retrieve Cells
 --------------

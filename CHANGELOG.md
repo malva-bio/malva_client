@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Coverage APIs accept `stage_callback` and log separate search, server-result generation, download, and parse stages for large coverage responses.
 - `get_cells_by_metadata()` for search-independent all-cell denominator retrieval by sample and/or cell type. Database-wide retrieval is available with explicit `include_all_database_cells=True`.
-- Aggregate result columns now expose Expression Explorer-style metrics and aliases: `norm_expr`/`rel`, `kpt_expr`/`raw_expr`/`exp`, `cell_count`, `fraction_positive`, `pct_positive`/`pct`, and `raw_kmer_mean`/`raw_kmers`.
+- Aggregate result columns now use a single Expression Explorer-style schema: `rel`, `exp`, `pct`, `raw_kmers`, and `cell_count`. Legacy expression names are still accepted by helper methods such as `aggregate_by(..., expr_column=...)` when they can be mapped unambiguously.
 
 ### Changed
 - Quickstart and tutorials now avoid placeholder sample IDs and document the meaning of aggregate and per-cell expression values.

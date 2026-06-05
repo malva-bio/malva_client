@@ -215,9 +215,27 @@ class MalvaDataFrame:
         
         return MalvaDataFrame(filtered_df, self.client, self._sample_metadata)
     
-    def aggregate_by(self, group_by: Union[str, List[str]], 
+    EXPRESSION_COLUMN_ALIASES = {
+        'norm_expr': 'rel',
+        'kpt_expr': 'exp',
+        'raw_expr': 'exp',
+        'fraction_positive': 'pct',
+        'pct_positive': 'pct',
+        'raw_kmer_mean': 'raw_kmers',
+    }
+
+    def _resolve_expression_column(self, expr_column: str) -> str:
+        """Resolve legacy expression column names to the canonical schema."""
+        if expr_column in self._df.columns:
+            return expr_column
+        alias = self.EXPRESSION_COLUMN_ALIASES.get(expr_column)
+        if alias and alias in self._df.columns:
+            return alias
+        raise ValueError(f"Expression column '{expr_column}' not found")
+
+    def aggregate_by(self, group_by: Union[str, List[str]],
                     agg_func: str = 'mean',
-                    expr_column: str = 'norm_expr') -> pd.DataFrame:
+                    expr_column: str = 'rel') -> pd.DataFrame:
         """
         Aggregate expression data by specified grouping variables
         
@@ -233,8 +251,7 @@ class MalvaDataFrame:
             df.aggregate_by('cell_type')
             df.aggregate_by(['organ', 'cell_type'])
         """
-        if expr_column not in self._df.columns:
-            raise ValueError(f"Expression column '{expr_column}' not found")
+        expr_column = self._resolve_expression_column(expr_column)
         
         group_cols = [group_by] if isinstance(group_by, str) else group_by
         
@@ -315,8 +332,7 @@ class MalvaDataFrame:
         if group_by not in self._df.columns:
             raise ValueError(f"Column '{group_by}' not found")
         
-        if 'norm_expr' not in self._df.columns:
-            raise ValueError("Expression column 'norm_expr' not found")
+        expr_column = self._resolve_expression_column('rel')
         
         # Prepare data for plotting
         plot_data = self._df.copy()
@@ -324,11 +340,11 @@ class MalvaDataFrame:
         # Calculate sorting metrics for each category
         if sort_by != 'alphabetical':
             if sort_by == 'mean':
-                sort_values = plot_data.groupby(group_by)['norm_expr'].mean()
+                sort_values = plot_data.groupby(group_by)[expr_column].mean()
             elif sort_by == 'median':
-                sort_values = plot_data.groupby(group_by)['norm_expr'].median()
+                sort_values = plot_data.groupby(group_by)[expr_column].median()
             elif sort_by == 'count':
-                sort_values = plot_data.groupby(group_by)['norm_expr'].count()
+                sort_values = plot_data.groupby(group_by)[expr_column].count()
             else:
                 raise ValueError("sort_by must be one of: 'mean', 'median', 'count', 'alphabetical'")
             
@@ -352,7 +368,7 @@ class MalvaDataFrame:
         plot_kwargs = {k: v for k, v in kwargs.items() if k not in ['figsize']}
         
         # Create box plot with ordered categories
-        sns.boxplot(data=plot_data, x=group_by, y='norm_expr', 
+        sns.boxplot(data=plot_data, x=group_by, y=expr_column, 
                     order=sorted_categories, **plot_kwargs)
         
         # Customize plot
@@ -377,7 +393,7 @@ class MalvaDataFrame:
         if len(sorted_categories) <= 10:
             stats_text = []
             for i, category in enumerate(sorted_categories):
-                cat_data = plot_data[plot_data[group_by] == category]['norm_expr']
+                cat_data = plot_data[plot_data[group_by] == category][expr_column]
                 if not cat_data.empty:
                     mean_val = cat_data.mean()
                     count = len(cat_data)
@@ -405,7 +421,8 @@ class MalvaDataFrame:
             raise ValueError(f"Column '{group_by}' not found")
         
         # Get top categories by mean expression
-        top_categories = (self._df.groupby(group_by)['norm_expr']
+        expr_column = self._resolve_expression_column('rel')
+        top_categories = (self._df.groupby(group_by)[expr_column]
                         .mean().nlargest(limit).index.tolist())
         
         plot_data = self._df[self._df[group_by].isin(top_categories)]
@@ -417,19 +434,19 @@ class MalvaDataFrame:
         
         # 1. Box plot (or other plot type)
         if plot_type == 'box':
-            sns.boxplot(data=plot_data, x=group_by, y='norm_expr', 
+            sns.boxplot(data=plot_data, x=group_by, y=expr_column, 
                         order=top_categories, ax=axes[0])
             axes[0].set_title('Expression Distribution (Box Plot)')
         elif plot_type == 'violin':
-            sns.violinplot(data=plot_data, x=group_by, y='norm_expr', 
+            sns.violinplot(data=plot_data, x=group_by, y=expr_column, 
                         order=top_categories, ax=axes[0])
             axes[0].set_title('Expression Distribution (Violin Plot)')
         elif plot_type == 'strip':
-            sns.stripplot(data=plot_data, x=group_by, y='norm_expr', 
+            sns.stripplot(data=plot_data, x=group_by, y=expr_column, 
                         order=top_categories, ax=axes[0])
             axes[0].set_title('Expression Distribution (Strip Plot)')
         else:  # bar plot
-            means = plot_data.groupby(group_by)['norm_expr'].agg(['mean', 'std'])
+            means = plot_data.groupby(group_by)[expr_column].agg(['mean', 'std'])
             means = means.reindex(top_categories)
             means.plot(kind='bar', y='mean', yerr='std', ax=axes[0], 
                     color='skyblue', capsize=4)
@@ -493,7 +510,7 @@ class MalvaDataFrame:
             cat_data = plot_data[plot_data[group_by] == category]
             n_samples = sample_counts_per_category.get(category, cat_data['sample_id'].nunique())
             n_cells = cat_data['cell_count'].sum() if 'cell_count' in cat_data.columns else len(cat_data)
-            mean_expr = cat_data['norm_expr'].mean()
+            mean_expr = cat_data[expr_column].mean()
             print(f"{category}: {n_samples} samples, {n_cells:,} cells, μ={mean_expr:.3f}")
         
         return fig
@@ -543,7 +560,7 @@ class MalvaDataFrame:
         
         # Categorize fields
         categories = {
-            'expression': [col for col in all_columns if col in ['norm_expr', 'cell_count', 'sample_idx', 'cell_type_idx']],
+            'expression': [col for col in all_columns if col in ['rel', 'exp', 'pct', 'raw_kmers', 'cell_count', 'sample_idx', 'cell_type_idx']],
             'basic': [col for col in all_columns if col in ['sample_id', 'cell_type', 'gene_sequence']],
             'biological': [col for col in all_columns if col in ['organ', 'organ_part', 'disease', 'species', 'development_stage', 'sex', 'age']],
             'study': [col for col in all_columns if col in ['study', 'study_title', 'laboratory', 'protocol']],
@@ -587,7 +604,7 @@ class MalvaDataFrame:
     
     def _categorize_field(self, field_name: str) -> str:
         """Categorize a field for better organization"""
-        if field_name in ['norm_expr', 'cell_count', 'sample_idx', 'cell_type_idx']:
+        if field_name in ['rel', 'exp', 'pct', 'raw_kmers', 'cell_count', 'sample_idx', 'cell_type_idx']:
             return 'expression'
         elif field_name in ['sample_id', 'cell_type', 'gene_sequence']:
             return 'basic'
@@ -759,18 +776,11 @@ class SearchResult(MalvaDataFrame):
                                 'sample_id': sample_id,
                                 'cell_type': cell_type,
                                 'gene_sequence': gene_seq,
-                                'norm_expr': norm_expr,
-                                'kpt_expr': kpt_expr,
-                                'raw_expr': kpt_expr,
-                                'cell_count': cell_count,
-                                'fraction_positive': fraction_positive,
-                                'pct_positive': fraction_positive * 100.0,
-                                'raw_kmer_mean': raw_kmer_mean,
-                                # Short aliases mirroring Expression Explorer controls.
                                 'rel': norm_expr,
                                 'exp': kpt_expr,
                                 'pct': fraction_positive * 100.0,
                                 'raw_kmers': raw_kmer_mean,
+                                'cell_count': cell_count,
                                 'sample_celltype_id': f"{sample_id}_{cell_type}",
                             })
                     
@@ -786,7 +796,7 @@ class SearchResult(MalvaDataFrame):
                 if 'cell' in result and 'expression' in result and 'sample' in result:
                     df = pd.DataFrame({
                         'cell_id': result['cell'],
-                        'norm_expr': result['expression'],
+                        'rel': result['expression'],
                         'sample_id': result['sample'],
                         'gene_sequence': gene_seq
                     })
@@ -816,18 +826,24 @@ class SearchResult(MalvaDataFrame):
         
         if all_data:
             result_df = pd.concat(all_data, ignore_index=True)
-            if 'fraction_positive' in result_df.columns and 'pct_positive' not in result_df.columns:
-                result_df['pct_positive'] = result_df['fraction_positive'].astype(float) * 100.0
             if 'norm_expr' in result_df.columns and 'rel' not in result_df.columns:
                 result_df['rel'] = result_df['norm_expr']
             if 'kpt_expr' in result_df.columns and 'exp' not in result_df.columns:
                 result_df['exp'] = result_df['kpt_expr']
             elif 'raw_expr' in result_df.columns and 'exp' not in result_df.columns:
                 result_df['exp'] = result_df['raw_expr']
-            if 'pct_positive' in result_df.columns and 'pct' not in result_df.columns:
+            if 'fraction_positive' in result_df.columns and 'pct' not in result_df.columns:
+                result_df['pct'] = result_df['fraction_positive'].astype(float) * 100.0
+            elif 'pct_positive' in result_df.columns and 'pct' not in result_df.columns:
                 result_df['pct'] = result_df['pct_positive']
             if 'raw_kmer_mean' in result_df.columns and 'raw_kmers' not in result_df.columns:
                 result_df['raw_kmers'] = result_df['raw_kmer_mean']
+
+            legacy_columns = [
+                'norm_expr', 'kpt_expr', 'raw_expr', 'fraction_positive',
+                'pct_positive', 'raw_kmer_mean',
+            ]
+            result_df = result_df.drop(columns=[c for c in legacy_columns if c in result_df.columns])
             if 'cell_type' in result_df.columns:
                 result_df['cell_type'] = result_df['cell_type'].astype('category')
             return result_df
@@ -925,9 +941,9 @@ class SearchResult(MalvaDataFrame):
         lines.append(f"🔬 Cell types: {self._df['cell_type'].nunique() if 'cell_type' in self._df.columns else 'N/A'}")
         
         # Expression stats remain the same (these are per sample/cell_type aggregate)
-        if 'norm_expr' in self._df.columns:
-            lines.append(f"📈 Expression range: {self._df['norm_expr'].min():.3f} - {self._df['norm_expr'].max():.3f}")
-            lines.append(f"📊 Mean expression: {self._df['norm_expr'].mean():.3f}")
+        if 'rel' in self._df.columns:
+            lines.append(f"📈 Expression range: {self._df['rel'].min():.3f} - {self._df['rel'].max():.3f}")
+            lines.append(f"📊 Mean expression: {self._df['rel'].mean():.3f}")
         
         lines.append("")
         
@@ -974,9 +990,9 @@ class SearchResult(MalvaDataFrame):
         html.append(f'<tr><td><strong>Samples:</strong></td><td>{self._df["sample_id"].nunique() if "sample_id" in self._df.columns else "N/A"}</td></tr>')
         html.append(f'<tr><td><strong>Cell types:</strong></td><td>{self._df["cell_type"].nunique() if "cell_type" in self._df.columns else "N/A"}</td></tr>')
         
-        if 'norm_expr' in self._df.columns:
-            html.append(f'<tr><td><strong>Expression range:</strong></td><td>{self._df["norm_expr"].min():.3f} - {self._df["norm_expr"].max():.3f}</td></tr>')
-            html.append(f'<tr><td><strong>Mean expression:</strong></td><td>{self._df["norm_expr"].mean():.3f}</td></tr>')
+        if 'rel' in self._df.columns:
+            html.append(f'<tr><td><strong>Expression range:</strong></td><td>{self._df["rel"].min():.3f} - {self._df["rel"].max():.3f}</td></tr>')
+            html.append(f'<tr><td><strong>Mean expression:</strong></td><td>{self._df["rel"].mean():.3f}</td></tr>')
         
         html.append('</table>')
         

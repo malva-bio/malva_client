@@ -24,7 +24,7 @@ def _make_expr_df():
     return pd.DataFrame({
         'sample_id': [1, 1, 2, 2, 3],
         'cell_type': ['neuron', 'astrocyte', 'neuron', 'oligodendrocyte', 'astrocyte'],
-        'norm_expr': [0.8, 0.4, 0.9, 0.3, 0.5],
+        'rel': [0.8, 0.4, 0.9, 0.3, 0.5],
         'cell_count': [150, 80, 200, 60, 120],
         'gene_sequence': ['BRCA1'] * 5,
     })
@@ -39,7 +39,7 @@ class TestSearchResultFromResponse:
         client = _make_mock_client()
         sr = SearchResult(sample_search_response, client)
         assert len(sr) > 0
-        assert 'norm_expr' in sr.df.columns
+        assert 'rel' in sr.df.columns
         assert 'cell_type' in sr.df.columns
         assert 'sample_id' in sr.df.columns
 
@@ -111,17 +111,16 @@ class TestSearchResultFromResponse:
         }
         sr = SearchResult(data, _make_mock_client())
         row = sr.df.iloc[0]
-        assert row['norm_expr'] == 1.25
         assert row['rel'] == 1.25
-        assert row['kpt_expr'] == 3.5
-        assert row['raw_expr'] == 3.5
         assert row['exp'] == 3.5
         assert row['cell_count'] == 7
-        assert row['fraction_positive'] == 0.125
-        assert row['pct_positive'] == 12.5
         assert row['pct'] == 12.5
-        assert row['raw_kmer_mean'] == 4.75
         assert row['raw_kmers'] == 4.75
+        legacy_columns = {
+            'norm_expr', 'kpt_expr', 'raw_expr', 'fraction_positive',
+            'pct_positive', 'raw_kmer_mean',
+        }
+        assert legacy_columns.isdisjoint(sr.df.columns)
 
     def test_old_format_backward_compat(self):
         data = {
@@ -135,7 +134,7 @@ class TestSearchResultFromResponse:
         }
         sr = SearchResult(data, _make_mock_client())
         assert len(sr) == 3
-        assert 'norm_expr' in sr.df.columns
+        assert 'rel' in sr.df.columns
 
     def test_returns_search_result_type(self, sample_search_response):
         sr = SearchResult(sample_search_response, _make_mock_client())
@@ -180,21 +179,21 @@ class TestMalvaDataFrameAggregateBy:
         df = _make_expr_df()
         mdf = MalvaDataFrame(df, _make_mock_client())
         result = mdf.aggregate_by('cell_type', agg_func='mean')
-        assert 'mean_norm_expr' in result.columns
+        assert 'mean_rel' in result.columns
         assert len(result) == 3  # neuron, astrocyte, oligodendrocyte
 
     def test_aggregate_by_multiple_columns(self):
         df = _make_expr_df()
         mdf = MalvaDataFrame(df, _make_mock_client())
         result = mdf.aggregate_by(['sample_id', 'cell_type'])
-        assert 'mean_norm_expr' in result.columns
+        assert 'mean_rel' in result.columns
 
     def test_aggregate_by_different_funcs(self):
         df = _make_expr_df()
         mdf = MalvaDataFrame(df, _make_mock_client())
         for func in ['median', 'sum', 'count', 'std', 'min', 'max']:
             result = mdf.aggregate_by('cell_type', agg_func=func)
-            assert f'{func}_norm_expr' in result.columns
+            assert f'{func}_rel' in result.columns
 
     def test_aggregate_unsupported_func_raises(self):
         df = _make_expr_df()
@@ -216,8 +215,8 @@ class TestMalvaDataFrameBasics:
         result = mdf.to_pandas()
         assert isinstance(result, pd.DataFrame)
         # Should be a copy
-        result['norm_expr'] = 999
-        assert mdf.df['norm_expr'].iloc[0] != 999
+        result['rel'] = 999
+        assert mdf.df['rel'].iloc[0] != 999
 
     def test_len(self):
         df = _make_expr_df()
@@ -227,7 +226,7 @@ class TestMalvaDataFrameBasics:
     def test_getitem(self):
         df = _make_expr_df()
         mdf = MalvaDataFrame(df, _make_mock_client())
-        col = mdf['norm_expr']
+        col = mdf['rel']
         assert isinstance(col, pd.Series)
         assert len(col) == 5
 
