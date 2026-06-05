@@ -821,6 +821,93 @@ class MalvaClient:
             source=source,
         )
 
+    def _retrieve_cells_from_values_export_endpoint(self, job_id: str,
+                                                   features: Optional[List[str]],
+                                                   sample_ids: Optional[List[int]],
+                                                   include_barcodes: bool,
+                                                   include_sample_metadata: bool,
+                                                   poll_interval: int = 2,
+                                                   max_wait: int = 300) -> CellExpressionMatrixResult:
+        """Retrieve raw per-cell values through the direct msgpack values export.
+
+        This uses the same per-cell value resolver as the Explorer matrix export
+        but asks the server for compact arrays instead of a ZIP/MatrixMarket
+        archive. The Celery worker does any required aggregate=False rerun, so
+        the API request path is not blocked.
+        """
+        if not features:
+            raise MalvaAPIError("No feature names are available for direct per-cell value retrieval")
+
+        items = [
+            {'job_id': job_id, 'feature': str(feature), 'label': str(feature)}
+            for feature in features
+        ]
+        queued = self._request('POST', '/exports/cell-expression', json={
+            'items': items,
+            'sample_ids': sample_ids or [],
+            'include_barcodes': False,
+            'output_format': 'msgpack',
+        })
+        export_id = queued.get('export_id')
+        if not export_id:
+            raise MalvaAPIError("No export_id received from cell-expression values endpoint")
+
+        started = time.time()
+        while time.time() - started < max_wait:
+            status_payload = self._request('GET', f'/exports/cell-expression/{export_id}')
+            status = status_payload.get('status')
+            if status == 'completed':
+                break
+            if status == 'error':
+                raise MalvaAPIError(f"Cell-expression values export failed: {status_payload.get('error', 'unknown')}")
+            delay = self._adaptive_poll_delay(time.time() - started, poll_interval)
+            if delay > 0:
+                time.sleep(delay)
+        else:
+            raise MalvaAPIError(f"Cell-expression values export timed out after {max_wait} seconds")
+
+        response = self._request_raw('GET', f'/exports/cell-expression/{export_id}/download')
+        decoded = msgpack.unpackb(response.content, raw=False, strict_map_key=False)
+        if decoded.get('format') != 'cell_expression_values_v1':
+            raise MalvaAPIError("Unexpected cell-expression values payload format")
+
+        samples = np.frombuffer(decoded.get('s', b''), dtype=np.int64)
+        cells = np.frombuffer(decoded.get('c', b''), dtype=np.int64)
+        feature_indices = np.frombuffer(decoded.get('fi', b''), dtype=np.int32)
+        values = np.frombuffer(decoded.get('v', b''), dtype=np.float32)
+        n = min(len(samples), len(cells), len(feature_indices), len(values), int(decoded.get('n', 0) or 0))
+        if n == 0:
+            raise MalvaAPIError("No per-cell expression values returned for this search job")
+
+        entries = pd.DataFrame({
+            'sample_id': samples[:n],
+            'cell_id': cells[:n],
+            'feature_index': feature_indices[:n].astype(np.int64, copy=False),
+            'value': values[:n],
+        })
+        feature_rows = decoded.get('features') or []
+        features_df = pd.DataFrame(feature_rows)
+        if features_df.empty:
+            features_df = pd.DataFrame([
+                {
+                    'feature_index': idx + 1,
+                    'job_id': job_id,
+                    'feature': feature,
+                    'label': feature,
+                    'source': 'cell_expression_values',
+                }
+                for idx, feature in enumerate(features)
+            ])
+
+        return self._result_from_entry_rows(
+            job_id=job_id,
+            entries=entries,
+            features=features_df,
+            source='cell_expression_values',
+            include_barcodes=include_barcodes,
+            include_sample_metadata=include_sample_metadata,
+        )
+
     def _retrieve_cells_from_full_search_endpoint(self, job_id: str,
                                                   features: Optional[List[str]],
                                                   sample_ids: Optional[List[int]],
@@ -1103,7 +1190,10 @@ class MalvaClient:
         job_id, result = self._resolve_search_job(search_job, poll_interval, max_wait)
         feature_list = self._normalise_feature_list(features)
         if feature_list is None and result is not None:
-            raw_results = result.raw_data.get('results', {}) if isinstance(result.raw_data, dict) else {}
+            try:
+                raw_results = result.results
+            except Exception:
+                raw_results = result.raw_data.get('results', {}) if isinstance(result.raw_data, dict) else {}
             feature_list = [
                 key for key, value in raw_results.items()
                 if isinstance(key, str) and not key.startswith('_') and isinstance(value, dict)
@@ -1112,6 +1202,7 @@ class MalvaClient:
 
         errors = []
         fetchers = (
+            self._retrieve_cells_from_values_export_endpoint,
             self._retrieve_cells_from_full_search_endpoint,
             self._retrieve_cells_from_cell_ids_endpoint,
             self._retrieve_cells_from_global_ids_endpoint,
@@ -1120,6 +1211,16 @@ class MalvaClient:
 
         for fetcher in fetchers:
             try:
+                if getattr(fetcher, '__name__', '') == '_retrieve_cells_from_values_export_endpoint':
+                    return fetcher(
+                        job_id,
+                        feature_list,
+                        sample_id_list,
+                        include_barcodes,
+                        include_sample_metadata,
+                        poll_interval=poll_interval,
+                        max_wait=max_wait,
+                    )
                 return fetcher(
                     job_id,
                     feature_list,
@@ -1135,6 +1236,7 @@ class MalvaClient:
                     or "No cell IDs returned" in message
                     or "No cells returned" in message
                     or "No cells matched" in message
+                    or "No feature names are available" in message
                 )
                 if not recoverable:
                     raise

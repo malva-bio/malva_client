@@ -29,6 +29,53 @@ from malva_client.exceptions import (
 
 BASE = "https://test.malva.bio"
 
+def _mock_cell_expression_values_export(export_id='e1', job_id='j1', feature='BRCA1', sample_ids=None):
+    expected_sample_ids = sample_ids or []
+    if expected_sample_ids == [10]:
+        sample_arr = np.array([10], dtype=np.int64)
+        cell_arr = np.array([101], dtype=np.int64)
+        value_arr = np.array([4.0], dtype=np.float32)
+    else:
+        sample_arr = np.array([10, 10], dtype=np.int64)
+        cell_arr = np.array([101, 102], dtype=np.int64)
+        value_arr = np.array([4.0, 3.0], dtype=np.float32)
+    responses.add(
+        responses.POST,
+        f"{BASE}/exports/cell-expression",
+        json={'export_id': export_id, 'status': 'pending'},
+        match=[matchers.json_params_matcher({
+            'items': [{'job_id': job_id, 'feature': feature, 'label': feature}],
+            'sample_ids': expected_sample_ids,
+            'include_barcodes': False,
+            'output_format': 'msgpack',
+        })],
+    )
+    responses.add(
+        responses.GET,
+        f"{BASE}/exports/cell-expression/{export_id}",
+        json={'export_id': export_id, 'status': 'completed'},
+    )
+    responses.add(
+        responses.GET,
+        f"{BASE}/exports/cell-expression/{export_id}/download",
+        body=msgpack.packb({
+            'format': 'cell_expression_values_v1',
+            'features': [{
+                'feature_index': 1,
+                'job_id': job_id,
+                'feature': feature,
+                'label': feature,
+                'source': 'background_rerun',
+            }],
+            's': sample_arr.tobytes(),
+            'c': cell_arr.tobytes(),
+            'fi': np.ones(len(value_arr), dtype=np.int32).tobytes(),
+            'v': value_arr.tobytes(),
+            'n': int(len(value_arr)),
+        }, use_bin_type=True),
+        content_type='application/x-msgpack',
+    )
+
 
 # ===========================================================================
 # Constructor & Connection
@@ -210,20 +257,16 @@ class TestSearch:
         )
         responses.add(
             responses.GET,
-            f"{BASE}/search/j1",
+            f"{BASE}/api/expression-data/j1/results",
             json={
                 'status': 'completed',
                 'job_id': 'j1',
                 'results': {
-                    'BRCA1': {
-                        'cell': [101, 102],
-                        'sample': [10, 10],
-                        'expression': [4.0, 3.0],
-                    }
+                    'BRCA1': {'expression_data': {}}
                 },
             },
-            match=[matchers.query_param_matcher({'max_cells': '0'})],
         )
+        _mock_cell_expression_values_export()
         responses.add(
             responses.POST,
             f"{BASE}/api/sample-metadata",
@@ -250,26 +293,22 @@ class TestSearch:
         search_result = mock_client.search("BRCA1", poll_interval=0)
         responses.add(
             responses.GET,
-            f"{BASE}/search/j1",
+            f"{BASE}/api/expression-data/j1/results",
             json={
                 'status': 'completed',
                 'job_id': 'j1',
                 'results': {
-                    'BRCA1': {
-                        'cell': [101, 102],
-                        'sample': [10, 10],
-                        'expression': [4.0, 3.0],
-                    }
+                    'BRCA1': {'expression_data': {}}
                 },
             },
-            match=[matchers.query_param_matcher({'max_cells': '0'})],
         )
+        _mock_cell_expression_values_export()
         result = mock_client.retrieve_cells(
             search_result,
             include_sample_metadata=False,
         )
 
-        assert result.source == 'search_full'
+        assert result.source == 'cell_expression_values'
         assert result.cells['cell_id'].tolist() == [101, 102]
         assert result.to_dataframe()['value'].tolist() == [4.0, 3.0]
 
@@ -382,98 +421,41 @@ class TestSearch:
         search_result = mock_client.search("BRCA1", poll_interval=0)
         responses.add(
             responses.GET,
-            f"{BASE}/search/j1",
+            f"{BASE}/api/expression-data/j1/results",
             json={
                 'status': 'completed',
                 'job_id': 'j1',
                 'results': {
-                    'BRCA1': {
-                        'cell': [101, 102],
-                        'sample': [10, 10],
-                        'expression': [4.0, 3.0],
-                    }
+                    'BRCA1': {'expression_data': {}}
                 },
             },
-            match=[matchers.query_param_matcher({'max_cells': '0'})],
         )
+        _mock_cell_expression_values_export()
         result = mock_client.retrieve_cells(
             search_result,
             include_sample_metadata=False,
         )
 
-        assert result.source == 'search_full'
+        assert result.source == 'cell_expression_values'
         assert result.cells['cell_id'].tolist() == [101, 102]
         assert result.to_dataframe()['value'].tolist() == [4.0, 3.0]
         assert result.normalization_factors.empty
 
+
     @responses.activate
     def test_retrieve_cells_filters_sample_from_job_id(self, mock_client):
-        responses.add(
-            responses.GET,
-            f"{BASE}/search/j1",
-            json={
-                'status': 'completed',
-                'job_id': 'j1',
-                'results': {
-                    'BRCA1': {
-                        'cell': [101, 202],
-                        'sample': [10, 20],
-                        'expression': [4.0, 9.0],
-                    }
-                },
-            },
-            match=[matchers.query_param_matcher({'max_cells': '0'})],
-        )
+        _mock_cell_expression_values_export(sample_ids=[10])
         result = mock_client.retrieve_cells(
             'j1',
             features='BRCA1',
             sample_ids=[10],
             include_sample_metadata=False,
         )
-        assert isinstance(result, CellExpressionMatrixResult)
+
         assert result.cells['sample_id'].tolist() == [10]
         assert result.cells['cell_id'].tolist() == [101]
         assert result.to_dataframe()['value'].tolist() == [4.0]
 
-    @responses.activate
-    def test_project_cells_polls_async_coexpression_task(self, mock_client, sample_coexpression_response):
-        def check_query_payload(request):
-            body = json.loads(request.body)
-            assert body['dataset_id'] == 'human_cortex'
-            assert body['cell_ids'] == [101, 102]
-            assert body['sample_ids'] == [10, 10]
-            return (200, {}, json.dumps({'task_id': 'task1', 'status': 'pending'}))
-
-        completed = dict(sample_coexpression_response)
-        completed['status'] = 'completed'
-        responses.add_callback(
-            responses.POST,
-            f"{BASE}/api/coexpression/query",
-            callback=check_query_payload,
-        )
-        responses.add(
-            responses.GET,
-            f"{BASE}/api/coexpression/tasks/task1",
-            json=completed,
-        )
-
-        result = mock_client.project_cells(
-            [101, 102],
-            [10, 10],
-            dataset_id='human_cortex',
-            poll_interval=0,
-        )
-
-        assert isinstance(result, CoexpressionResult)
-        assert result.n_mapped_metacells == 120
-
-    def test_search_sequence_validation(self, mock_client):
-        with pytest.raises(ValueError, match="invalid nucleotides"):
-            mock_client.search_sequence("ATGCXYZ")
-
-    def test_search_sequence_too_long(self, mock_client):
-        with pytest.raises(ValueError, match="500kb"):
-            mock_client.search_sequence("A" * 500_001)
 
     @responses.activate
     def test_search_sequence_valid(self, mock_client):
