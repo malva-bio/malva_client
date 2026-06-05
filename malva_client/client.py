@@ -1981,7 +1981,13 @@ class MalvaClient:
             raise MalvaAPIError("No job_id received from coverage search")
 
         region = f"{chr}:{start}-{end}({strand})"
-        return self._poll_coverage(job_id, region, poll_interval=poll_interval, max_wait=max_wait)
+        return self._poll_coverage(
+            job_id,
+            region,
+            positions=response.get('positions'),
+            poll_interval=poll_interval,
+            max_wait=max_wait,
+        )
 
     def get_sequence_coverage(self, sequence: str, sequence_name: str = '',
                               metadata_filters: Optional[Dict[str, Any]] = None,
@@ -2014,23 +2020,54 @@ class MalvaClient:
             raise MalvaAPIError("No job_id received from sequence coverage search")
 
         region = sequence_name or f"seq:{sequence[:20]}..."
-        return self._poll_coverage(job_id, region, poll_interval=poll_interval, max_wait=max_wait)
+        return self._poll_coverage(
+            job_id,
+            region,
+            positions=response.get('positions'),
+            poll_interval=poll_interval,
+            max_wait=max_wait,
+        )
 
     def _poll_coverage(self, job_id: str, region: str = '',
+                       positions: Optional[List[int]] = None,
                        poll_interval: int = 2, max_wait: int = 300) -> 'CoverageResult':
         """
         Internal helper to poll for coverage results.
 
-        Args:
-            job_id: Coverage job ID
-            region: Region description for the result object
-            poll_interval: How often to check for completion (seconds)
-            max_wait: Maximum time to wait for completion (seconds)
-
-        Returns:
-            CoverageResult object
+        Newer explorer-backed APIs expose the same /api/coverage/status and
+        /api/coverage/results endpoints used by the web Coverage Explorer. Use
+        those when submit returned probe positions, and fall back to the older
+        /api/genome-browser/coverage endpoint for compatibility.
         """
         start_time = time.time()
+
+        if positions is not None:
+            try:
+                while time.time() - start_time < max_wait:
+                    response = self._request('GET', f'/api/coverage/status/{job_id}')
+                    status = response.get('status')
+                    if status == 'completed':
+                        result = self._request(
+                            'POST',
+                            f'/api/coverage/results/{job_id}',
+                            json={'positions': positions, 'filters': {}},
+                        )
+                        coverage_data = result.get('coverage', result.get('coverage_data', result))
+                        coverage_data['job_id'] = job_id
+                        coverage_data['region'] = region
+                        if 'probe_data' in result:
+                            coverage_data['probe_data'] = result['probe_data']
+                        return CoverageResult(coverage_data, self)
+                    if status == 'error':
+                        error_msg = response.get('error', 'Unknown error')
+                        raise MalvaAPIError(f"Coverage job failed: {error_msg}")
+                    logger.info(f"Coverage job {job_id} status: {status}")
+                    time.sleep(poll_interval)
+                raise MalvaAPIError(f"Coverage job {job_id} timed out after {max_wait} seconds")
+            except MalvaAPIError as exc:
+                if not self._is_not_found_error(exc):
+                    raise
+                logger.info("Explorer coverage result endpoint unavailable; falling back to genome-browser coverage endpoint")
 
         while time.time() - start_time < max_wait:
             response = self._request('GET', f'/api/genome-browser/coverage/{job_id}')
@@ -2040,6 +2077,8 @@ class MalvaClient:
                 coverage_data = response.get('coverage_data', response)
                 coverage_data['job_id'] = job_id
                 coverage_data['region'] = region
+                if 'probe_data' in response:
+                    coverage_data['probe_data'] = response['probe_data']
                 return CoverageResult(coverage_data, self)
             elif status == 'error':
                 error_msg = response.get('error', 'Unknown error')

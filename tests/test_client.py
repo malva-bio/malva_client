@@ -684,6 +684,34 @@ class TestCoverage:
         assert isinstance(result, CoverageResult)
 
     @responses.activate
+    def test_get_coverage_uses_explorer_results_endpoint_when_positions_returned(self, mock_client):
+        responses.add(
+            responses.POST, f"{BASE}/api/genome-browser/search",
+            json={'job_id': 'cov-fast', 'positions': [100, 200]},
+        )
+        responses.add(
+            responses.GET, f"{BASE}/api/coverage/status/cov-fast",
+            json={'status': 'completed'},
+        )
+        responses.add(
+            responses.POST, f"{BASE}/api/coverage/results/cov-fast",
+            json={
+                'status': 'completed',
+                'coverage': {
+                    'positions': [100, 200],
+                    'cell_types': ['neuron'],
+                    'coverage_matrix': [[0.5, 1.0]],
+                },
+                'probe_data': {'samples': ['10'], 'cell_types': ['neuron'], 'data': {}},
+            },
+            match=[matchers.json_params_matcher({'positions': [100, 200], 'filters': {}})],
+        )
+        result = mock_client.get_coverage('chr1', 100, 200, poll_interval=0)
+        assert isinstance(result, CoverageResult)
+        assert result.coverage_matrix == [[0.5, 1.0]]
+        assert result.raw_data['probe_data']['samples'] == ['10']
+
+    @responses.activate
     def test_get_sequence_coverage(self, mock_client):
         responses.add(
             responses.POST, f"{BASE}/api/genome-browser/search-sequence",
