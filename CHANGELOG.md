@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.4] - 2026-06-05
+### Added
+- `get_cells_by_metadata()` for search-independent all-cell denominator retrieval by sample and/or cell type. Database-wide retrieval is available with explicit `include_all_database_cells=True`.
+- Aggregate result columns now expose Expression Explorer-style metrics and aliases: `norm_expr`/`rel`, `kpt_expr`/`raw_expr`/`exp`, `cell_count`, `fraction_positive`, `pct_positive`/`pct`, and `raw_kmer_mean`/`raw_kmers`.
+
+### Changed
+- Quickstart and tutorials now avoid placeholder sample IDs and document the meaning of aggregate and per-cell expression values.
+- `retrieve_cells()` documentation clarifies that aggregate-search `value=1` is a positive-cell indicator, while denominator cells should be fetched independently with `get_cells_by_metadata()`.
+- All-cell metadata decoding uses categorical cell types and rounded/clipped `uint16` total counts for lower memory use and faster DataFrame construction.
+
+### Fixed
+- Removed stale docs examples that produced errors with placeholder IDs or non-existent tutorial links.
+
 ## [0.3.2] - 2026-05-07
 ### Added
 - `retrieve_cells()` for direct per-cell retrieval from an existing search job,

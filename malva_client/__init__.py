@@ -6,7 +6,7 @@ try:
     from importlib.metadata import version as _get_version
     __version__ = _get_version("malva_client")
 except Exception:
-    __version__ = "0.3.3"
+    __version__ = "0.3.4"
 __author__ = "Malva Team"
 __email__ = "hello@malva.bio"
 
