@@ -194,6 +194,55 @@ Coverage queries return aggregate tracks, not single-cell coverage. Use
 The long table has one row per genomic position × sample × cell type and
 includes ``raw_signal``, ``cell_count``, and ``mean_signal``.
 
+Coverage-like Cell Retrieval
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The coverage API currently returns aggregate coverage tracks and does not yet
+provide a dedicated endpoint for retrieving every per-cell hit behind a coverage
+region. When you need a cell-level approximation for a sequence or genomic
+segment, one practical workaround is to submit the sequence as overlapping
+search probes in a normal search job, then call ``retrieve_cells()`` on that
+job. This returns cells positive for one or more sliding-window probes.
+
+The following is example code and may need to be adjusted for your sequence,
+window size, step size, strandedness, and downstream filtering:
+
+.. code-block:: python
+
+   def sliding_windows(sequence, window=48, step=24):
+       sequence = sequence.upper().replace(" ", "").replace("\n", "")
+       return [
+           sequence[i:i + window]
+           for i in range(0, max(len(sequence) - window + 1, 0), step)
+           if len(sequence[i:i + window]) == window
+       ]
+
+   # Example sequence; replace with your region/sequence of interest.
+   sequence = (
+       "ACAGGCTGAAGGAGTTTTATTTCAAATGGTTGCCTGATGCCTGTGGTT"
+       "AACCACAGGCATCAGGCAACCATTTGAAATAAAACTCCTTCAGCCTGT"
+   )
+
+   probes = sliding_windows(sequence, window=48, step=24)
+   result = client.search_sequences(probes, stranded=False)
+
+   positive_cells = client.retrieve_cells(
+       result,
+       include_sample_metadata=True,
+   ).to_dataframe(include_sample_metadata=True)
+
+   print(positive_cells.head())
+
+If you need denominator cells for fraction-expressing or mean-including-zero
+calculations, fetch the metadata-defined cell universe for the samples observed
+in ``positive_cells``:
+
+.. code-block:: python
+
+   sample_ids = positive_cells["sample_id"].dropna().astype(int).unique().tolist()
+   denominator_cells = client.get_cells_by_metadata(sample_ids=sample_ids)
+   print(denominator_cells.head())
+
 Asynchronous Jobs
 -----------------
 
