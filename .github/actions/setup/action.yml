@@ -1,0 +1,20 @@
+name: setup
+description: Install uv, the package (with test extras) and the dev tools.
+
+inputs:
+  python-version:
+    description: Python version for the virtual environment.
+    required: false
+    default: "3.12"
+
+runs:
+  using: composite
+  steps:
+    - uses: astral-sh/setup-uv@v8.1.0
+      with:
+        enable-cache: true
+    - run: uv venv --python ${{ inputs.python-version }}
+      shell: bash
+    # The `test` extra brings pytest, pytest-cov, responses, ruff and ty.
+    - run: uv pip install -e ".[test]"
+      shell: bash
