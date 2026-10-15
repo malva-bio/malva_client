@@ -1,7 +1,7 @@
 """Tests for malva_client.config."""
 
 import json
-import os
+
 import pytest
 
 from malva_client.config import Config
@@ -10,11 +10,15 @@ from malva_client.config import Config
 class TestConfigLoad:
     def test_load_from_file(self, tmp_path):
         config_file = tmp_path / "config.json"
-        config_file.write_text(json.dumps({
-            "server_url": "https://malva.example.com",
-            "api_token": "tok-123",
-            "verify_ssl": False,
-        }))
+        config_file.write_text(
+            json.dumps(
+                {
+                    "server_url": "https://malva.example.com",
+                    "api_token": "tok-123",
+                    "verify_ssl": False,
+                }
+            )
+        )
 
         config = Config.load(str(config_file))
         assert config.server_url == "https://malva.example.com"
@@ -33,10 +37,14 @@ class TestConfigLoad:
 
     def test_env_overrides_file(self, tmp_path, monkeypatch):
         config_file = tmp_path / "config.json"
-        config_file.write_text(json.dumps({
-            "server_url": "https://file.malva.bio",
-            "api_token": "file-tok",
-        }))
+        config_file.write_text(
+            json.dumps(
+                {
+                    "server_url": "https://file.malva.bio",
+                    "api_token": "file-tok",
+                }
+            )
+        )
         monkeypatch.setenv("MALVA_API_URL", "https://env.malva.bio")
 
         config = Config.load(str(config_file))

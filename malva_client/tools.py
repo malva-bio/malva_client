@@ -1,24 +1,23 @@
-import tempfile
-import subprocess
 import os
+import subprocess
+import tempfile
 
-import numpy as np
-import pandas as pd
 import matplotlib.pyplot as plt
+import numpy as np
+from gprofiler import GProfiler
 from matplotlib.ticker import MaxNLocator
 
-from gprofiler import GProfiler
 
 def mask_sequence(sequence: str) -> str:
     """
     Apply repeat masking using dustmasker to the provided sequence.
     The function writes the input sequence to a temporary FASTA file, then
-    calls dustmasker with: FASTA (-infmt fasta), or Parse sequence IDs (-parse_seqids), and Output format: FASTA (-outfmt fasta) so that the resulting 
+    calls dustmasker with: FASTA (-infmt fasta), or Parse sequence IDs (-parse_seqids), and Output format: FASTA (-outfmt fasta) so that the resulting
     masked sequence is easy to parse. If the dustmasker call fails, the original sequence is returned.
 
     Args:
         sequence: DNA sequence string
-        
+
     Returns:
         Masked sequence with low complexity regions replaced
     """
@@ -27,21 +26,25 @@ def mask_sequence(sequence: str) -> str:
         with tempfile.NamedTemporaryFile("w+", delete=False) as tmp_in:
             tmp_in.write(">seq\n" + sequence)
             tmp_in_path = tmp_in.name
-        
+
         tmp_out_path = tmp_in_path + ".masked"
-        
+
         # Build the dustmasker command.
-        # (If ASN.1 binary output is preferred, change "-outfmt fasta" 
+        # (If ASN.1 binary output is preferred, change "-outfmt fasta"
         # to "-outfmt maskinfo_asn1_bin" and then parse accordingly.)
         cmd = [
             "dustmasker",
-            "-in", tmp_in_path,
-            "-infmt", "fasta",
+            "-in",
+            tmp_in_path,
+            "-infmt",
+            "fasta",
             "-parse_seqids",
-            "-outfmt", "fasta",
-            "-out", tmp_out_path
+            "-outfmt",
+            "fasta",
+            "-out",
+            tmp_out_path,
         ]
-        
+
         subprocess.run(cmd, check=True)
 
         masked_seq = ""
@@ -51,14 +54,15 @@ def mask_sequence(sequence: str) -> str:
                 masked_seq = "".join(line.strip() for line in lines[1:])
             else:
                 masked_seq = "".join(line.strip() for line in lines)
-        
+
         os.remove(tmp_in_path)
         os.remove(tmp_out_path)
-        
+
         return masked_seq
     except Exception as e:
         print(f"Warning: dustmasker failed with error {e}. Returning unmasked sequence.")
         return sequence
+
 
 def run_go_enrichment(
     gene_list: list[str],
@@ -135,6 +139,7 @@ def run_go_enrichment(
         plt.show()
 
     return res
+
 
 def score_correlated_features(
     adata,
@@ -213,11 +218,11 @@ def score_correlated_features(
 
     # Get the original feature values
     feature_values = np.nan_to_num(adata.obs[feature_key].values.astype(float))
-    
+
     # Apply neighbor smoothing if requested
     if smooth_neighbors:
         # Check if neighbors graph exists
-        if 'neighbors' not in adata.uns:
+        if "neighbors" not in adata.uns:
             raise ValueError(
                 "Neighbors graph not found in adata.uns['neighbors']. "
                 "Please compute neighbors first using:\n"
@@ -225,46 +230,48 @@ def score_correlated_features(
                 "or with custom parameters:\n"
                 "  sc.pp.neighbors(adata, n_neighbors=15, n_pcs=40)"
             )
-        
+
         # Get the connectivity matrix
-        if 'connectivities' not in adata.obsp:
+        if "connectivities" not in adata.obsp:
             raise ValueError(
                 "Connectivity matrix not found in adata.obsp['connectivities']. "
                 "Please recompute neighbors using sc.pp.neighbors(adata)"
             )
-        
-        connectivities = adata.obsp['connectivities']
-        
+
+        connectivities = adata.obsp["connectivities"]
+
         # Ensure it's a sparse matrix
         if not sp.issparse(connectivities):
             connectivities = sp.csr_matrix(connectivities)
-        
+
         # Normalize connectivity matrix (row-wise) to get averaging weights
         # Each row sums to 1, representing the weight distribution among neighbors
         row_sums = np.array(connectivities.sum(axis=1)).flatten()
         row_sums[row_sums == 0] = 1  # Avoid division by zero
         connectivities_norm = connectivities.multiply(1 / row_sums[:, np.newaxis])
-        
+
         # Apply smoothing iterations
         smoothed_values = feature_values.copy()
-        
+
         for iteration in range(smooth_iterations):
             # Compute neighbor-averaged values
             # Matrix multiplication: each cell gets weighted average of its neighbors
             neighbor_means = connectivities_norm.dot(smoothed_values)
-            
+
             # Apply smoothing: blend original with neighbor average
             smoothed_values = (1 - smooth_alpha) * smoothed_values + smooth_alpha * neighbor_means
-        
+
         # Store smoothed values for potential inspection
         smoothed_key = f"{feature_key}_smoothed"
         adata.obs[smoothed_key] = smoothed_values
-        
+
         # Use smoothed values for thresholding
         x = smoothed_values.reshape(-1, 1)
-        
+
         if show:
-            print(f"Applied neighbor smoothing with alpha={smooth_alpha}, iterations={smooth_iterations}")
+            print(
+                f"Applied neighbor smoothing with alpha={smooth_alpha}, iterations={smooth_iterations}"
+            )
             print(f"Smoothed values stored in adata.obs['{smoothed_key}']")
     else:
         x = feature_values.reshape(-1, 1)
@@ -274,16 +281,14 @@ def score_correlated_features(
         gmm = GaussianMixture(n_components=gmm_components, random_state=random_state).fit(x)
         means = gmm.means_.flatten()
         labels = gmm.predict(x)
-        threshold = means.mean()          # midpoint between the component means
+        threshold = means.mean()  # midpoint between the component means
         positive_mask = labels == means.argmax()  # component with higher mean
     else:
         raise ValueError("method must be 'gmm'. Others are not supported for now")
 
     # Create categorical flag
     flag_key = f"{feature_key}_positive"
-    adata.obs[flag_key] = pd.Categorical(
-        np.where(positive_mask, positive_label, negative_label)
-    )
+    adata.obs[flag_key] = pd.Categorical(np.where(positive_mask, positive_label, negative_label))
 
     if umap_kwargs is None:
         umap_kwargs = dict(frameon=False)
@@ -293,7 +298,7 @@ def score_correlated_features(
         plot_features = [flag_key]
         if smooth_neighbors:
             plot_features.append(smoothed_key)
-        
+
         sc.pl.umap(adata, color=plot_features, **umap_kwargs, show=True)
 
     # Differential expression analysis
@@ -305,16 +310,8 @@ def score_correlated_features(
     pos_df = sc.get.rank_genes_groups_df(adata, group=positive_label)
     neg_df = sc.get.rank_genes_groups_df(adata, group=negative_label)
 
-    pos_markers = (
-        pos_df.loc[pos_df["pvals_adj"] < significance, "names"]
-        .head(n_markers)
-        .tolist()
-    )
-    neg_markers = (
-        neg_df.loc[neg_df["pvals_adj"] < significance, "names"]
-        .head(n_markers)
-        .tolist()
-    )
+    pos_markers = pos_df.loc[pos_df["pvals_adj"] < significance, "names"].head(n_markers).tolist()
+    neg_markers = neg_df.loc[neg_df["pvals_adj"] < significance, "names"].head(n_markers).tolist()
 
     if show:
         sc.pl.umap(
