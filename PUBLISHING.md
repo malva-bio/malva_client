@@ -75,7 +75,9 @@ environment, so that is all.
 ## Integration tests (real platform)
 
 `tests/test_integration.py` hits the real Malva platform to check that the
-configured endpoints work. It is skipped unless `MALVA_API_TOKEN` is set.
+configured endpoints work. It is skipped unless `MALVA_API_TOKEN` is set. It
+discovers a dataset id from the metadata hierarchy for the UMAP/coexpression
+checks (those need a dataset whose coexpression index is loaded).
 
 - **Locally**: export the token (the client already reads `MALVA_API_TOKEN` and
   `MALVA_API_URL`), e.g. from the macOS keychain or a file outside the repo, then

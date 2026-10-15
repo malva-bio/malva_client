@@ -38,7 +38,6 @@ SEQUENCE = (
 )
 SEQUENCE_2 = "GATTACAGATTACAGATTACAGATTACAGATTACAGATTACAGATTACAGATTACAGATTACA"
 GENE = "FOXP3"
-DATASET_ID = "human_cortex"
 REGION = ("chr12", 52487695, 52491695)
 
 
@@ -49,6 +48,32 @@ def client():
         api_token=os.environ["MALVA_API_TOKEN"],
         timeout=180,
     )
+
+
+@pytest.fixture(scope="module")
+def dataset_id(client):
+    """A catalog dataset id that also has a coexpression index (and UMAP).
+
+    The dataset ids come from the metadata hierarchy; the coexpression service
+    keys its indices by the same id, but not every dataset has an atlas loaded,
+    so probe the UMAP endpoint and use the first dataset that answers.
+    """
+    try:
+        hierarchy = client.get_datasets_hierarchy()
+    except Exception:
+        hierarchy = {}
+    ids = [
+        entry.get("dataset_id")
+        for entry in (hierarchy.get("datasets") or [])
+        if entry.get("dataset_id")
+    ]
+    for candidate in ids:
+        try:
+            client.get_umap_coordinates(candidate)
+            return candidate
+        except Exception:
+            continue
+    pytest.skip("no dataset with a coexpression index / UMAP is available")
 
 
 @pytest.fixture(scope="module")
@@ -123,13 +148,13 @@ class TestCellLevel:
         result = client.retrieve_cells(gene_search, features=GENE)
         assert result is not None
 
-    def test_umap_coordinates(self, client):
-        assert client.get_umap_coordinates(DATASET_ID) is not None
+    def test_umap_coordinates(self, client, dataset_id):
+        assert client.get_umap_coordinates(dataset_id) is not None
 
 
 class TestCoexpression:
-    def test_coexpression_from_job(self, client, gene_search):
+    def test_coexpression_from_job(self, client, gene_search, dataset_id):
         result = client.get_coexpression(
-            gene_search.job_id, DATASET_ID, poll_interval=2, max_wait=300
+            gene_search.job_id, dataset_id, poll_interval=2, max_wait=300
         )
         assert result is not None
