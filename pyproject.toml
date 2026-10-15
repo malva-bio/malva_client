@@ -8,7 +8,7 @@ version = "0.3.4"
 description = "Python client for Malva Index"
 readme = "README.md"
 license = "BSD-3-Clause-Clear"
-requires-python = ">=3.8"
+requires-python = ">=3.9"
 authors = [
     {name = "Daniel León-Periñán", email = "daniel.leonperinan@mdc-berlin.de"},
     {name = "Nikos Karaiskos", email = "nikolaos.karaiskos@mdc-berlin.de"},
@@ -27,10 +27,10 @@ classifiers = [
     "Operating System :: Microsoft :: Windows",
     "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.8",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
     "Topic :: Scientific/Engineering :: Bio-Informatics",
     "Topic :: Scientific/Engineering :: Visualization",
 ]
@@ -67,6 +67,8 @@ test = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
     "responses>=0.23",
+    "ruff>=0.16.9",
+    "ty>=0.0.84",
 ]
 
 [project.urls]
@@ -98,3 +100,33 @@ directory = "htmlcov"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "integration: hits the real Malva platform; requires MALVA_API_TOKEN",
+]
+
+# --- lint / type tooling ---
+
+[tool.ruff]
+target-version = "py39"
+line-length = 100
+src = ["."]
+extend-exclude = ["build", "dist", "docs", "examples", "**/*.md"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]
+ignore = ["E402", "F403", "F405", "F841", "F811", "E722", "E741", "E731", "F821"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["malva_client"]
+
+[tool.ruff.lint.per-file-ignores]
+# The package __init__ re-exports names lazily through __getattr__/locals();
+# ruff's F401 cannot see that the imports are used.
+"malva_client/__init__.py" = ["F401"]
+
+[tool.ty]
+[tool.ty.environment]
+python-version = "3.9"
+
+[tool.ty.src]
+include = ["tests"]

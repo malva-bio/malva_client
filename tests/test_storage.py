@@ -1,9 +1,7 @@
 """Tests for malva_client.storage."""
 
 import json
-import time
 from datetime import datetime, timedelta
-from pathlib import Path
 
 import pytest
 
@@ -62,8 +60,10 @@ class TestGetSearchHistory:
 class TestJobStatus:
     def test_save_and_get(self, storage):
         storage.save_job_status(
-            job_id="j1", status="pending",
-            query="BRCA1", server_url="https://s.io",
+            job_id="j1",
+            status="pending",
+            query="BRCA1",
+            server_url="https://s.io",
         )
         result = storage.get_job_status("j1")
         assert result is not None
@@ -72,8 +72,7 @@ class TestJobStatus:
 
     def test_upsert_replaces(self, storage):
         storage.save_job_status(job_id="j1", status="pending")
-        storage.save_job_status(job_id="j1", status="completed",
-                                results_data={"foo": "bar"})
+        storage.save_job_status(job_id="j1", status="completed", results_data={"foo": "bar"})
         result = storage.get_job_status("j1")
         assert result["status"] == "completed"
         assert result["results_data"] == {"foo": "bar"}
@@ -83,7 +82,8 @@ class TestJobStatus:
 
     def test_parses_json_fields(self, storage):
         storage.save_job_status(
-            job_id="j1", status="completed",
+            job_id="j1",
+            status="completed",
             results_data={"key": [1, 2, 3]},
             metadata={"extra": True},
         )

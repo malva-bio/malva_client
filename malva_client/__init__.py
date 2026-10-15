@@ -4,6 +4,7 @@ Malva Client - Python client for the Malva genomic search platform
 
 try:
     from importlib.metadata import version as _get_version
+
     __version__ = _get_version("malva_client")
 except Exception:
     __version__ = "0.3.4"
@@ -12,64 +13,93 @@ __email__ = "hello@malva.bio"
 
 # Define what should be available when importing, but don't actually import yet
 __all__ = [
-    'MalvaClient',
-    'MalvaAPIError',
-    'AuthenticationError',
-    'SearchError',
-    'QuotaExceededError',
-    'ValidationError',
-    'ConfigurationError',
-    'SearchResult',
-    'CellExpressionMatrixResult',
-    'CoverageResult',
-    'SingleCellResult',
-    'CoexpressionResult',
-    'UMAPCoordinates',
-    'Config',
-    'search_gene',
-    'search_sequence',
-    'login',
-    'logout',
-    'get_stored_token'
+    "MalvaClient",
+    "MalvaAPIError",
+    "AuthenticationError",
+    "SearchError",
+    "QuotaExceededError",
+    "ValidationError",
+    "ConfigurationError",
+    "SearchResult",
+    "CellExpressionMatrixResult",
+    "CoverageResult",
+    "SingleCellResult",
+    "CoexpressionResult",
+    "UMAPCoordinates",
+    "Config",
+    "search_gene",
+    "search_sequence",
+    "login",
+    "logout",
+    "get_stored_token",
 ]
+
 
 def __getattr__(name):
     """
     Lazy import mechanism - only import modules when they're actually used
     """
-    if name == 'MalvaClient':
+    if name == "MalvaClient":
         from .client import MalvaClient
+
         return MalvaClient
 
-    elif name in ('MalvaAPIError', 'AuthenticationError', 'SearchError',
-                  'QuotaExceededError', 'ValidationError', 'ConfigurationError'):
+    elif name in (
+        "MalvaAPIError",
+        "AuthenticationError",
+        "SearchError",
+        "QuotaExceededError",
+        "ValidationError",
+        "ConfigurationError",
+    ):
         from .exceptions import (
-            MalvaAPIError, AuthenticationError, SearchError,
-            QuotaExceededError, ValidationError, ConfigurationError
+            AuthenticationError,
+            ConfigurationError,
+            MalvaAPIError,
+            QuotaExceededError,
+            SearchError,
+            ValidationError,
         )
+
         return locals()[name]
 
-    elif name in ('SearchResult', 'CellExpressionMatrixResult', 'CoverageResult', 'SingleCellResult',
-                  'CoexpressionResult', 'UMAPCoordinates'):
-        from .models import (SearchResult, CellExpressionMatrixResult,
-                             CoverageResult, SingleCellResult,
-                             CoexpressionResult, UMAPCoordinates)
+    elif name in (
+        "SearchResult",
+        "CellExpressionMatrixResult",
+        "CoverageResult",
+        "SingleCellResult",
+        "CoexpressionResult",
+        "UMAPCoordinates",
+    ):
+        from .models import (
+            CellExpressionMatrixResult,
+            CoexpressionResult,
+            CoverageResult,
+            SearchResult,
+            SingleCellResult,
+            UMAPCoordinates,
+        )
+
         return locals()[name]
 
-    elif name == 'Config':
+    elif name == "Config":
         from .config import Config
+
         return Config
-    
-    elif name in ('search_gene', 'search_sequence'):
+
+    elif name in ("search_gene", "search_sequence"):
         from .client import search_gene, search_sequence
+
         return locals()[name]
 
-    elif name in ('login', 'logout', 'get_stored_token'):
-        from .auth import login, logout, get_stored_token
+    elif name in ("login", "logout", "get_stored_token"):
+        from .auth import get_stored_token, login, logout
+
         return locals()[name]
 
     else:
         raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
+
 
 # For backwards compatibility and to make imports work in older Python versions
 def __dir__():
