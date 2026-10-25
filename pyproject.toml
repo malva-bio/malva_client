@@ -63,6 +63,9 @@ docs = [
     "pandoc",
     "ipykernel",
 ]
+zarr = [
+    "zarr>=2.18,<3",
+]
 test = [
     "pytest>=7.0",
     "pytest-cov>=4.0",

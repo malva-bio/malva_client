@@ -516,5 +516,79 @@ def _colorize_status(status):
     return status_colors.get(status, status)
 
 
+@main.group("cell-explorer")
+def cell_explorer():
+    """Build and download per-user metacell cohorts."""
+
+
+def _cell_explorer_client(ctx):
+    from malva_client.client import MalvaClient
+
+    config = ctx.obj["config"]
+    return MalvaClient(
+        base_url=config.server_url, api_token=config.api_token, verify_ssl=config.verify_ssl
+    )
+
+
+@cell_explorer.command("list")
+@click.pass_context
+def cell_explorer_list(ctx):
+    """List your Cell Explorer cohorts."""
+    client = _cell_explorer_client(ctx)
+    cohorts = client.list_cell_explorer_cohorts()
+    table = Table(title="Cell Explorer cohorts")
+    table.add_column("ID", style="cyan")
+    table.add_column("Name")
+    table.add_column("Cells", justify="right")
+    table.add_column("Metacells", justify="right")
+    table.add_column("Genes", justify="right")
+    for cohort in cohorts:
+        table.add_row(
+            cohort.get("id", ""),
+            cohort.get("name", ""),
+            f"{int(cohort.get('n_cells', 0)):,}",
+            f"{int(cohort.get('n_metacells', 0)):,}",
+            f"{int(cohort.get('n_genes', 0)):,}",
+        )
+    console.print(table)
+
+
+@cell_explorer.command("build")
+@click.argument("name")
+@click.option("--cell-type", "cell_types", multiple=True, help="Cell type filter (repeatable)")
+@click.option("--organ", "organs", multiple=True, help="Organ/tissue filter (repeatable)")
+@click.option("--disease", "diseases", multiple=True, help="Disease filter (repeatable)")
+@click.option("--gene", "genes", multiple=True, help="Gene to include (repeatable)")
+@click.option("--dataset", "dataset_id", default=None, help="Dataset id")
+@click.pass_context
+def cell_explorer_build(ctx, name, cell_types, organs, diseases, genes, dataset_id):
+    """Build a metacell cohort from metadata filters."""
+    client = _cell_explorer_client(ctx)
+    result = client.create_cell_explorer_cohort(
+        name,
+        cell_types=list(cell_types),
+        organs=list(organs),
+        diseases=list(diseases),
+        genes=list(genes),
+        dataset_id=dataset_id,
+    )
+    cohort = result.get("cohort", {})
+    console.print(
+        f"[green]Created cohort[/green] [bold]{cohort.get('id', '')}[/bold] "
+        f"({cohort.get('n_cells', 0):,} cells, {cohort.get('n_metacells', 0):,} metacells)"
+    )
+
+
+@cell_explorer.command("download")
+@click.argument("cohort_id")
+@click.option("--output", "-o", type=click.Path(), default=None, help="Output directory or archive path")
+@click.pass_context
+def cell_explorer_download(ctx, cohort_id, output):
+    """Download a cohort Zarr bundle."""
+    client = _cell_explorer_client(ctx)
+    path = client.download_cell_explorer_cohort(cohort_id, output_path=output)
+    console.print(f"[green]Downloaded[/green] {path}")
+
+
 if __name__ == "__main__":
     main()
