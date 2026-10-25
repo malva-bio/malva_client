@@ -1150,3 +1150,24 @@ class TestCellExplorer:
         assert mock_client.preview_cell_explorer_cohort("c1")["preview"]["genes"] == [
             "SPP1"
         ]
+
+
+class TestLargeResponseRedirect:
+    @responses.activate
+    def test_client_follows_the_explorer_s3_redirect(self, mock_client):
+        responses.add(
+            responses.GET,
+            f"{BASE}/api/quota-status",
+            status=303,
+            headers={"Location": "https://results.example/large.json?signature=x"},
+        )
+        responses.add(
+            responses.GET,
+            "https://results.example/large.json?signature=x",
+            json={"account_type": "enterprise", "searches_remaining": 42},
+        )
+
+        assert mock_client.get_quota_status() == {
+            "account_type": "enterprise",
+            "searches_remaining": 42,
+        }

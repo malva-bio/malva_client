@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `obsm/X_umap`).
 - `malva_client cell-explorer` CLI commands for listing, building and
   downloading cohorts.
+- Large Explorer responses above the API Gateway 10 MB cap are followed
+  transparently when the Explorer returns a `303` redirect to a presigned S3
+  URL.
 
 ## [0.3.4] - 2026-06-05
 ### Added
