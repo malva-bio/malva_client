@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "malva-client"
-version = "0.3.4"
+version = "0.4.0"
 description = "Python client for Malva Index"
 readme = "README.md"
 license = "BSD-3-Clause-Clear"
@@ -62,6 +62,9 @@ docs = [
     "nbsphinx>=0.9",
     "pandoc",
     "ipykernel",
+]
+zarr = [
+    "zarr>=2.18,<3",
 ]
 test = [
     "pytest>=7.0",

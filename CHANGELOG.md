@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [0.4.0] - 2026-10-26
+### Added
+- Cell Explorer client methods: build, list, preview, delete, download and load
+  per-user metacell cohorts stored as Zarr. The cohort schema is
+  `malva.cell_explorer.v1` (`obs/*`, `var/gene`, `X`, `layers/raw`, optional
+  `obsm/X_umap`).
+- `malva_client cell-explorer` CLI commands for listing, building and
+  downloading cohorts.
+- Large Explorer responses above the API Gateway 10 MB cap are followed
+  transparently when the Explorer returns a `303` redirect to a presigned S3
+  URL.
+
 ## [0.3.4] - 2026-06-05
 ### Added
 - Coverage APIs accept `stage_callback` and log separate search, server-result generation, download, and parse stages for large coverage responses.

@@ -1,5 +1,7 @@
 import json
 import logging
+import tarfile
+import tempfile
 import time
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
@@ -3069,6 +3071,120 @@ class MalvaClient:
             poll_interval=poll_interval,
             max_wait=max_wait,
         )
+
+    # ── Cell Explorer ─────────────────────────────────────────────────────
+    def list_cell_explorer_cohorts(self) -> List[Dict[str, Any]]:
+        """List the current user's Cell Explorer cohorts."""
+        response = self._request("GET", "/api/cell-explorer/cohorts")
+        return response.get("cohorts", [])
+
+    def create_cell_explorer_cohort(
+        self,
+        name: str,
+        *,
+        cell_types: Optional[List[str]] = None,
+        organs: Optional[List[str]] = None,
+        diseases: Optional[List[str]] = None,
+        genes: Optional[List[str]] = None,
+        dataset_id: Optional[str] = None,
+        description: str = "",
+        filter_definition: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Build a per-user metacell cohort and its Zarr store.
+
+        Filters are applied at the same (sample × cell type) metacell level the
+        search engine uses.  The cohort is also registered as an analysis cell
+        group, so it can be used by the existing analysis widgets.
+
+        Example::
+
+            cohort = client.create_cell_explorer_cohort(
+                "IPF lung macrophages",
+                cell_types=["alveolar macrophage"],
+                organs=["lung"],
+                diseases=["idiopathic pulmonary fibrosis"],
+                genes=["SPP1", "TREM2"],
+            )
+        """
+        filters: Dict[str, Any] = {}
+        if filter_definition:
+            filters.update(filter_definition.get("filters") or {})
+        if cell_types:
+            filters["cell_type"] = list(cell_types)
+        if organs:
+            filters["specimen_from_organism.organ"] = list(organs)
+        if diseases:
+            filters["specimen_from_organism.diseases"] = list(diseases)
+        payload = {
+            "name": name,
+            "description": description,
+            "dataset_id": dataset_id,
+            "filter_definition": {"filters": filters},
+            "genes": genes or [],
+        }
+        return self._request("POST", "/api/cell-explorer/cohorts", json=payload)
+
+    def get_cell_explorer_cohort(self, cohort_id: str) -> Dict[str, Any]:
+        """Return one cohort's metadata."""
+        return self._request("GET", f"/api/cell-explorer/cohorts/{cohort_id}")
+
+    def preview_cell_explorer_cohort(self, cohort_id: str) -> Dict[str, Any]:
+        """Return the cohort metadata plus a bounded obs/var/X preview."""
+        return self._request("GET", f"/api/cell-explorer/cohorts/{cohort_id}/preview")
+
+    def delete_cell_explorer_cohort(self, cohort_id: str) -> bool:
+        """Delete a cohort, its Zarr store, and its analysis group."""
+        self._request("DELETE", f"/api/cell-explorer/cohorts/{cohort_id}")
+        return True
+
+    def download_cell_explorer_cohort(
+        self,
+        cohort_id: str,
+        *,
+        output_path: Optional[str] = None,
+        extract: bool = True,
+    ) -> str:
+        """Download a cohort Zarr bundle.
+
+        Args:
+            cohort_id: Cohort identifier.
+            output_path: Destination ``.tar.gz`` path.  Defaults to a temp file.
+            extract: Extract the ``.zarr`` directory next to the archive.
+
+        Returns:
+            Path to the extracted Zarr directory when ``extract=True``, else the
+            archive path.
+        """
+        response = self._request_raw("GET", f"/api/cell-explorer/cohorts/{cohort_id}/download")
+        if output_path:
+            archive = Path(output_path)
+            if archive.is_dir():
+                archive = archive / f"{cohort_id}.tar.gz"
+        else:
+            handle = tempfile.NamedTemporaryFile(delete=False, suffix=".tar.gz")
+            handle.close()
+            archive = Path(handle.name)
+        archive.write_bytes(response.content)
+        if not extract:
+            return str(archive)
+        with tarfile.open(archive, "r:gz") as bundle:
+            bundle.extractall(archive.parent)
+        return str(archive.parent / f"{cohort_id}.zarr")
+
+    def load_cell_explorer_cohort(self, cohort_id: str, *, output_path: Optional[str] = None):
+        """Download and open a cohort as a :mod:`zarr` group.
+
+        The returned group follows ``malva.cell_explorer.v1``:
+        ``obs/*``, ``var/gene``, ``X``, ``layers/raw``, optional ``obsm/X_umap``.
+        """
+        try:
+            import zarr  # noqa: PLC0415 - optional analysis dependency
+        except ImportError as exc:
+            raise MalvaAPIError(
+                "Reading a Cell Explorer cohort requires zarr; install malva-client[zarr]"
+            ) from exc
+        path = self.download_cell_explorer_cohort(cohort_id, output_path=output_path, extract=True)
+        return zarr.open_group(path, mode="r")
 
 
 # Convenience functions for common operations
