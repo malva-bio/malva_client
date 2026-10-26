@@ -3072,7 +3072,6 @@ class MalvaClient:
             max_wait=max_wait,
         )
 
-
     # ── Cell Explorer ─────────────────────────────────────────────────────
     def list_cell_explorer_cohorts(self) -> List[Dict[str, Any]]:
         """List the current user's Cell Explorer cohorts."""
@@ -3131,9 +3130,7 @@ class MalvaClient:
 
     def preview_cell_explorer_cohort(self, cohort_id: str) -> Dict[str, Any]:
         """Return the cohort metadata plus a bounded obs/var/X preview."""
-        return self._request(
-            "GET", f"/api/cell-explorer/cohorts/{cohort_id}/preview"
-        )
+        return self._request("GET", f"/api/cell-explorer/cohorts/{cohort_id}/preview")
 
     def delete_cell_explorer_cohort(self, cohort_id: str) -> bool:
         """Delete a cohort, its Zarr store, and its analysis group."""
@@ -3158,9 +3155,7 @@ class MalvaClient:
             Path to the extracted Zarr directory when ``extract=True``, else the
             archive path.
         """
-        response = self._request_raw(
-            "GET", f"/api/cell-explorer/cohorts/{cohort_id}/download"
-        )
+        response = self._request_raw("GET", f"/api/cell-explorer/cohorts/{cohort_id}/download")
         if output_path:
             archive = Path(output_path)
             if archive.is_dir():
@@ -3176,9 +3171,7 @@ class MalvaClient:
             bundle.extractall(archive.parent)
         return str(archive.parent / f"{cohort_id}.zarr")
 
-    def load_cell_explorer_cohort(
-        self, cohort_id: str, *, output_path: Optional[str] = None
-    ):
+    def load_cell_explorer_cohort(self, cohort_id: str, *, output_path: Optional[str] = None):
         """Download and open a cohort as a :mod:`zarr` group.
 
         The returned group follows ``malva.cell_explorer.v1``:
@@ -3190,9 +3183,7 @@ class MalvaClient:
             raise MalvaAPIError(
                 "Reading a Cell Explorer cohort requires zarr; install malva-client[zarr]"
             ) from exc
-        path = self.download_cell_explorer_cohort(
-            cohort_id, output_path=output_path, extract=True
-        )
+        path = self.download_cell_explorer_cohort(cohort_id, output_path=output_path, extract=True)
         return zarr.open_group(path, mode="r")
 
 

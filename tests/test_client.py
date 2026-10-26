@@ -1103,9 +1103,7 @@ class TestCellExplorer:
             f"{BASE}/api/cell-explorer/cohorts",
             json={"cohorts": [{"id": "c1", "name": "IPF lung"}]},
         )
-        assert mock_client.list_cell_explorer_cohorts() == [
-            {"id": "c1", "name": "IPF lung"}
-        ]
+        assert mock_client.list_cell_explorer_cohorts() == [{"id": "c1", "name": "IPF lung"}]
 
     @responses.activate
     def test_create_cohort_builds_structured_filters(self, mock_client):
@@ -1147,9 +1145,7 @@ class TestCellExplorer:
             f"{BASE}/api/cell-explorer/cohorts/c1/preview",
             json={"cohort": {"id": "c1"}, "preview": {"genes": ["SPP1"]}},
         )
-        assert mock_client.preview_cell_explorer_cohort("c1")["preview"]["genes"] == [
-            "SPP1"
-        ]
+        assert mock_client.preview_cell_explorer_cohort("c1")["preview"]["genes"] == ["SPP1"]
 
 
 class TestLargeResponseRedirect:

@@ -581,7 +581,9 @@ def cell_explorer_build(ctx, name, cell_types, organs, diseases, genes, dataset_
 
 @cell_explorer.command("download")
 @click.argument("cohort_id")
-@click.option("--output", "-o", type=click.Path(), default=None, help="Output directory or archive path")
+@click.option(
+    "--output", "-o", type=click.Path(), default=None, help="Output directory or archive path"
+)
 @click.pass_context
 def cell_explorer_download(ctx, cohort_id, output):
     """Download a cohort Zarr bundle."""
