@@ -41,3 +41,17 @@ def test_config_round_trips_workspace_context(tmp_path):
     assert loaded.workspace == "atlas:human"
     assert loaded.dataset_id == "human"
     assert loaded.provider_id == "p1"
+
+
+def test_get_datasets_lists_search_indexes():
+    client = _client(dataset_id="human")
+
+    with patch.object(
+        client,
+        "_request",
+        return_value=[{"dataset_id": "human", "name": "Human"}],
+    ) as request:
+        datasets = client.get_datasets()
+
+    assert datasets == [{"dataset_id": "human", "name": "Human"}]
+    request.assert_called_once_with("GET", "/datasets")

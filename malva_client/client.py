@@ -2842,6 +2842,19 @@ class MalvaClient:
 
     # ── Dataset Discovery Methods ──
 
+    def get_datasets(self) -> List[Dict[str, Any]]:
+        """
+        List the datasets/indexes this account can search.
+
+        Pass one of the returned ``dataset_id`` values to
+        :meth:`set_workspace` (or the constructor) to scope subsequent
+        searches to that index.
+        """
+        response = self._request("GET", "/datasets")
+        if isinstance(response, list):
+            return response
+        return response.get("datasets", []) if isinstance(response, dict) else []
+
     def get_datasets_hierarchy(self) -> Dict[str, Any]:
         """
         Get the full dataset → study → sample hierarchy.
