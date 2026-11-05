@@ -14,6 +14,9 @@ class Config:
         self.server_url = None
         self.api_token = None
         self.verify_ssl = True
+        self.workspace = None
+        self.dataset_id = None
+        self.provider_id = None
 
     @classmethod
     def load(cls, config_path: Optional[str] = None):
@@ -27,11 +30,17 @@ class Config:
                 config.server_url = data.get("server_url")
                 config.api_token = data.get("api_token")
                 config.verify_ssl = data.get("verify_ssl", True)
+                config.workspace = data.get("workspace")
+                config.dataset_id = data.get("dataset_id")
+                config.provider_id = data.get("provider_id")
             except Exception:
                 pass
 
         config.server_url = os.environ.get("MALVA_API_URL", config.server_url)
-        config.api_token = os.environ.get("MALVA_API_TOKEN", config.api_token)
+        config.api_token = os.environ.get("MALVA_API_TOKEN") or config.api_token
+        config.workspace = os.environ.get("MALVA_WORKSPACE") or config.workspace
+        config.dataset_id = os.environ.get("MALVA_DATASET_ID") or config.dataset_id
+        config.provider_id = os.environ.get("MALVA_PROVIDER_ID") or config.provider_id
         if "MALVA_VERIFY_SSL" in os.environ:
             config.verify_ssl = os.environ.get("MALVA_VERIFY_SSL", "true").lower() == "true"
 
@@ -44,6 +53,9 @@ class Config:
             "server_url": self.server_url,
             "api_token": self.api_token,
             "verify_ssl": self.verify_ssl,
+            "workspace": self.workspace,
+            "dataset_id": self.dataset_id,
+            "provider_id": self.provider_id,
         }
         with open(self.config_path, "w") as f:
             json.dump(data, f, indent=2)
@@ -64,6 +76,9 @@ class Config:
             "token": "api_token",
             "verify_ssl": "verify_ssl",
             "ssl": "verify_ssl",
+            "workspace": "workspace",
+            "dataset_id": "dataset_id",
+            "provider_id": "provider_id",
         }
 
         if key not in valid_keys:
@@ -97,6 +112,9 @@ class Config:
             "token": "api_token",
             "verify_ssl": "verify_ssl",
             "ssl": "verify_ssl",
+            "workspace": "workspace",
+            "dataset_id": "dataset_id",
+            "provider_id": "provider_id",
         }
 
         if key not in valid_keys:
@@ -116,6 +134,9 @@ class Config:
             "server_url": self.server_url,
             "api_token": "***" if self.api_token else None,
             "verify_ssl": self.verify_ssl,
+            "workspace": self.workspace,
+            "dataset_id": self.dataset_id,
+            "provider_id": self.provider_id,
             "config_path": str(self.config_path),
         }
 
@@ -143,6 +164,9 @@ class Config:
         self.server_url = None
         self.api_token = None
         self.verify_ssl = True
+        self.workspace = None
+        self.dataset_id = None
+        self.provider_id = None
 
     def delete_config_file(self) -> bool:
         """

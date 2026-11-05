@@ -27,6 +27,27 @@ Connect
    client = MalvaClient()
    print(client.is_authenticated())
 
+Select a workspace
+------------------
+
+A workspace identifies one project index (dataset). Pass it explicitly or set
+the environment variables once:
+
+.. code-block:: bash
+
+   export MALVA_WORKSPACE="atlas:human"
+   export MALVA_DATASET_ID="human"
+
+.. code-block:: python
+
+   client = MalvaClient(workspace="atlas:human", dataset_id="human")
+   # or later: client.set_workspace(workspace="atlas:human", dataset_id="human")
+
+The client sends these as ``X-Malva-Workspace`` / ``X-Malva-Dataset`` headers
+and includes ``dataset_id`` in searches, so the Explorer resolves the same
+project/index the Console has selected. Per-call ``dataset_id`` arguments still
+win over the configured default.
+
 Run Searches
 ------------
 

@@ -201,6 +201,9 @@ class MalvaClient:
         api_token: str = None,
         timeout: int = 300,
         verify_ssl: bool = True,
+        workspace: str = None,
+        dataset_id: str = None,
+        provider_id: str = None,
     ):
         """
         Initialize the Malva client
@@ -210,12 +213,24 @@ class MalvaClient:
             api_token: API token for authentication
             timeout: Request timeout in seconds
             verify_ssl: Whether to verify SSL certificates
+            workspace: Active ``project:index`` workspace (optional)
+            dataset_id: Dataset/index id used when a method omits one (optional)
+            provider_id: Federation provider selected by the workspace (optional)
         """
         # Load config if no explicit parameters provided
-        if base_url is None or api_token is None:
+        if (
+            base_url is None
+            or api_token is None
+            or workspace is None
+            or dataset_id is None
+            or provider_id is None
+        ):
             config = Config.load()
             base_url = base_url or config.server_url
             api_token = api_token or config.api_token
+            workspace = workspace or config.workspace
+            dataset_id = dataset_id or config.dataset_id
+            provider_id = provider_id or config.provider_id
             if verify_ssl is None:
                 verify_ssl = config.verify_ssl
 
@@ -226,14 +241,44 @@ class MalvaClient:
         self.api_token = api_token
         self.timeout = timeout
         self.verify_ssl = verify_ssl
+        self.workspace = workspace
+        self.dataset_id = dataset_id
+        self.provider_id = provider_id
 
         self.session = requests.Session()
         self.session.verify = verify_ssl
 
         if api_token:
             self.session.headers.update({"Authorization": f"Bearer {api_token}"})
+        self._apply_workspace_headers()
 
         self._test_connection()
+
+    def _apply_workspace_headers(self) -> None:
+        for header, value in (
+            ("X-Malva-Workspace", self.workspace),
+            ("X-Malva-Dataset", self.dataset_id),
+            ("X-Malva-Provider", self.provider_id),
+        ):
+            if value:
+                self.session.headers[header] = str(value)
+            else:
+                self.session.headers.pop(header, None)
+
+    def set_workspace(
+        self,
+        workspace: str = None,
+        dataset_id: str = None,
+        provider_id: str = None,
+    ) -> None:
+        """Select the workspace/dataset used by subsequent requests."""
+        if workspace is not None:
+            self.workspace = workspace or None
+        if dataset_id is not None:
+            self.dataset_id = dataset_id or None
+        if provider_id is not None:
+            self.provider_id = provider_id or None
+        self._apply_workspace_headers()
 
     def _test_connection(self):
         """Test connection and authentication with better error handling"""
@@ -400,6 +445,8 @@ class MalvaClient:
             payload["unstranded_mode"] = False
         elif stranded is False:
             payload["unstranded_mode"] = True
+        if self.dataset_id:
+            payload["dataset_id"] = self.dataset_id
         return payload
 
     def _get_job_status_lightweight(self, job_id: str) -> Dict[str, Any]:
@@ -2288,6 +2335,8 @@ class MalvaClient:
             data["threshold"] = threshold
         if stranded is not None:
             data["stranded"] = stranded
+        if self.dataset_id:
+            data["dataset_id"] = self.dataset_id
 
         response = self._request("POST", "/search", json=data)
         job_id = response["job_id"]
