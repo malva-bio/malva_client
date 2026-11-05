@@ -43,10 +43,15 @@ the environment variables once:
    client = MalvaClient(workspace="atlas:human", dataset_id="human")
    # or later: client.set_workspace(workspace="atlas:human", dataset_id="human")
 
+   # Discover the indexes this account can search:
+   for dataset in client.get_datasets():
+       print(dataset["dataset_id"], dataset["name"])
+
 The client sends these as ``X-Malva-Workspace`` / ``X-Malva-Dataset`` headers
 and includes ``dataset_id`` in searches, so the Explorer resolves the same
 project/index the Console has selected. Per-call ``dataset_id`` arguments still
-win over the configured default.
+win over the configured default. If no dataset is configured, the service keeps
+its existing default (the first configured index).
 
 Run Searches
 ------------
