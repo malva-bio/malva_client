@@ -12,6 +12,7 @@ shape only; exact counts and study names are intentionally not pinned.
 """
 
 import os
+import time
 from dataclasses import dataclass
 from urllib.parse import quote
 
@@ -22,6 +23,9 @@ from malva_client.client import MalvaClient
 pytestmark = [pytest.mark.federation, pytest.mark.federation_live]
 
 DEFAULT_GENE = "FOXP3"
+TERMINAL_SHARD_STATES = {"completed", "failed", "error", "canceled", "interrupted"}
+FEDERATION_POLL_TIMEOUT = float(os.environ.get("MALVA_FEDERATION_POLL_TIMEOUT", "300"))
+FEDERATION_POLL_INTERVAL = float(os.environ.get("MALVA_FEDERATION_POLL_INTERVAL", "2"))
 
 
 @dataclass(frozen=True)
@@ -106,15 +110,29 @@ def _sample_ids_from_counts(payload, limit=3):
     return sample_ids
 
 
+def _live_environment_required():
+    return os.environ.get("MALVA_FEDERATION_REQUIRE_LIVE", "").lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
+
 @pytest.fixture(scope="session")
 def federation_session():
     api_url = os.environ.get("MALVA_FEDERATION_API_URL")
     api_token = os.environ.get("MALVA_FEDERATION_API_TOKEN")
     if not api_url or not api_token:
-        pytest.skip(
+        message = (
             "MALVA_FEDERATION_API_URL and MALVA_FEDERATION_API_TOKEN are required "
             "for live federation tests"
         )
+        if _live_environment_required():
+            # The CI live job sets this so missing configuration is a hard
+            # failure instead of a green run full of skips.
+            pytest.fail(f"{message} (MALVA_FEDERATION_REQUIRE_LIVE is set)")
+        pytest.skip(message)
 
     client = MalvaClient(base_url=api_url, api_token=api_token, timeout=120)
     workspace = client._request("GET", "/api/workspace")
@@ -194,7 +212,9 @@ def test_celltype_sample_counts_are_provider_scoped(federation_session, provider
         for entry in (payload.get("counts") or [])[:50]:
             assert isinstance(entry, (list, tuple))
             assert len(entry) >= 3
-            assert isinstance(entry[0], int) and entry[0] > 0
+            # Sample ids are provider-local numeric ids; 0 is valid (e.g. the
+            # first Singleron chunk), so do not assume one-based ids.
+            assert isinstance(entry[0], int) and entry[0] >= 0
             assert isinstance(entry[1], str) and entry[1]
             assert isinstance(entry[2], int) and entry[2] >= 0
 
@@ -333,6 +353,28 @@ def test_namespaced_sample_keys_do_not_collide(sample_ids_by_provider):
         )
 
 
+def _shards_terminal(state):
+    shards = state.get("shards") or []
+    return bool(shards) and all(shard.get("status") in TERMINAL_SHARD_STATES for shard in shards)
+
+
+def _poll_federated_state(client, job_id, initial, timeout=None, interval=None):
+    """Poll the federated job until every shard is terminal or the timeout hits.
+
+    A single GET after submit races the shard workers: the first poll often
+    still reports ``running`` shards, which used to make this test fail with no
+    rows even though the job would have completed moments later.
+    """
+    timeout = FEDERATION_POLL_TIMEOUT if timeout is None else timeout
+    interval = FEDERATION_POLL_INTERVAL if interval is None else interval
+    state = initial
+    deadline = time.monotonic() + timeout
+    while not _shards_terminal(state) and time.monotonic() < deadline:
+        time.sleep(interval)
+        state = client._request("GET", f"/api/expression/federated/{job_id}")
+    return state
+
+
 def _live_federated_rows(client, gene, provider_ids):
     """Exercise the federated endpoints when search_federated is unavailable."""
     submitted = client._request(
@@ -341,11 +383,13 @@ def _live_federated_rows(client, gene, provider_ids):
         json={"query": gene, "provider_ids": provider_ids},
     )
     job_id = submitted["job_id"]
-    state = submitted
-    terminal = {"completed", "failed", "error", "canceled", "interrupted"}
-    shards = submitted.get("shards") or []
-    if not (shards and all(shard.get("status") in terminal for shard in shards)):
-        state = client._request("GET", f"/api/expression/federated/{job_id}")
+    state = _poll_federated_state(client, job_id, submitted)
+    if not _shards_terminal(state):
+        statuses = [shard.get("status") for shard in state.get("shards") or []]
+        pytest.fail(
+            f"federated job {job_id} did not reach a terminal state within "
+            f"{FEDERATION_POLL_TIMEOUT:.0f}s (shard statuses: {statuses})"
+        )
 
     rows = []
     for shard in state.get("shards") or []:

@@ -43,9 +43,24 @@ jobs:
       MALVA_FEDERATION_API_URL: ${{ vars.MALVA_FEDERATION_API_URL }}
       MALVA_FEDERATION_API_TOKEN: ${{ secrets.MALVA_FEDERATION_API_TOKEN }}
       MALVA_FEDERATION_GENE: ${{ vars.MALVA_FEDERATION_GENE }}
+      # This job explicitly exists to run against a live federation Explorer:
+      # missing configuration must fail it, not skip every test and go green.
+      MALVA_FEDERATION_REQUIRE_LIVE: "1"
     steps:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/setup
+      - name: Require live federation configuration
+        run: |
+          missing=0
+          if [ -z "${MALVA_FEDERATION_API_URL:-}" ]; then
+            echo "::error::MALVA_FEDERATION_API_URL is not configured"
+            missing=1
+          fi
+          if [ -z "${MALVA_FEDERATION_API_TOKEN:-}" ]; then
+            echo "::error::MALVA_FEDERATION_API_TOKEN is not configured"
+            missing=1
+          fi
+          exit "$missing"
       - run: >-
           uv run --no-project python -m pytest tests_federation -q
           -m federation_live --durations=10
