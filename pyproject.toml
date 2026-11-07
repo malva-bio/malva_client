@@ -2,6 +2,11 @@
 requires = ["setuptools>=45", "wheel"]
 build-backend = "setuptools.build_meta"
 
+[tool.setuptools.packages.find]
+# Keep the opt-in federation suite (tests_federation/) out of the wheel; it is
+# a test directory, not an importable package.
+include = ["malva_client*"]
+
 [project]
 name = "malva-client"
 version = "0.4.0"
@@ -105,6 +110,8 @@ directory = "htmlcov"
 testpaths = ["tests"]
 markers = [
     "integration: hits the real Malva platform; requires MALVA_API_TOKEN",
+    "federation: offline tests for the Explorer multi-provider metadata contract",
+    "federation_live: hits a federation-enabled Explorer; requires MALVA_FEDERATION_API_URL and MALVA_FEDERATION_API_TOKEN",
 ]
 
 # --- lint / type tooling ---
