@@ -3,6 +3,7 @@ import logging
 import tarfile
 import tempfile
 import time
+import warnings
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 from urllib.parse import urljoin, urlparse, urlunparse
@@ -27,6 +28,25 @@ from malva_client.models import (
     SearchResult,
     UMAPCoordinates,
 )
+
+# Stable empty-result schema for federated searches. Kept next to the client so
+# an empty (but successful) federation still returns the same columns as a
+# populated result instead of a bare provider-only frame.
+_FEDERATED_RESULT_COLUMNS = [
+    "provider",
+    "provider_id",
+    "sample_idx",
+    "cell_type_idx",
+    "sample_id",
+    "cell_type",
+    "gene_sequence",
+    "rel",
+    "exp",
+    "pct",
+    "raw_kmers",
+    "cell_count",
+    "sample_celltype_id",
+]
 
 
 def _expr_data_from_columnar(expr_col: dict) -> dict:
@@ -201,6 +221,9 @@ class MalvaClient:
         api_token: str = None,
         timeout: int = 300,
         verify_ssl: bool = True,
+        workspace: str = None,
+        dataset_id: str = None,
+        provider_id: str = None,
     ):
         """
         Initialize the Malva client
@@ -210,12 +233,30 @@ class MalvaClient:
             api_token: API token for authentication
             timeout: Request timeout in seconds
             verify_ssl: Whether to verify SSL certificates
+            workspace: Active ``project:index`` workspace (optional)
+            dataset_id: Dataset/index used when a method omits one (optional)
+            provider_id: Default federation provider for provider-scoped calls
+                (optional). Per-call ``provider=`` arguments take precedence.
         """
-        # Load config if no explicit parameters provided
-        if base_url is None or api_token is None:
+        # Load config when any connection or workspace value is missing.
+        if (
+            base_url is None
+            or api_token is None
+            or workspace is None
+            or dataset_id is None
+            or provider_id is None
+        ):
             config = Config.load()
+
+            def _config_str(name: str) -> Optional[str]:
+                value = getattr(config, name, None)
+                return value if isinstance(value, str) and value else None
+
             base_url = base_url or config.server_url
             api_token = api_token or config.api_token
+            workspace = workspace or _config_str("workspace")
+            dataset_id = dataset_id or _config_str("dataset_id")
+            provider_id = provider_id or _config_str("provider_id")
             if verify_ssl is None:
                 verify_ssl = config.verify_ssl
 
@@ -226,6 +267,9 @@ class MalvaClient:
         self.api_token = api_token
         self.timeout = timeout
         self.verify_ssl = verify_ssl
+        self.workspace = workspace or None
+        self.dataset_id = dataset_id or None
+        self.provider_id = provider_id or None
 
         self.session = requests.Session()
         self.session.verify = verify_ssl
@@ -233,7 +277,63 @@ class MalvaClient:
         if api_token:
             self.session.headers.update({"Authorization": f"Bearer {api_token}"})
 
+        self._apply_workspace_headers()
         self._test_connection()
+
+    def _apply_workspace_headers(self) -> None:
+        """Send the active workspace context as Explorer-compatible headers."""
+        for header, value in (
+            ("X-Malva-Workspace", self.workspace),
+            ("X-Malva-Dataset", self.dataset_id),
+            ("X-Malva-Provider", self.provider_id),
+        ):
+            if value:
+                self.session.headers[header] = str(value)
+            else:
+                self.session.headers.pop(header, None)
+
+    def set_workspace(
+        self,
+        workspace: str = None,
+        dataset_id: str = None,
+        provider_id: str = None,
+    ) -> None:
+        """Select the workspace/dataset/provider used by subsequent requests.
+
+        Passing an empty string clears the corresponding value. Per-call
+        ``provider=`` arguments still win over ``provider_id``.
+        """
+        if workspace is not None:
+            self.workspace = workspace or None
+        if dataset_id is not None:
+            self.dataset_id = dataset_id or None
+        if provider_id is not None:
+            self.provider_id = provider_id or None
+        self._apply_workspace_headers()
+
+    def get_workspace(self) -> Dict[str, Any]:
+        """Return the active Explorer workspace, provider and dataset list.
+
+        Used to validate requested federation provider ids before submitting a
+        job, and to discover the dataset ids configured for this account.
+        """
+        return self._request("GET", "/api/workspace")
+
+    def _default_dataset_id(self, dataset_id: str = None) -> Optional[str]:
+        return str(dataset_id) if dataset_id else self.dataset_id
+
+    def _provider_params(self, provider: Optional[str] = None) -> Dict[str, str]:
+        """Return the ``?provider=`` query parameter for a metadata call.
+
+        An explicit ``provider`` argument wins over the client-level
+        ``provider_id``. Passing ``provider=""`` explicitly disables provider
+        scoping for that call.
+        """
+        selected = provider if provider is not None else self.provider_id
+        if selected is None:
+            return {}
+        selected = str(selected).strip()
+        return {"provider": selected} if selected else {}
 
     def _test_connection(self):
         """Test connection and authentication with better error handling"""
@@ -400,6 +500,8 @@ class MalvaClient:
             payload["unstranded_mode"] = False
         elif stranded is False:
             payload["unstranded_mode"] = True
+        if self.dataset_id:
+            payload["dataset_id"] = self.dataset_id
         return payload
 
     def _get_job_status_lightweight(self, job_id: str) -> Dict[str, Any]:
@@ -917,11 +1019,13 @@ class MalvaClient:
             "search_job must be a SearchResult, job_id string, or job response dictionary"
         )
 
-    def _sample_metadata_frame(self, sample_ids: List[int]) -> pd.DataFrame:
+    def _sample_metadata_frame(
+        self, sample_ids: List[int], provider: Optional[str] = None
+    ) -> pd.DataFrame:
         if not sample_ids:
             return pd.DataFrame()
         try:
-            metadata = self.get_sample_metadata(sample_ids)
+            metadata = self.get_sample_metadata(sample_ids, provider=provider)
         except Exception as exc:
             logger.warning(f"Sample metadata lookup failed during cell retrieval: {exc}")
             return pd.DataFrame()
@@ -1472,11 +1576,11 @@ class MalvaClient:
         )
 
         for fetcher in fetchers:
+            is_values_export = (
+                getattr(fetcher, "__name__", "") == "_retrieve_cells_from_values_export_endpoint"
+            )
             try:
-                if (
-                    getattr(fetcher, "__name__", "")
-                    == "_retrieve_cells_from_values_export_endpoint"
-                ):
+                if is_values_export:
                     return fetcher(
                         job_id,
                         feature_list,
@@ -1496,15 +1600,23 @@ class MalvaClient:
             except MalvaAPIError as exc:
                 message = str(exc)
                 errors.append(message)
+                timeout_message = "timed out" in message.lower() or "timeout" in message.lower()
                 recoverable = (
                     self._is_not_found_error(exc)
                     or "No cell IDs returned" in message
                     or "No cells returned" in message
                     or "No cells matched" in message
                     or "No feature names are available" in message
+                    or (is_values_export and timeout_message)
                 )
                 if not recoverable:
                     raise
+                if is_values_export and timeout_message:
+                    logger.warning(
+                        "Cell-expression values export timed out; falling back to "
+                        "the next cell retrieval endpoint: %s",
+                        message,
+                    )
 
         detail = "; ".join(errors[-3:]) if errors else "No retrieval endpoint was available"
         raise MalvaAPIError(f"Could not retrieve cells for search job {job_id}: {detail}")
@@ -1769,6 +1881,7 @@ class MalvaClient:
         page_size: int = 50,
         filters: Dict[str, Any] = None,
         search_query: str = "",
+        provider: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Retrieve samples with optional filtering
@@ -1778,11 +1891,14 @@ class MalvaClient:
             page_size: Number of samples per page
             filters: Dictionary of filters (e.g., {'organ': 'brain', 'species': 'human'})
             search_query: Text search query
+            provider: Federation provider id. Defaults to the client-level
+                provider; an explicit value wins.
 
         Returns:
             Dictionary containing samples and pagination info
         """
         params = {"page": page, "page_size": page_size, "q": search_query}
+        params.update(self._provider_params(provider))
 
         if filters:
             for key, value in filters.items():
@@ -1800,6 +1916,7 @@ class MalvaClient:
         species: List[str] = None,
         study: List[str] = None,
         disease: List[str] = None,
+        provider: Optional[str] = None,
         **kwargs,
     ) -> pd.DataFrame:
         """
@@ -1811,6 +1928,8 @@ class MalvaClient:
             species: List of species to filter by
             study: List of studies to filter by
             disease: List of diseases to filter by
+            provider: Federation provider id. Defaults to the client-level
+                provider; an explicit value wins.
             **kwargs: Additional filters
 
         Returns:
@@ -1835,7 +1954,11 @@ class MalvaClient:
 
         while True:
             response = self.get_samples(
-                page=page, page_size=100, filters=filters, search_query=query
+                page=page,
+                page_size=100,
+                filters=filters,
+                search_query=query,
+                provider=provider,
             )
 
             samples = response.get("samples", [])
@@ -1851,16 +1974,67 @@ class MalvaClient:
 
         return pd.DataFrame(all_samples)
 
-    def get_studies(self) -> pd.DataFrame:
+    def get_studies(self, provider: Optional[str] = None) -> pd.DataFrame:
         """
-        Get all studies with summary information
+        Get all studies with summary information.
+
+        Some public providers return an empty list from
+        ``/samples/api/studies`` even though their dataset hierarchy contains
+        studies. In that case the list is derived from
+        ``/samples/api/datasets/hierarchy`` instead; hierarchy-derived rows also
+        carry a ``dataset_id`` column so they can be passed to
+        :meth:`get_study_samples`.
+
+        Args:
+            provider: Federation provider id. Defaults to the client-level
+                provider; an explicit value wins.
 
         Returns:
             DataFrame containing study information
         """
-        response = self._request("GET", "/samples/api/studies")
+        params = self._provider_params(provider)
+        response = self._request("GET", "/samples/api/studies", params=params or None)
         studies = response.get("studies", [])
+        if studies:
+            return pd.DataFrame(studies)
+
+        hierarchy_rows = self._studies_from_hierarchy(provider=provider)
+        if hierarchy_rows:
+            logger.warning(
+                "Study summary endpoint returned no studies; using the dataset "
+                "hierarchy fallback (%d studies).",
+                len(hierarchy_rows),
+            )
+            return pd.DataFrame(hierarchy_rows)
         return pd.DataFrame(studies)
+
+    def _studies_from_hierarchy(self, provider: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Flatten dataset → study entries from the hierarchy endpoint."""
+        try:
+            hierarchy = self.get_datasets_hierarchy(provider=provider)
+        except MalvaAPIError as exc:
+            logger.warning("Could not derive studies from the dataset hierarchy: %s", exc)
+            return []
+
+        rows: List[Dict[str, Any]] = []
+        seen = set()
+        for dataset in hierarchy.get("datasets") or []:
+            if not isinstance(dataset, dict):
+                continue
+            dataset_id = dataset.get("dataset_id") or dataset.get("id")
+            for study in dataset.get("studies") or []:
+                if not isinstance(study, dict):
+                    continue
+                study_name = study.get("study_name") or study.get("name")
+                key = (str(dataset_id) if dataset_id else None, str(study_name))
+                if key in seen:
+                    continue
+                seen.add(key)
+                row = dict(study)
+                if dataset_id:
+                    row["dataset_id"] = dataset_id
+                rows.append(row)
+        return rows
 
     def _normalise_sample_download_response(
         self, sample_uuid: str, response: Dict[str, Any]
@@ -1902,14 +2076,19 @@ class MalvaClient:
             "expires_in_seconds": expires_in,
         }
 
-    def _request_sample_download(self, sample_uuid: str) -> Dict[str, Any]:
+    def _request_sample_download(
+        self, sample_uuid: str, provider: Optional[str] = None
+    ) -> Dict[str, Any]:
         """Request sample download metadata from either compatibility API shape."""
+        params = self._provider_params(provider) or None
         try:
-            response = self._request("GET", f"/api/samples/{sample_uuid}/download")
+            response = self._request("GET", f"/api/samples/{sample_uuid}/download", params=params)
         except MalvaAPIError as exc:
             if not self._is_not_found_error(exc):
                 raise
-            response = self._request("POST", f"/api/samples/{sample_uuid}/request-download")
+            response = self._request(
+                "POST", f"/api/samples/{sample_uuid}/request-download", params=params
+            )
         return self._normalise_sample_download_response(sample_uuid, response)
 
     def download_sample(
@@ -1918,6 +2097,7 @@ class MalvaClient:
         output_path: Optional[str] = None,
         chunk_size: int = 8192,
         show_progress: bool = True,
+        provider: Optional[str] = None,
     ) -> Union[str, "ad.AnnData"]:
         """
         Download a sample's data file with enhanced error handling
@@ -1927,12 +2107,14 @@ class MalvaClient:
             output_path: Path to save the file. If None, loads into memory as AnnData
             chunk_size: Size of chunks to download (bytes)
             show_progress: Whether to show download progress
+            provider: Federation provider id. Defaults to the client-level
+                provider; an explicit value wins.
 
         Returns:
             File path if saved to disk, or AnnData object if loaded in memory
         """
         try:
-            response = self._request_sample_download(sample_uuid)
+            response = self._request_sample_download(sample_uuid, provider=provider)
             download_url = response["download_url"]
             filename = response.get("filename", f"{sample_uuid}.h5ad")
             file_size = response.get("file_size", 0)
@@ -2026,18 +2208,26 @@ class MalvaClient:
         except Exception as e:
             raise MalvaAPIError(f"Download failed: {e}")
 
-    def check_sample_availability(self, sample_uuid: str) -> Dict[str, Any]:
+    def check_sample_availability(
+        self, sample_uuid: str, provider: Optional[str] = None
+    ) -> Dict[str, Any]:
         """
         Check if a sample is available for download without creating a download token
 
         Args:
             sample_uuid: UUID of the sample to check
+            provider: Federation provider id. Defaults to the client-level
+                provider; an explicit value wins.
 
         Returns:
             Dictionary with availability information
         """
         try:
-            response = self._request("GET", f"/api/samples/{sample_uuid}/download/info")
+            response = self._request(
+                "GET",
+                f"/api/samples/{sample_uuid}/download/info",
+                params=self._provider_params(provider) or None,
+            )
             return response
         except MalvaAPIError as e:
             if "404" in str(e) or "not found" in str(e).lower():
@@ -2048,18 +2238,27 @@ class MalvaClient:
                 }
             raise
 
-    def get_sample_metadata(self, sample_ids: List[int]) -> Dict[int, Dict[str, Any]]:
+    def get_sample_metadata(
+        self, sample_ids: List[int], provider: Optional[str] = None
+    ) -> Dict[int, Dict[str, Any]]:
         """
         Get metadata for specific samples
 
         Args:
             sample_ids: List of sample IDs
+            provider: Federation provider id. Defaults to the client-level
+                provider; an explicit value wins.
 
         Returns:
             Dictionary mapping sample IDs to their metadata
         """
         data = {"ids": sample_ids}
-        response = self._request("POST", "/api/sample-metadata", json=data)
+        response = self._request(
+            "POST",
+            "/api/sample-metadata",
+            json=data,
+            params=self._provider_params(provider) or None,
+        )
 
         # Convert string keys back to integers if needed
         metadata = response.get("metadata", {})
@@ -2085,6 +2284,7 @@ class MalvaClient:
         include_all_database_cells: bool = False,
         poll_interval: int = 2,
         max_wait: int = 900,
+        provider: Optional[str] = None,
     ) -> pd.DataFrame:
         """Fetch all cells matching metadata filters, independent of search jobs.
 
@@ -2105,6 +2305,7 @@ class MalvaClient:
         if not sample_id_list and not cell_type_list and not include_all_database_cells:
             raise ValueError("Provide sample_ids/cell_types or set include_all_database_cells=True")
 
+        provider_params = self._provider_params(provider)
         request_payload = {
             "sample_ids": sample_id_list or [],
             "cell_types": cell_type_list,
@@ -2112,14 +2313,18 @@ class MalvaClient:
             "include_all_database_cells": include_all_database_cells,
         }
         if include_all_database_cells and not sample_id_list and not cell_type_list:
-            queued = self._request("POST", "/exports/all-cells", json=request_payload)
+            queued = self._request(
+                "POST", "/exports/all-cells", json=request_payload, params=provider_params or None
+            )
             export_id = queued.get("export_id")
             if not export_id:
                 raise MalvaAPIError("No export_id received from server")
             start_time = time.time()
             status_payload = queued
             while time.time() - start_time < max_wait:
-                status_payload = self._request("GET", f"/exports/all-cells/{export_id}")
+                status_payload = self._request(
+                    "GET", f"/exports/all-cells/{export_id}", params=provider_params or None
+                )
                 status = status_payload.get("status")
                 if status == "completed":
                     break
@@ -2132,9 +2337,18 @@ class MalvaClient:
                     time.sleep(delay)
             else:
                 raise MalvaAPIError(f"All-cells export timed out after {max_wait} seconds")
-            response = self._request_raw("GET", f"/exports/all-cells/{export_id}/download")
+            response = self._request_raw(
+                "GET",
+                f"/exports/all-cells/{export_id}/download",
+                params=provider_params or None,
+            )
         else:
-            response = self._request_raw("POST", "/api/cells/by-filter", json=request_payload)
+            response = self._request_raw(
+                "POST",
+                "/api/cells/by-filter",
+                json=request_payload,
+                params=provider_params or None,
+            )
         decoded = msgpack.unpackb(response.content, raw=False, strict_map_key=False)
         cells = np.frombuffer(decoded.get("c", b""), dtype=np.int64)
         samples = np.frombuffer(decoded.get("s", b""), dtype=np.int64)
@@ -2235,7 +2449,8 @@ class MalvaClient:
 
         if include_sample_metadata and n:
             meta = self._sample_metadata_frame(
-                df["sample_id"].drop_duplicates().astype(int).tolist()
+                df["sample_id"].drop_duplicates().astype(int).tolist(),
+                provider=provider,
             )
             if not meta.empty:
                 df = df.merge(meta, on="sample_id", how="left")
@@ -2245,9 +2460,290 @@ class MalvaClient:
         """Get database statistics"""
         return self._request("GET", "/api/stats")
 
-    def get_available_filters(self) -> Dict[str, Any]:
-        """Get available filter options for samples"""
-        return self._request("GET", "/samples/api/filters")
+    def get_available_filters(self, provider: Optional[str] = None) -> Dict[str, Any]:
+        """Get available filter options for samples."""
+        return self._request(
+            "GET", "/samples/api/filters", params=self._provider_params(provider) or None
+        )
+
+    @staticmethod
+    def _workspace_provider_ids(workspace: Dict[str, Any]) -> List[str]:
+        """Collect provider ids from the shapes returned by ``/api/workspace``."""
+        ids: List[str] = []
+
+        def _add(value: Any) -> None:
+            if value is None:
+                return
+            text = str(value).strip()
+            if text and text not in ids:
+                ids.append(text)
+
+        if not isinstance(workspace, dict):
+            return ids
+        for value in workspace.get("provider_ids") or []:
+            _add(value)
+        for group in workspace.get("providers") or []:
+            if isinstance(group, dict):
+                _add(group.get("id") or group.get("provider_id"))
+        for row in workspace.get("datasets") or []:
+            if isinstance(row, dict):
+                _add(row.get("provider_id"))
+        return ids
+
+    def _validate_provider_ids(self, provider_ids: List[str]) -> None:
+        """Reject provider ids that the active workspace does not advertise.
+
+        The Explorer otherwise creates a zero-shard federated job that stays
+        ``running`` for an unknown provider, which is indistinguishable from a
+        slow search. Validation is skipped when the workspace endpoint is not
+        available or advertises no providers.
+        """
+        requested = [str(provider_id) for provider_id in provider_ids if str(provider_id)]
+        if not requested:
+            return
+        try:
+            workspace = self.get_workspace()
+        except MalvaAPIError as exc:
+            if not self._is_not_found_error(exc):
+                logger.warning("Could not validate federation providers: %s", exc)
+            return
+
+        known = self._workspace_provider_ids(workspace)
+        if not known:
+            return
+        unknown = [provider_id for provider_id in requested if provider_id not in known]
+        if unknown:
+            raise MalvaAPIError(
+                "Unknown federation provider(s): "
+                + ", ".join(unknown)
+                + ". Available providers: "
+                + ", ".join(known)
+            )
+
+    def search_federated(
+        self,
+        query: str,
+        provider_ids: Optional[List[str]] = None,
+        dataset_id: Optional[str] = None,
+        poll_interval: int = 2,
+        max_wait: int = 300,
+        strict: bool = False,
+    ) -> pd.DataFrame:
+        """Search every configured Explorer provider and keep the origin.
+
+        This calls the Explorer's federated endpoints, not the monorepo
+        ``/search`` endpoint. The returned DataFrame has ``provider`` and
+        ``provider_id`` as its first two columns, followed by the usual
+        expression columns.
+
+        Provenance is always attached to ``df.attrs``:
+
+        - ``job_id``: federated job id
+        - ``status``: final aggregate status reported by the Explorer
+        - ``shards``: final per-provider shard dictionaries
+        - ``providers``: concise per-provider metadata (id, name, status, error)
+        - ``errors``: human-readable per-provider errors
+        - ``shard_errors``: the same errors as structured dictionaries
+
+        Failed shards are never silently dropped: they emit a warning and are
+        listed in ``attrs["errors"]``. Pass ``strict=True`` to raise instead.
+
+        Args:
+            query: Gene symbol, description, or DNA sequence.
+            provider_ids: Optional provider ids to search. Defaults to the
+                caller's configured federation list. Requested ids are validated
+                against ``get_workspace()`` before submitting.
+            dataset_id: Search index for this call. Defaults to the client's
+                configured ``dataset_id``.
+            poll_interval: Seconds between federated status polls.
+            max_wait: Maximum seconds to wait for all shards.
+            strict: Raise :class:`MalvaAPIError` if any shard failed, even when
+                other shards returned rows.
+
+        Returns:
+            A pandas DataFrame with one row per provider, sample and cell type.
+            Empty successful searches still carry the declared schema and
+            provenance.
+
+        Raises:
+            MalvaAPIError: If every shard failed, a requested provider is
+                unknown, any shard failed while ``strict=True``, or the job
+                timed out (including a zero-shard job that never finishes).
+        """
+        requested_ids = [str(provider_id) for provider_id in (provider_ids or [])]
+        if requested_ids:
+            self._validate_provider_ids(requested_ids)
+
+        payload: Dict[str, Any] = {"query": query}
+        dataset = self._default_dataset_id(dataset_id)
+        if dataset:
+            payload["dataset_id"] = dataset
+        if requested_ids:
+            payload["provider_ids"] = requested_ids
+
+        submitted = self._request("POST", "/api/expression/submit", json=payload)
+        job_id = submitted.get("job_id")
+        if not job_id:
+            raise MalvaAPIError("No federated job_id received from Explorer")
+
+        shards = list(submitted.get("shards") or [])
+        job_status = submitted.get("status")
+        job_errors: List[str] = []
+        if submitted.get("error"):
+            job_errors.append(str(submitted["error"]))
+
+        terminal = {"completed", "failed", "error", "canceled", "interrupted"}
+        deadline = time.time() + max_wait
+        while True:
+            if shards and all(shard.get("status") in terminal for shard in shards):
+                break
+            if not shards and job_status in terminal:
+                break
+            if time.time() >= deadline:
+                if not shards:
+                    raise MalvaAPIError(
+                        f"Federated search job {job_id} returned no shards and "
+                        f"never left status {job_status!r} within {max_wait} "
+                        "seconds. The requested provider may be unknown or its "
+                        "search service may be unreachable."
+                    )
+                raise MalvaAPIError(f"Federated search timed out after {max_wait} seconds")
+
+            elapsed = max(0.0, max_wait - (deadline - time.time()))
+            delay = self._adaptive_poll_delay(elapsed, poll_interval)
+            if delay > 0:
+                time.sleep(delay)
+            state = self._request("GET", f"/api/expression/federated/{job_id}")
+            if isinstance(state, dict):
+                if state.get("status"):
+                    job_status = state.get("status")
+                if state.get("shards"):
+                    shards = list(state["shards"])
+                if state.get("error"):
+                    job_errors.append(str(state["error"]))
+                elif job_status in {"failed", "error"} and not shards:
+                    job_errors.append(f"Federated job {job_id} failed with no shards")
+
+        if not shards and job_status in {"failed", "error"} and not job_errors:
+            job_errors.append(f"Federated job {job_id} finished with status {job_status}")
+
+        frames: List[pd.DataFrame] = []
+        errors: List[str] = []
+        shard_errors: List[Dict[str, Any]] = []
+        provider_metadata: List[Dict[str, Any]] = []
+
+        def _record_error(shard: Dict[str, Any], provider_name: str, message: str) -> None:
+            errors.append(f"{provider_name}: {message}")
+            shard_errors.append(
+                {
+                    "provider_id": shard.get("provider_id"),
+                    "provider_name": provider_name,
+                    "status": shard.get("status"),
+                    "error": message,
+                }
+            )
+
+        for shard in shards:
+            if not isinstance(shard, dict):
+                continue
+            provider_id = shard.get("provider_id")
+            provider_name = shard.get("provider_name") or provider_id or "unknown"
+            provider_metadata.append(
+                {
+                    "provider_id": provider_id,
+                    "provider_name": provider_name,
+                    "status": shard.get("status"),
+                    "error": shard.get("error"),
+                    "search_job_id": shard.get("search_job_id"),
+                }
+            )
+            if shard.get("status") != "completed" or not shard.get("search_job_id"):
+                message = shard.get("error") or (
+                    f"shard {shard.get('status') or 'unknown'}"
+                    if shard.get("status") != "completed"
+                    else "completed without a search_job_id"
+                )
+                _record_error(shard, provider_name, str(message))
+                continue
+
+            params = {"provider": provider_id} if provider_id else None
+            try:
+                data = self._request(
+                    "GET",
+                    f"/api/expression/results/{shard['search_job_id']}",
+                    params=params,
+                )
+            except MalvaAPIError as exc:
+                _record_error(shard, provider_name, str(exc))
+                continue
+
+            genes = {}
+            if isinstance(data, dict):
+                genes = data.get("genes") or data.get("results") or {}
+            if not genes:
+                continue
+            result = SearchResult(
+                {
+                    "results": genes,
+                    "job_id": shard["search_job_id"],
+                    "aggregate_expression": True,
+                },
+                self,
+            )
+            frame = result.df.copy()
+            if frame.empty:
+                continue
+            frame.insert(0, "provider_id", provider_id)
+            frame.insert(0, "provider", provider_name)
+            frames.append(frame)
+
+        if job_errors:
+            for message in job_errors:
+                if message not in errors:
+                    errors.append(message)
+                    shard_errors.append(
+                        {
+                            "provider_id": None,
+                            "provider_name": "federated-job",
+                            "status": job_status,
+                            "error": message,
+                        }
+                    )
+
+        if errors:
+            message = "Federated search had failed shard(s): " + "; ".join(errors)
+            logger.warning(message)
+            warnings.warn(message, RuntimeWarning, stacklevel=2)
+
+        if strict and errors:
+            raise MalvaAPIError(
+                message,
+                response_data={"job_id": job_id, "shards": shards, "errors": errors},
+            )
+
+        attrs = {
+            "job_id": job_id,
+            "status": job_status,
+            "shards": shards,
+            "providers": provider_metadata,
+            "provider_metadata": provider_metadata,
+            "errors": errors,
+            "shard_errors": shard_errors,
+        }
+
+        if not frames:
+            if errors:
+                raise MalvaAPIError(
+                    "Federated search failed: " + "; ".join(errors),
+                    response_data=attrs,
+                )
+            empty = pd.DataFrame(columns=_FEDERATED_RESULT_COLUMNS)
+            empty.attrs.update(attrs)
+            return empty
+
+        combined = pd.concat(frames, ignore_index=True)
+        combined.attrs.update(attrs)
+        return combined
 
     def submit_search(
         self,
@@ -2288,6 +2784,8 @@ class MalvaClient:
             data["threshold"] = threshold
         if stranded is not None:
             data["stranded"] = stranded
+        if self.dataset_id:
+            data["dataset_id"] = self.dataset_id
 
         response = self._request("POST", "/search", json=data)
         job_id = response["job_id"]
@@ -2793,34 +3291,98 @@ class MalvaClient:
 
     # ── Dataset Discovery Methods ──
 
-    def get_datasets_hierarchy(self) -> Dict[str, Any]:
+    def get_datasets(self, provider: Optional[str] = None) -> List[Dict[str, Any]]:
+        """
+        List the datasets/indexes this account can search.
+
+        Pass one of the returned ``dataset_id`` values to
+        :meth:`set_workspace` (or the constructor) to scope subsequent
+        searches to that index.
+        """
+        response = self._request("GET", "/datasets", params=self._provider_params(provider) or None)
+        if isinstance(response, list):
+            return response
+        return response.get("datasets", []) if isinstance(response, dict) else []
+
+    def get_datasets_hierarchy(self, provider: Optional[str] = None) -> Dict[str, Any]:
         """
         Get the full dataset → study → sample hierarchy.
+
+        Args:
+            provider: Federation provider id. Defaults to the client-level
+                provider; an explicit value wins.
 
         Returns:
             Dictionary with the full hierarchy tree
         """
-        return self._request("GET", "/samples/api/datasets/hierarchy")
+        return self._request(
+            "GET",
+            "/samples/api/datasets/hierarchy",
+            params=self._provider_params(provider) or None,
+        )
 
     def get_dataset_studies(
-        self, dataset_id: str, page: int = 1, page_size: int = 50
+        self,
+        dataset_id: str,
+        page: int = 1,
+        page_size: int = 50,
+        provider: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Get studies belonging to a dataset.
+
+        If the dataset-studies endpoint returns no studies for the first page,
+        the studies are derived from the dataset hierarchy (the public provider
+        currently needs this fallback).
 
         Args:
             dataset_id: Dataset identifier
             page: Page number (1-based)
             page_size: Number of studies per page
+            provider: Federation provider id. Defaults to the client-level
+                provider; an explicit value wins.
 
         Returns:
             Dictionary with studies and pagination info
         """
         params = {"page": page, "page_size": page_size}
-        return self._request("GET", f"/samples/api/datasets/{dataset_id}/studies", params=params)
+        params.update(self._provider_params(provider))
+        response = self._request(
+            "GET", f"/samples/api/datasets/{dataset_id}/studies", params=params
+        )
+        if response.get("studies") or page != 1:
+            return response
+
+        studies = self._studies_from_hierarchy(provider=provider)
+        studies = [study for study in studies if str(study.get("dataset_id")) == str(dataset_id)]
+        if not studies:
+            return response
+
+        logger.warning(
+            "Dataset studies endpoint returned no studies for %s; using the "
+            "dataset hierarchy fallback (%d studies).",
+            dataset_id,
+            len(studies),
+        )
+        start = (page - 1) * page_size
+        return {
+            "dataset_id": dataset_id,
+            "studies": studies[start : start + page_size],
+            "total_count": len(studies),
+            "page": page,
+            "page_size": page_size,
+            "has_more": start + page_size < len(studies),
+            "query_time_ms": 0,
+            "source": "dataset_hierarchy",
+        }
 
     def get_study_samples(
-        self, dataset_id: str, study_name: str, page: int = 1, page_size: int = 50
+        self,
+        dataset_id: str,
+        study_name: str,
+        page: int = 1,
+        page_size: int = 50,
+        provider: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Get samples belonging to a study within a dataset.
@@ -2830,28 +3392,87 @@ class MalvaClient:
             study_name: Study name
             page: Page number (1-based)
             page_size: Number of samples per page
+            provider: Federation provider id. Defaults to the client-level
+                provider; an explicit value wins.
 
         Returns:
             Dictionary with samples and pagination info
+
+        Raises:
+            MalvaAPIError: If the server returns no samples for a study that the
+                dataset hierarchy says has samples. This currently happens for
+                some public-provider routes and requires a server-side fix; the
+                client never fabricates sample rows.
         """
         params = {"page": page, "page_size": page_size}
-        return self._request(
-            "GET", f"/samples/api/datasets/{dataset_id}/studies/{study_name}/samples", params=params
+        params.update(self._provider_params(provider))
+        response = self._request(
+            "GET",
+            f"/samples/api/datasets/{dataset_id}/studies/{study_name}/samples",
+            params=params,
         )
+        if response.get("samples") or page != 1:
+            return response
 
-    def get_sample_details(self, sample_uuid: str) -> Dict[str, Any]:
+        hierarchy_studies = self._studies_from_hierarchy(provider=provider)
+        hierarchy_study = next(
+            (
+                study
+                for study in hierarchy_studies
+                if str(study.get("dataset_id")) == str(dataset_id)
+                and str(study.get("study_name") or study.get("name")) == str(study_name)
+            ),
+            None,
+        )
+        if hierarchy_study and int(hierarchy_study.get("sample_count") or 0) > 0:
+            provider_id = params.get("provider") or "the active provider"
+            raise MalvaAPIError(
+                f"Server returned no samples for study {study_name!r} in dataset "
+                f"{dataset_id!r} ({provider_id}), although the dataset hierarchy "
+                f"reports {hierarchy_study['sample_count']} sample(s). The "
+                "provider-scoped study-samples route is not returning hierarchy "
+                "studies; this requires a server-side fix."
+            )
+        return response
+
+    def get_sample_details(
+        self, sample_uuid: str, provider: Optional[str] = None
+    ) -> Dict[str, Any]:
         """
         Get full metadata for a single sample.
 
         Args:
             sample_uuid: UUID of the sample
+            provider: Federation provider id. Defaults to the client-level
+                provider; an explicit value wins.
 
         Returns:
             Dictionary with complete sample metadata
-        """
-        return self._request("GET", f"/samples/api/sample/{sample_uuid}")
 
-    def get_filter_values(self, column: str, search: str = "", limit: int = 50) -> List[str]:
+        Raises:
+            MalvaAPIError: With the server's error body when metadata cannot be
+                retrieved (the public provider currently returns HTTP 500 for
+                some samples; that needs a server-side fix).
+        """
+        params = self._provider_params(provider)
+        try:
+            return self._request("GET", f"/samples/api/sample/{sample_uuid}", params=params or None)
+        except MalvaAPIError as exc:
+            if self._is_not_found_error(exc):
+                raise
+            provider_note = f" from provider {params['provider']!r}" if params else ""
+            raise MalvaAPIError(
+                f"Failed to retrieve metadata for sample {sample_uuid!r}{provider_note}: {exc}",
+                getattr(exc, "response_data", None),
+            ) from exc
+
+    def get_filter_values(
+        self,
+        column: str,
+        search: str = "",
+        limit: int = 50,
+        provider: Optional[str] = None,
+    ) -> List[str]:
         """
         Get unique values for a filter column, with optional search.
 
@@ -2859,24 +3480,33 @@ class MalvaClient:
             column: Filter column name (e.g., 'organ', 'species')
             search: Optional text to filter values by
             limit: Maximum number of values to return
+            provider: Federation provider id. Defaults to the client-level
+                provider; an explicit value wins.
 
         Returns:
             List of unique values for the column
         """
         params = {"limit": limit}
+        params.update(self._provider_params(provider))
         if search:
             params["search"] = search
         response = self._request("GET", f"/samples/api/filters/{column}/values", params=params)
         return response.get("values", [])
 
-    def get_overview_stats(self) -> Dict[str, Any]:
+    def get_overview_stats(self, provider: Optional[str] = None) -> Dict[str, Any]:
         """
         Get platform-wide statistics.
+
+        Args:
+            provider: Federation provider id. Defaults to the client-level
+                provider; an explicit value wins.
 
         Returns:
             Dictionary with overview statistics (total samples, studies, etc.)
         """
-        return self._request("GET", "/samples/api/overview")
+        return self._request(
+            "GET", "/samples/api/overview", params=self._provider_params(provider) or None
+        )
 
     # ── Coexpression Analysis Methods ──
 
