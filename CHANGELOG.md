@@ -25,6 +25,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   retrieves cells from a completed shard, optionally selected with `provider=`.
 
 ### Fixed
+- `retrieve_cells()` now forwards an explicitly selected federated shard's
+  provider id as `?provider=` to every search-service retrieval call and skips
+  the local values export, so remote shard jobs resolve on their own service.
 - Federated searches without explicit `provider_ids` now resolve the default
   provider list from `get_workspace()` before submitting, so canonical
   `POST /api/search` is dispatched as a federated job. Failed or empty

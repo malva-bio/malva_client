@@ -840,3 +840,201 @@ def test_retrieve_cells_federated_frame_without_shards_errors(monkeypatch):
 
     with pytest.raises(MalvaAPIError, match="no shard metadata"):
         client.retrieve_cells(pd.DataFrame({"sample_id": [1]}))
+
+
+def _not_found_callback(method, path, expected_query):
+    def callback(request):
+        _assert_request(request, method, path, expected_query)
+        return 404, {"content-type": "application/json"}, json.dumps({"detail": "not found"})
+
+    return callback
+
+
+@responses.activate
+def test_federated_frame_sends_provider_to_every_search_fetcher(monkeypatch):
+    client = _client(monkeypatch, "canonical")
+    frame = _federated_frame(
+        [
+            {
+                "provider_id": "p1",
+                "provider_name": "Provider One",
+                "status": "completed",
+                "search_job_id": "job-a",
+            },
+            {
+                "provider_id": "p2",
+                "provider_name": "Provider Two",
+                "status": "completed",
+                "search_job_id": "job-b",
+            },
+        ]
+    )
+
+    responses.add_callback(
+        responses.GET,
+        f"{BASE}/api/search/job-b",
+        _not_found_callback("GET", "/api/search/job-b", {"max_cells": ["0"], "provider": ["p2"]}),
+    )
+    responses.add_callback(
+        responses.GET,
+        f"{BASE}/api/search/job-b/cell-ids",
+        _not_found_callback("GET", "/api/search/job-b/cell-ids", {"provider": ["p2"]}),
+    )
+    responses.add_callback(
+        responses.GET,
+        f"{BASE}/api/search/job-b/global-cell-ids",
+        _not_found_callback(
+            "GET",
+            "/api/search/job-b/global-cell-ids",
+            {"provider": ["p2"], "sample_ids": ["1"]},
+        ),
+    )
+    responses.add_callback(
+        responses.GET,
+        f"{BASE}/api/search/job-b/cells",
+        _json_callback(
+            "GET",
+            "/api/search/job-b/cells",
+            {"samples": {"1": {"cell_ids": [10]}}},
+            {"provider": ["p2"], "sample_ids": ["1"]},
+        ),
+    )
+
+    cells = client.retrieve_cells(
+        frame,
+        features="GENE",
+        sample_ids=[1],
+        provider="Provider Two",
+        include_sample_metadata=False,
+    )
+
+    assert cells.source == "expression_cells"
+    assert cells.to_dataframe()["value"].tolist() == [1.0]
+    paths = [str(urlparse(call.request.url).path) for call in responses.calls]
+    assert "/api/exports/cell-expression" not in paths
+    assert not any("job-a" in path for path in paths)
+
+
+@responses.activate
+def test_federated_frame_without_provider_sends_no_provider_param(monkeypatch):
+    client = _client(monkeypatch, "canonical")
+    frame = _federated_frame(
+        [
+            {
+                "provider_id": "p1",
+                "provider_name": "Provider One",
+                "status": "failed",
+                "search_job_id": None,
+            },
+            {
+                "provider_id": "p2",
+                "provider_name": "Provider Two",
+                "status": "completed",
+                "search_job_id": "job-b",
+            },
+        ]
+    )
+
+    responses.add(
+        responses.POST,
+        f"{BASE}/api/exports/cell-expression",
+        json={"detail": "not found"},
+        status=404,
+    )
+    responses.add_callback(
+        responses.GET,
+        f"{BASE}/api/search/job-b",
+        _not_found_callback("GET", "/api/search/job-b", {"max_cells": ["0"]}),
+    )
+    responses.add_callback(
+        responses.GET,
+        f"{BASE}/api/search/job-b/cell-ids",
+        _json_callback(
+            "GET",
+            "/api/search/job-b/cell-ids",
+            {"results": {"GENE": {"cell": [10], "sample": [1], "expression": [2.0]}}},
+            {},
+        ),
+    )
+
+    cells = client.retrieve_cells(
+        frame,
+        features="GENE",
+        include_sample_metadata=False,
+    )
+
+    assert cells.source == "search_cell_ids"
+    assert cells.to_dataframe()["value"].tolist() == [2.0]
+    paths = [str(urlparse(call.request.url).path) for call in responses.calls]
+    assert "/api/exports/cell-expression" in paths
+    assert not any("job-a" in path for path in paths)
+
+
+def test_federated_provider_error_names_the_selected_provider(monkeypatch):
+    client = _client(monkeypatch, "canonical")
+    frame = _federated_frame(
+        [
+            {
+                "provider_id": "p1",
+                "provider_name": "Provider One",
+                "status": "failed",
+                "search_job_id": None,
+            }
+        ]
+    )
+
+    with pytest.raises(MalvaAPIError, match=r"Provider One.*no completed search job"):
+        client.retrieve_cells(frame, provider="Provider One")
+
+
+@responses.activate
+def test_federated_cell_metadata_enrichment_sends_provider(monkeypatch):
+    client = _client(monkeypatch, "canonical")
+    frame = _federated_frame(
+        [
+            {
+                "provider_id": "p2",
+                "provider_name": "Provider Two",
+                "status": "completed",
+                "search_job_id": "job-b",
+            }
+        ]
+    )
+
+    responses.add_callback(
+        responses.GET,
+        f"{BASE}/api/search/job-b",
+        _not_found_callback("GET", "/api/search/job-b", {"max_cells": ["0"], "provider": ["p2"]}),
+    )
+    responses.add_callback(
+        responses.GET,
+        f"{BASE}/api/search/job-b/cell-ids",
+        _json_callback(
+            "GET",
+            "/api/search/job-b/cell-ids",
+            {"results": {"GENE": {"cell": [10], "sample": [1], "expression": [2.0]}}},
+            {"provider": ["p2"]},
+        ),
+    )
+    responses.add_callback(
+        responses.POST,
+        f"{BASE}/api/samples/metadata",
+        _json_callback(
+            "POST",
+            "/api/samples/metadata",
+            {"metadata": {"1": {"organ": "brain"}}},
+            {"provider": ["p2"]},
+        ),
+    )
+
+    cells = client.retrieve_cells(
+        frame,
+        features="GENE",
+        sample_ids=[1],
+        provider="p2",
+    )
+
+    assert cells.source == "search_cell_ids"
+    assert cells.sample_metadata.to_dict("records") == [{"sample_id": 1, "organ": "brain"}]
+    paths = [str(urlparse(call.request.url).path) for call in responses.calls]
+    assert "/api/exports/cell-expression" not in paths
