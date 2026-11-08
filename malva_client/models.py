@@ -759,8 +759,9 @@ class SearchResult(MalvaDataFrame):
 
     Data loading is lazy: if raw_data contains no 'results' (e.g. it is the
     initial POST response or a lightweight status response), the DataFrame is
-    populated on first access to .df by fetching
-    /api/expression-data/<job_id>/results from the server.
+    populated on first access to .df by fetching the job results endpoint
+    (canonical ``/api/search/<job_id>/results`` or legacy
+    ``/api/expression-data/<job_id>/results``) from the server.
     """
 
     def __init__(self, raw_data: Dict[str, Any], client: "MalvaClient"):
@@ -788,7 +789,9 @@ class SearchResult(MalvaDataFrame):
 
             logger.info(f"Fetching results for job {self._job_id} ...")
             t0 = _time.time()
-            response = self.client._request("GET", f"/api/expression-data/{self._job_id}/results")
+            response = self.client._request(
+                "GET", self.client._endpoint("search_job_results", job_id=self._job_id)
+            )
             # response may be a dict or a SearchResults wrapper
             if hasattr(response, "_data"):
                 response = response._data
@@ -832,7 +835,7 @@ class SearchResult(MalvaDataFrame):
             if "expression_data" in result:
                 expression_data = result["expression_data"]
                 # Expand columnar format (_fmt: col) to row-major before reading 'data'.
-                # The /api/expression-data/<job_id>/results endpoint returns columnar layout.
+                # The job results endpoint returns a columnar layout.
                 if isinstance(expression_data, dict) and expression_data.get("_fmt") == "col":
                     expression_data = _expr_data_from_columnar(expression_data)
                 data = expression_data.get("data", [])

@@ -15,6 +15,9 @@ def mock_client():
             base_url="https://test.malva.bio",
             api_token="test-token-123",
         )
+    # Existing suites assert the historical paths; endpoint-style detection has
+    # dedicated tests that exercise the auto/canonical modes.
+    client._endpoint_style = "legacy"
     return client
 
 
