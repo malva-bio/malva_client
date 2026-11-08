@@ -25,6 +25,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   retrieves cells from a completed shard, optionally selected with `provider=`.
 
 ### Fixed
+- Federated searches without explicit `provider_ids` now resolve the default
+  provider list from `get_workspace()` before submitting, so canonical
+  `POST /api/search` is dispatched as a federated job. Failed or empty
+  workspace lookups omit the field and log a warning.
 - `retrieve_cells()` now treats cell-expression values-export timeouts as
   recoverable and falls back through the full-search, cell-ID, global-ID and
   Explorer fetchers while preserving the final aggregated error.

@@ -1,5 +1,7 @@
 """Federated Explorer search provenance, partial failures and validation."""
 
+import logging
+
 import pytest
 
 from malva_client.client import _FEDERATED_RESULT_COLUMNS, MalvaClient
@@ -64,6 +66,8 @@ def test_search_federated_preserves_provenance_and_surfaces_failed_shard(monkeyp
     shards = _shards(second_status="error", second_error="403 Forbidden", second_job=None)
 
     def responses(endpoint, kwargs):
+        if endpoint == "/api/workspace":
+            return {"provider_ids": ["malva-public-index", "singleron-aws"]}
         if endpoint == "/api/expression/submit":
             return {"job_id": "fed-1", "status": "failed", "shards": shards}
         if endpoint == "/api/expression/results/pub-1":
@@ -90,6 +94,8 @@ def test_search_federated_strict_raises_for_partial_failure(monkeypatch):
     shards = _shards(second_status="error", second_error="403 Forbidden", second_job=None)
 
     def responses(endpoint, kwargs):
+        if endpoint == "/api/workspace":
+            return {"provider_ids": ["malva-public-index", "singleron-aws"]}
         if endpoint == "/api/expression/submit":
             return {"job_id": "fed-1", "status": "failed", "shards": shards}
         if endpoint == "/api/expression/results/pub-1":
@@ -106,6 +112,8 @@ def test_search_federated_empty_success_keeps_schema_and_provenance(monkeypatch)
     shards = _shards()
 
     def responses(endpoint, kwargs):
+        if endpoint == "/api/workspace":
+            return {"provider_ids": ["malva-public-index", "singleron-aws"]}
         if endpoint == "/api/expression/submit":
             return {"job_id": "fed-empty", "status": "completed", "shards": shards}
         if endpoint in {
@@ -150,6 +158,8 @@ def test_search_federated_rejects_unknown_provider_before_submit(monkeypatch):
 
 def test_search_federated_reports_zero_shard_running_job(monkeypatch):
     def responses(endpoint, kwargs):
+        if endpoint == "/api/workspace":
+            return {"provider_ids": ["malva-public-index", "singleron-aws"]}
         if endpoint == "/api/expression/submit":
             return {"job_id": "fed-zero", "status": "running", "shards": []}
         raise AssertionError(endpoint)
@@ -172,6 +182,8 @@ def test_search_federated_reports_all_failed_shards(monkeypatch):
     ]
 
     def responses(endpoint, kwargs):
+        if endpoint == "/api/workspace":
+            return {"provider_ids": ["singleron-aws"]}
         if endpoint == "/api/expression/submit":
             return {"job_id": "fed-2", "status": "failed", "shards": shards}
         raise AssertionError(endpoint)
@@ -183,3 +195,91 @@ def test_search_federated_reports_all_failed_shards(monkeypatch):
         pytest.raises(MalvaAPIError, match="Singleron: 403 Forbidden"),
     ):
         client.search_federated("FOXP3")
+
+
+def test_default_providers_resolve_from_workspace_canonical(monkeypatch):
+    def responses(endpoint, kwargs):
+        if endpoint == "/api/workspace":
+            return {"provider_ids": ["p1", "p2"]}
+        if endpoint == "/api/search":
+            assert kwargs["json"]["provider_ids"] == ["p1", "p2"]
+            return {"job_id": "fed-default", "status": "completed", "shards": []}
+        raise AssertionError(endpoint)
+
+    client, calls = _client(monkeypatch, responses)
+    client._endpoint_style = "canonical"
+
+    frame = client.search_federated("ACTB")
+
+    assert frame.empty
+    assert [call[1] for call in calls] == ["/api/workspace", "/api/search"]
+
+
+def test_default_providers_resolve_from_workspace_legacy(monkeypatch):
+    def responses(endpoint, kwargs):
+        if endpoint == "/api/workspace":
+            return {"provider_ids": ["p1", "p2"]}
+        if endpoint == "/api/expression/submit":
+            assert kwargs["json"]["provider_ids"] == ["p1", "p2"]
+            return {"job_id": "fed-default", "status": "completed", "shards": []}
+        raise AssertionError(endpoint)
+
+    client, calls = _client(monkeypatch, responses)
+
+    frame = client.search_federated("ACTB")
+
+    assert frame.empty
+    assert [call[1] for call in calls] == ["/api/workspace", "/api/expression/submit"]
+
+
+def test_explicit_providers_win_and_validation_still_runs(monkeypatch):
+    def responses(endpoint, kwargs):
+        if endpoint == "/api/workspace":
+            return {"provider_ids": ["p1", "p2"]}
+        if endpoint == "/api/expression/submit":
+            assert kwargs["json"]["provider_ids"] == ["p2"]
+            return {"job_id": "fed-explicit", "status": "completed", "shards": []}
+        raise AssertionError(endpoint)
+
+    client, calls = _client(monkeypatch, responses)
+
+    frame = client.search_federated("ACTB", provider_ids=["p2"])
+
+    assert frame.empty
+    assert [call[1] for call in calls] == ["/api/workspace", "/api/expression/submit"]
+
+
+def test_workspace_failure_omits_default_provider_ids(monkeypatch, caplog):
+    def responses(endpoint, kwargs):
+        if endpoint == "/api/workspace":
+            raise MalvaAPIError("workspace unavailable")
+        if endpoint == "/api/expression/submit":
+            assert "provider_ids" not in kwargs["json"]
+            return {"job_id": "fed-no-workspace", "status": "completed", "shards": []}
+        raise AssertionError(endpoint)
+
+    client, _ = _client(monkeypatch, responses)
+
+    with caplog.at_level(logging.WARNING):
+        frame = client.search_federated("ACTB")
+
+    assert frame.empty
+    assert "Could not resolve default federation providers" in caplog.text
+
+
+def test_empty_workspace_providers_omit_default_provider_ids(monkeypatch, caplog):
+    def responses(endpoint, kwargs):
+        if endpoint == "/api/workspace":
+            return {"providers": [], "provider_ids": []}
+        if endpoint == "/api/expression/submit":
+            assert "provider_ids" not in kwargs["json"]
+            return {"job_id": "fed-no-providers", "status": "completed", "shards": []}
+        raise AssertionError(endpoint)
+
+    client, _ = _client(monkeypatch, responses)
+
+    with caplog.at_level(logging.WARNING):
+        frame = client.search_federated("ACTB")
+
+    assert frame.empty
+    assert "advertised no federation providers" in caplog.text
