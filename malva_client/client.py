@@ -1151,10 +1151,10 @@ class MalvaClient:
             return [features]
         return [str(f) for f in features]
 
-    def _search_job_from_federated_frame(
+    def _federated_shard_selection(
         self, frame: pd.DataFrame, provider: Optional[str] = None
-    ) -> str:
-        """Pick the search job for one shard of a ``search_federated`` frame.
+    ) -> Tuple[str, Optional[str]]:
+        """Select a completed shard's search job and owning provider id.
 
         The federated frame records each provider's shard under
         ``frame.attrs["shards"]``. ``provider`` may match either the shard's
@@ -1181,7 +1181,11 @@ class MalvaClient:
                     continue
                 matched_provider = True
             if shard.get("status") == "completed" and shard.get("search_job_id"):
-                return str(shard["search_job_id"])
+                shard_provider_id = shard.get("provider_id")
+                return (
+                    str(shard["search_job_id"]),
+                    str(shard_provider_id) if shard_provider_id is not None else None,
+                )
             if requested is not None:
                 raise MalvaAPIError(
                     f"Federated shard {requested!r} has no completed search job "
@@ -1195,6 +1199,12 @@ class MalvaClient:
             "Federated search result has no completed shard with a search_job_id; "
             "cannot retrieve cells"
         )
+
+    def _search_job_from_federated_frame(
+        self, frame: pd.DataFrame, provider: Optional[str] = None
+    ) -> str:
+        """Return only the search job for a federated frame shard."""
+        return self._federated_shard_selection(frame, provider=provider)[0]
 
     def _resolve_search_job(
         self,
@@ -1289,6 +1299,7 @@ class MalvaClient:
         source: str,
         include_barcodes: bool,
         include_sample_metadata: bool,
+        provider_id: Optional[str] = None,
     ) -> CellExpressionMatrixResult:
         if entries.empty:
             cells = pd.DataFrame(columns=["row_index", "sample_id", "cell_id"])
@@ -1311,7 +1322,9 @@ class MalvaClient:
             cells["sample_id"].astype(int).drop_duplicates().tolist() if not cells.empty else []
         )
         sample_metadata = (
-            self._sample_metadata_frame(sample_ids) if include_sample_metadata else pd.DataFrame()
+            self._sample_metadata_frame(sample_ids, provider=provider_id)
+            if include_sample_metadata
+            else pd.DataFrame()
         )
         normalization = pd.DataFrame()
         barcodes = self._cell_barcodes_frame(cells) if include_barcodes else pd.DataFrame()
@@ -1447,10 +1460,12 @@ class MalvaClient:
         sample_ids: Optional[List[int]],
         include_barcodes: bool,
         include_sample_metadata: bool,
+        provider_id: Optional[str] = None,
     ) -> CellExpressionMatrixResult:
-        response = self._request(
-            "GET", self._endpoint("search_job", job_id=job_id), params={"max_cells": 0}
-        )
+        params = {"max_cells": 0}
+        if provider_id is not None:
+            params["provider"] = provider_id
+        response = self._request("GET", self._endpoint("search_job", job_id=job_id), params=params)
         status = response.get("status") if hasattr(response, "get") else None
         if status and status != "completed":
             raise MalvaAPIError(f"Search job {job_id} is {status}")
@@ -1536,6 +1551,7 @@ class MalvaClient:
             source="search_full",
             include_barcodes=include_barcodes,
             include_sample_metadata=include_sample_metadata,
+            provider_id=provider_id,
         )
 
     def _retrieve_cells_from_cell_ids_endpoint(
@@ -1545,8 +1561,14 @@ class MalvaClient:
         sample_ids: Optional[List[int]],
         include_barcodes: bool,
         include_sample_metadata: bool,
+        provider_id: Optional[str] = None,
     ) -> CellExpressionMatrixResult:
-        response = self._request("GET", self._endpoint("search_job_cell_ids", job_id=job_id))
+        params = {"provider": provider_id} if provider_id is not None else {}
+        response = self._request(
+            "GET",
+            self._endpoint("search_job_cell_ids", job_id=job_id),
+            params=params,
+        )
         results = response.get("results", {}) if isinstance(response, dict) else {}
         if not results:
             raise MalvaAPIError("No cell IDs returned for this search job")
@@ -1614,6 +1636,7 @@ class MalvaClient:
             source="search_cell_ids",
             include_barcodes=include_barcodes,
             include_sample_metadata=include_sample_metadata,
+            provider_id=provider_id,
         )
 
     def _retrieve_cells_from_global_ids_endpoint(
@@ -1623,10 +1646,13 @@ class MalvaClient:
         sample_ids: Optional[List[int]],
         include_barcodes: bool,
         include_sample_metadata: bool,
+        provider_id: Optional[str] = None,
     ) -> CellExpressionMatrixResult:
         params = {}
         if sample_ids:
             params["sample_ids"] = ",".join(str(s) for s in sample_ids)
+        if provider_id is not None:
+            params["provider"] = provider_id
         response = self._request_raw(
             "GET",
             self._endpoint("search_job_global_cell_ids", job_id=job_id),
@@ -1674,6 +1700,7 @@ class MalvaClient:
             source="global_cell_ids",
             include_barcodes=include_barcodes,
             include_sample_metadata=include_sample_metadata,
+            provider_id=provider_id,
         )
 
     def _retrieve_cells_from_explorer_endpoint(
@@ -1683,12 +1710,15 @@ class MalvaClient:
         sample_ids: Optional[List[int]],
         include_barcodes: bool,
         include_sample_metadata: bool,
+        provider_id: Optional[str] = None,
     ) -> CellExpressionMatrixResult:
         params = {}
         if sample_ids:
             params["sample_ids"] = ",".join(str(s) for s in sample_ids)
         if include_barcodes:
             params["barcodes"] = "1"
+        if provider_id is not None:
+            params["provider"] = provider_id
 
         response = self._request(
             "GET", self._endpoint("search_job_cells", job_id=job_id), params=params
@@ -1740,6 +1770,7 @@ class MalvaClient:
             source="expression_cells",
             include_barcodes=False,
             include_sample_metadata=include_sample_metadata,
+            provider_id=provider_id,
         )
         if barcode_rows:
             barcode_df = pd.DataFrame(barcode_rows)
@@ -1769,20 +1800,29 @@ class MalvaClient:
         :meth:`search_federated` is also accepted: the client reads
         ``frame.attrs["shards"]`` and retrieves cells from one completed shard.
         Pass ``provider`` (provider id or name) to choose a specific shard;
-        otherwise the first completed shard with a search job is used. This
-        method does not start a new search and does not use the ZIP export
-        workflow. The client first asks the search service for per-feature
-        cell/sample/expression arrays so the ``value`` column contains raw
-        per-cell expression/k-mer counts when available. The fast global cell-ID
-        endpoint is used only as a fallback; it cannot carry per-cell expression
-        values and therefore reports positive-cell indicators.
+        otherwise the first completed shard with a search job is used. When a
+        provider is selected, its id is forwarded as ``?provider=`` to every
+        search-service call used for retrieval, and the local values export is
+        skipped. This method does not start a new search and does not use the
+        ZIP export workflow. The client first asks the search service for
+        per-feature cell/sample/expression arrays so the ``value`` column
+        contains raw per-cell expression/k-mer counts when available. The fast
+        global cell-ID endpoint is used only as a fallback; it cannot carry
+        per-cell expression values and therefore reports positive-cell
+        indicators.
 
         """
         if isinstance(search_job, pd.DataFrame):
-            job_id = self._search_job_from_federated_frame(search_job, provider=provider)
+            job_id, shard_provider_id = self._federated_shard_selection(
+                search_job, provider=provider
+            )
+            # Only an explicit provider selection scopes the search-service
+            # calls; implicit selection keeps the historical local behavior.
+            provider_id = shard_provider_id if provider is not None else None
             result = None
         else:
             job_id, result = self._resolve_search_job(search_job, poll_interval, max_wait)
+            provider_id = str(provider) if provider is not None else None
         feature_list = self._normalise_feature_list(features)
         if feature_list is None and result is not None:
             try:
@@ -1811,6 +1851,11 @@ class MalvaClient:
             is_values_export = (
                 getattr(fetcher, "__name__", "") == "_retrieve_cells_from_values_export_endpoint"
             )
+            if is_values_export and provider_id is not None:
+                # Exports only run against the local service; provider-scoped
+                # retrieval must go through the search-service fallbacks.
+                logger.debug("Skipping local values export for provider %s", provider_id)
+                continue
             try:
                 if is_values_export:
                     return fetcher(
@@ -1828,6 +1873,7 @@ class MalvaClient:
                     sample_id_list,
                     include_barcodes,
                     include_sample_metadata,
+                    provider_id=provider_id,
                 )
             except MalvaAPIError as exc:
                 message = str(exc)
@@ -1851,7 +1897,10 @@ class MalvaClient:
                     )
 
         detail = "; ".join(errors[-3:]) if errors else "No retrieval endpoint was available"
-        raise MalvaAPIError(f"Could not retrieve cells for search job {job_id}: {detail}")
+        scope = f"search job {job_id}"
+        if provider_id is not None:
+            scope += f" for provider {provider_id!r}"
+        raise MalvaAPIError(f"Could not retrieve cells for {scope}: {detail}")
 
     def search_sequences(
         self,
