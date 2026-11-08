@@ -6,6 +6,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+- Workspace/provider context on `MalvaClient` (`workspace`, `dataset_id`,
+  `provider_id`), `set_workspace()`, `get_workspace()` and `get_datasets()`.
+  Config file/env support uses `MALVA_WORKSPACE`, `MALVA_DATASET_ID` and
+  `MALVA_PROVIDER_ID`.
+- `provider=` scoping on sample/metadata methods, sent as the `?provider=`
+  query parameter. Explicit arguments override the client default.
+- `search_federated()` with per-provider provenance in `df.attrs`, visible
+  failed-shard errors, an optional `strict=True`, and a stable empty-result
+  schema.
+- Study discovery falls back to the dataset hierarchy when
+  `/samples/api/studies` or the per-dataset studies endpoint is empty.
+
+### Fixed
+- `retrieve_cells()` now treats cell-expression values-export timeouts as
+  recoverable and falls back through the full-search, cell-ID, global-ID and
+  Explorer fetchers while preserving the final aggregated error.
+- Unknown federation provider ids are rejected before submission instead of
+  producing a zero-shard job that stays `running`.
+- A zero-shard federated job that never leaves `running` now raises a clear
+  error after the poll budget.
+- `get_sample_details()` surfaces the server error body and provider context.
+- `get_study_samples()` raises instead of silently returning an empty list when
+  the hierarchy reports samples that the provider route cannot return.
 
 ## [0.4.0] - 2026-10-26
 ### Added

@@ -13,6 +13,7 @@ Client
    .. automethod:: retrieve_cells
    .. automethod:: search_sequences
    .. automethod:: search_genes
+   .. automethod:: search_federated
 
    .. rubric:: Job Management
 
@@ -51,11 +52,17 @@ Client
 
    .. rubric:: Dataset Discovery
 
+   .. automethod:: get_datasets
    .. automethod:: get_datasets_hierarchy
    .. automethod:: get_dataset_studies
    .. automethod:: get_study_samples
    .. automethod:: get_filter_values
    .. automethod:: get_overview_stats
+
+   .. rubric:: Workspace
+
+   .. automethod:: get_workspace
+   .. automethod:: set_workspace
 
    .. rubric:: Utilities
 

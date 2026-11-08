@@ -27,6 +27,44 @@ Connect
    client = MalvaClient()
    print(client.is_authenticated())
 
+Select a workspace
+------------------
+
+A workspace identifies one project index (dataset). Pass it explicitly or set
+the environment variables once:
+
+.. code-block:: bash
+
+   export MALVA_WORKSPACE="atlas:human"
+   export MALVA_DATASET_ID="human"
+   export MALVA_PROVIDER_ID="malva-public-index"
+
+.. code-block:: python
+
+   client = MalvaClient(workspace="atlas:human", dataset_id="human")
+   # or later:
+   client.set_workspace(workspace="atlas:human", dataset_id="human")
+
+The client sends these as ``X-Malva-Workspace`` / ``X-Malva-Dataset`` /
+``X-Malva-Provider`` headers and includes ``dataset_id`` in searches, so the
+Explorer resolves the same project/index the Console has selected. Per-call
+``dataset_id`` arguments still win over the configured default.
+
+Provider scoping
+----------------
+
+Metadata and sample methods accept a ``provider`` argument:
+
+.. code-block:: python
+
+   samples = client.get_samples(provider="malva-public-index")
+   studies = client.get_studies(provider="malva-public-index")
+   values = client.get_filter_values("organ", provider="malva-public-index")
+
+The value is sent as the ``provider`` query parameter. An explicit argument
+wins over the client-level ``provider_id`` configured in the constructor, via
+``set_workspace(provider_id=...)`` or ``MALVA_PROVIDER_ID``.
+
 Run Searches
 ------------
 
@@ -46,6 +84,39 @@ The default search result is aggregated by sample and cell type. Common columns
 include ``sample_id``, ``cell_type``, ``gene_sequence``, ``rel``, ``exp``,
 ``pct``, ``raw_kmers``, and ``cell_count``. These expression columns match
 the Expression Explorer display modes.
+
+Federated search
+^^^^^^^^^^^^^^^^
+
+When the Explorer has several providers configured, ``search_federated``
+submits the query to every shard and returns one table with the provider
+origin as the first columns:
+
+.. code-block:: python
+
+   df = client.search_federated("FOXP3", dataset_id="main")
+   print(df[["provider", "provider_id", "sample_id", "cell_type", "rel"]])
+
+``provider`` is the human-readable provider name; ``provider_id`` is the
+stable id used to address that shard. Pass ``provider_ids=[...]`` to restrict
+the search; requested ids are validated against ``get_workspace()`` before the
+job is submitted.
+
+Every result, including an empty successful search, exposes provenance in
+``df.attrs``: ``job_id``, ``status``, ``shards``, ``providers``, ``errors``
+and ``shard_errors``. Failed shards emit a warning and are listed in
+``attrs["errors"]`` instead of being silently dropped. Pass ``strict=True`` to
+raise ``MalvaAPIError`` when any shard fails.
+
+Study discovery
+^^^^^^^^^^^^^^^
+
+``get_studies`` and ``get_dataset_studies`` fall back to the dataset hierarchy
+when a provider's study endpoint returns no rows. In that case ``get_studies``
+adds a ``dataset_id`` column so the study can be passed directly to
+``get_study_samples(dataset_id, study_name)``. If a hierarchy-derived study
+cannot be read through the provider's sample route, the client raises a clear
+``MalvaAPIError`` rather than returning a misleading empty list.
 
 Sequence search
 ^^^^^^^^^^^^^^^
