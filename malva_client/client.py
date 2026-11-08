@@ -2789,9 +2789,12 @@ class MalvaClient:
 
         Args:
             query: Gene symbol, description, or DNA sequence.
-            provider_ids: Optional provider ids to search. Defaults to the
-                caller's configured federation list. Requested ids are validated
-                against ``get_workspace()`` before submitting.
+            provider_ids: Optional provider ids to search. When omitted, the
+                default list is resolved from the provider ids advertised by
+                ``get_workspace()``. If that lookup fails or the workspace
+                advertises no providers, the field is omitted. Explicit ids
+                always take precedence and are validated against
+                ``get_workspace()`` before submitting.
             dataset_id: Search index for this call. Defaults to the client's
                 configured ``dataset_id``.
             poll_interval: Seconds between federated status polls.
@@ -2812,6 +2815,24 @@ class MalvaClient:
         requested_ids = [str(provider_id) for provider_id in (provider_ids or [])]
         if requested_ids:
             self._validate_provider_ids(requested_ids)
+        else:
+            # The Explorer decides whether a POST /api/search is federated by
+            # the presence of provider_ids. Resolve the workspace defaults so
+            # an implicit federated search does not become a normal search.
+            try:
+                workspace = self.get_workspace()
+            except MalvaAPIError as exc:
+                logger.warning(
+                    "Could not resolve default federation providers; omitting provider_ids: %s",
+                    exc,
+                )
+            else:
+                requested_ids = self._workspace_provider_ids(workspace)
+                if not requested_ids:
+                    logger.warning(
+                        "Workspace advertised no federation providers; "
+                        "omitting provider_ids from the federated search"
+                    )
 
         payload: Dict[str, Any] = {"query": query}
         dataset = self._default_dataset_id(dataset_id)
