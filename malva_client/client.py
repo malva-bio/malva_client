@@ -2082,9 +2082,7 @@ class MalvaClient:
         """Request sample download metadata from either compatibility API shape."""
         params = self._provider_params(provider) or None
         try:
-            response = self._request(
-                "GET", f"/api/samples/{sample_uuid}/download", params=params
-            )
+            response = self._request("GET", f"/api/samples/{sample_uuid}/download", params=params)
         except MalvaAPIError as exc:
             if not self._is_not_found_error(exc):
                 raise
@@ -3301,9 +3299,7 @@ class MalvaClient:
         :meth:`set_workspace` (or the constructor) to scope subsequent
         searches to that index.
         """
-        response = self._request(
-            "GET", "/datasets", params=self._provider_params(provider) or None
-        )
+        response = self._request("GET", "/datasets", params=self._provider_params(provider) or None)
         if isinstance(response, list):
             return response
         return response.get("datasets", []) if isinstance(response, dict) else []
@@ -3358,11 +3354,7 @@ class MalvaClient:
             return response
 
         studies = self._studies_from_hierarchy(provider=provider)
-        studies = [
-            study
-            for study in studies
-            if str(study.get("dataset_id")) == str(dataset_id)
-        ]
+        studies = [study for study in studies if str(study.get("dataset_id")) == str(dataset_id)]
         if not studies:
             return response
 
@@ -3464,16 +3456,13 @@ class MalvaClient:
         """
         params = self._provider_params(provider)
         try:
-            return self._request(
-                "GET", f"/samples/api/sample/{sample_uuid}", params=params or None
-            )
+            return self._request("GET", f"/samples/api/sample/{sample_uuid}", params=params or None)
         except MalvaAPIError as exc:
             if self._is_not_found_error(exc):
                 raise
             provider_note = f" from provider {params['provider']!r}" if params else ""
             raise MalvaAPIError(
-                f"Failed to retrieve metadata for sample {sample_uuid!r}"
-                f"{provider_note}: {exc}",
+                f"Failed to retrieve metadata for sample {sample_uuid!r}{provider_note}: {exc}",
                 getattr(exc, "response_data", None),
             ) from exc
 

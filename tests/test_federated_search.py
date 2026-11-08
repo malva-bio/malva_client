@@ -177,5 +177,8 @@ def test_search_federated_reports_all_failed_shards(monkeypatch):
 
     client, _ = _client(monkeypatch, responses)
 
-    with pytest.warns(RuntimeWarning), pytest.raises(MalvaAPIError, match="Singleron: 403 Forbidden"):
+    with (
+        pytest.warns(RuntimeWarning),
+        pytest.raises(MalvaAPIError, match="Singleron: 403 Forbidden"),
+    ):
         client.search_federated("FOXP3")
