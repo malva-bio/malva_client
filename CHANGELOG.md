@@ -18,6 +18,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   schema.
 - Study discovery falls back to the dataset hierarchy when
   `/samples/api/studies` or the per-dataset studies endpoint is empty.
+- Canonical Explorer endpoints are preferred, with automatic one-time fallback
+  to the historical paths. `MALVA_ENDPOINT_STYLE=auto|canonical|legacy` and
+  `client.endpoint_style` expose the resolved style.
+- `retrieve_cells()` accepts the DataFrame returned by `search_federated()` and
+  retrieves cells from a completed shard, optionally selected with `provider=`.
 
 ### Fixed
 - `retrieve_cells()` now treats cell-expression values-export timeouts as

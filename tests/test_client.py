@@ -95,6 +95,9 @@ def _mock_cell_expression_values_export(
 class TestConstructor:
     @responses.activate
     def test_init_with_explicit_params(self):
+        responses.add(
+            responses.GET, f"{BASE}/api/account/quota", json={"detail": "not found"}, status=404
+        )
         responses.add(responses.GET, f"{BASE}/health", json={"status": "ok"})
         responses.add(responses.GET, f"{BASE}/api/quota-status", json={"account_type": "test"})
 
@@ -127,6 +130,9 @@ class TestConstructor:
 
     @responses.activate
     def test_init_connection_failure(self):
+        responses.add(
+            responses.GET, f"{BASE}/api/account/quota", json={"detail": "not found"}, status=404
+        )
         responses.add(responses.GET, f"{BASE}/health", json={"error": "down"}, status=500)
 
         with pytest.raises(MalvaAPIError):

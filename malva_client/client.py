@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 import tarfile
 import tempfile
 import time
@@ -47,6 +48,90 @@ _FEDERATED_RESULT_COLUMNS = [
     "cell_count",
     "sample_celltype_id",
 ]
+
+# One logical operation can have a canonical and a legacy HTTP path. Keeping
+# both variants side by side lets every call site use one readable operation
+# name instead of branching on the endpoint style itself.
+_ENDPOINT_PATHS = {
+    "health": ("/api/health", "/health"),
+    "quota": ("/api/account/quota", "/api/quota-status"),
+    "datasets": ("/api/datasets", "/datasets"),
+    "samples": ("/api/samples", "/samples/api/search"),
+    "sample_details": ("/api/samples/{sample_uuid}", "/samples/api/sample/{sample_uuid}"),
+    "sample_metadata": ("/api/samples/metadata", "/api/sample-metadata"),
+    "studies": ("/api/metadata/studies", "/samples/api/studies"),
+    "overview": ("/api/metadata/overview", "/samples/api/overview"),
+    "available_filters": ("/api/metadata/available-filters", "/samples/api/filters"),
+    "filter_values": (
+        "/api/metadata/filters/{column}/values",
+        "/samples/api/filters/{column}/values",
+    ),
+    "datasets_hierarchy": (
+        "/api/metadata/datasets/hierarchy",
+        "/samples/api/datasets/hierarchy",
+    ),
+    "dataset_studies": (
+        "/api/metadata/datasets/{dataset_id}/studies",
+        "/samples/api/datasets/{dataset_id}/studies",
+    ),
+    "study_samples": (
+        "/api/metadata/datasets/{dataset_id}/studies/{study_name}/samples",
+        "/samples/api/datasets/{dataset_id}/studies/{study_name}/samples",
+    ),
+    "search": ("/api/search", "/search"),
+    "search_job": ("/api/search/{job_id}", "/search/{job_id}"),
+    "search_job_status": ("/api/search/{job_id}/status", "/search/{job_id}/status"),
+    "search_job_results": (
+        "/api/search/{job_id}/results",
+        "/api/expression-data/{job_id}/results",
+    ),
+    "search_job_cells": (
+        "/api/search/{job_id}/cells",
+        "/api/expression/results/{job_id}/cells",
+    ),
+    "search_job_cell_ids": (
+        "/api/search/{job_id}/cell-ids",
+        "/search/{job_id}/cell-ids",
+    ),
+    "search_job_global_cell_ids": (
+        "/api/search/{job_id}/global-cell-ids",
+        "/search/{job_id}/global-cell-ids",
+    ),
+    "search_federated": ("/api/search", "/api/expression/submit"),
+    "search_federated_job": (
+        "/api/search/federated/{job_id}",
+        "/api/expression/federated/{job_id}",
+    ),
+    "search_shard_results": (
+        "/api/search/{job_id}/results",
+        "/api/expression/results/{job_id}",
+    ),
+    "cells_by_metadata": ("/api/cells/by-metadata", "/api/cells/by-filter"),
+    "cell_expression_export": (
+        "/api/exports/cell-expression",
+        "/exports/cell-expression",
+    ),
+    "cell_expression_export_job": (
+        "/api/exports/cell-expression/{export_id}",
+        "/exports/cell-expression/{export_id}",
+    ),
+    "cell_expression_export_download": (
+        "/api/exports/cell-expression/{export_id}/download",
+        "/exports/cell-expression/{export_id}/download",
+    ),
+    "all_cells_export": ("/api/exports/all-cells", "/exports/all-cells"),
+    "all_cells_export_job": (
+        "/api/exports/all-cells/{export_id}",
+        "/exports/all-cells/{export_id}",
+    ),
+    "all_cells_export_download": (
+        "/api/exports/all-cells/{export_id}/download",
+        "/exports/all-cells/{export_id}/download",
+    ),
+    "download_token": ("/api/downloads/{token}", "/api/download/{token}"),
+}
+
+_ENDPOINT_STYLES = {"auto", "canonical", "legacy"}
 
 
 def _expr_data_from_columnar(expr_col: dict) -> dict:
@@ -213,6 +298,17 @@ class MalvaClient:
     Main client for interacting with the Malva API
 
     Provides methods for searching, retrieving samples, and downloading data files.
+
+    The client prefers canonical API paths and automatically falls back to the
+    historical paths when the server does not expose them. Detection is a
+    one-time authenticated probe of ``GET /api/account/quota`` whose result is
+    cached per client; a 200 selects canonical mode and a 404 selects legacy
+    mode. A 401 raises :class:`AuthenticationError`.
+
+    Set ``MALVA_ENDPOINT_STYLE`` to ``canonical``, ``legacy`` or ``auto`` (the
+    default) to override detection. The resolved style is exposed through the
+    read-only :attr:`endpoint_style` property, and
+    :meth:`reset_endpoint_style` clears a cached ``auto`` result.
     """
 
     def __init__(
@@ -271,6 +367,10 @@ class MalvaClient:
         self.dataset_id = dataset_id or None
         self.provider_id = provider_id or None
 
+        # ``None`` means auto-detection is still pending. An explicit
+        # ``MALVA_ENDPOINT_STYLE`` value skips the network probe entirely.
+        self._endpoint_style = self._configured_endpoint_style()
+
         self.session = requests.Session()
         self.session.verify = verify_ssl
 
@@ -279,6 +379,69 @@ class MalvaClient:
 
         self._apply_workspace_headers()
         self._test_connection()
+
+    @staticmethod
+    def _configured_endpoint_style() -> Optional[str]:
+        """Return the explicit endpoint style from the environment, if any.
+
+        ``auto`` (the default) returns ``None`` so the first request performs
+        the capability probe and caches the result.
+        """
+        override = os.environ.get("MALVA_ENDPOINT_STYLE", "auto").strip().lower()
+        override = override or "auto"
+        if override not in _ENDPOINT_STYLES:
+            raise ValueError(
+                "MALVA_ENDPOINT_STYLE must be one of 'auto', 'canonical' or 'legacy' "
+                f"(got {override!r})"
+            )
+        return None if override == "auto" else override
+
+    def _detect_endpoint_style(self) -> str:
+        """Resolve and cache whether the server exposes canonical endpoints."""
+        if self._endpoint_style in {"canonical", "legacy"}:
+            return self._endpoint_style
+
+        explicit = self._configured_endpoint_style()
+        if explicit is not None:
+            self._endpoint_style = explicit
+            return explicit
+
+        try:
+            # Authenticated capability probe. A canonical server answers 200;
+            # a legacy-only server answers 404. Authentication failures must
+            # surface exactly like any other request.
+            self._request("GET", _ENDPOINT_PATHS["quota"][0])
+        except AuthenticationError:
+            raise
+        except MalvaAPIError as exc:
+            if self._is_not_found_error(exc):
+                self._endpoint_style = "legacy"
+                return "legacy"
+            raise
+        self._endpoint_style = "canonical"
+        return "canonical"
+
+    def reset_endpoint_style(self) -> None:
+        """Forget the cached style so the next request probes again.
+
+        An explicit ``MALVA_ENDPOINT_STYLE=canonical|legacy`` override is kept;
+        only an ``auto`` result is discarded.
+        """
+        self._endpoint_style = self._configured_endpoint_style()
+
+    @property
+    def endpoint_style(self) -> str:
+        """Resolved endpoint style: ``"canonical"`` or ``"legacy"``."""
+        return self._detect_endpoint_style()
+
+    def _endpoint(self, operation: str, **values: Any) -> str:
+        """Build the canonical or legacy path for one logical operation."""
+        try:
+            canonical, legacy = _ENDPOINT_PATHS[operation]
+        except KeyError as exc:
+            raise ValueError(f"Unknown endpoint operation: {operation}") from exc
+        template = canonical if self._detect_endpoint_style() == "canonical" else legacy
+        return template.format(**values)
 
     def _apply_workspace_headers(self) -> None:
         """Send the active workspace context as Explorer-compatible headers."""
@@ -338,13 +501,16 @@ class MalvaClient:
     def _test_connection(self):
         """Test connection and authentication with better error handling"""
         try:
-            response = self._request("GET", "/health")
+            endpoint_style = self._detect_endpoint_style()
+            logger.debug(f"Using {endpoint_style} endpoint style")
+
+            response = self._request("GET", self._endpoint("health"))
             logger.info(f"Connected to Malva API: {response.get('status', 'unknown')}")
 
             # Test authentication if token provided
             if self.api_token:
                 try:
-                    quota_response = self._request("GET", "/api/quota-status")
+                    quota_response = self._request("GET", self._endpoint("quota"))
                     logger.info(
                         f"Authenticated successfully: {quota_response.get('account_type', 'unknown')} account"
                     )
@@ -368,7 +534,7 @@ class MalvaClient:
         """Get current quota status"""
         if not self.api_token:
             raise AuthenticationError("API token required to check quota status")
-        return self._request("GET", "/api/quota-status")
+        return self._request("GET", self._endpoint("quota"))
 
     def is_authenticated(self) -> bool:
         """Check if the client is properly authenticated"""
@@ -507,10 +673,10 @@ class MalvaClient:
     def _get_job_status_lightweight(self, job_id: str) -> Dict[str, Any]:
         """Fetch job status without forcing the server to return result data."""
         try:
-            return self._request("GET", f"/search/{job_id}/status")
+            return self._request("GET", self._endpoint("search_job_status", job_id=job_id))
         except MalvaAPIError as exc:
             if self._is_not_found_error(exc):
-                return self._request("GET", f"/search/{job_id}")
+                return self._request("GET", self._endpoint("search_job", job_id=job_id))
             raise
 
     @staticmethod
@@ -618,7 +784,7 @@ class MalvaClient:
             min_kmer_presence,
             max_kmer_presence,
         )
-        response = self._request("POST", "/search", json=payload)
+        response = self._request("POST", self._endpoint("search"), json=payload)
 
         job_id = response.get("job_id")
         if not job_id:
@@ -985,6 +1151,51 @@ class MalvaClient:
             return [features]
         return [str(f) for f in features]
 
+    def _search_job_from_federated_frame(
+        self, frame: pd.DataFrame, provider: Optional[str] = None
+    ) -> str:
+        """Pick the search job for one shard of a ``search_federated`` frame.
+
+        The federated frame records each provider's shard under
+        ``frame.attrs["shards"]``. ``provider`` may match either the shard's
+        ``provider_id`` or its human-readable ``provider_name``.
+        """
+        shards = frame.attrs.get("shards")
+        if not shards:
+            raise MalvaAPIError(
+                "Federated search result has no shard metadata "
+                "(df.attrs['shards'] is missing or empty)"
+            )
+
+        requested = str(provider) if provider is not None else None
+        matched_provider = False
+        for shard in shards:
+            if not isinstance(shard, dict):
+                continue
+            if requested is not None:
+                identifiers = {
+                    str(shard.get("provider_id")),
+                    str(shard.get("provider_name")),
+                }
+                if requested not in identifiers:
+                    continue
+                matched_provider = True
+            if shard.get("status") == "completed" and shard.get("search_job_id"):
+                return str(shard["search_job_id"])
+            if requested is not None:
+                raise MalvaAPIError(
+                    f"Federated shard {requested!r} has no completed search job "
+                    f"(status={shard.get('status')!r}, "
+                    f"search_job_id={shard.get('search_job_id')!r})"
+                )
+
+        if requested is not None and not matched_provider:
+            raise MalvaAPIError(f"No federated shard matches provider {requested!r}")
+        raise MalvaAPIError(
+            "Federated search result has no completed shard with a search_job_id; "
+            "cannot retrieve cells"
+        )
+
     def _resolve_search_job(
         self,
         search_job: Union[str, SearchResult, Dict[str, Any]],
@@ -1145,7 +1356,7 @@ class MalvaClient:
         ]
         queued = self._request(
             "POST",
-            "/exports/cell-expression",
+            self._endpoint("cell_expression_export"),
             json={
                 "items": items,
                 "sample_ids": sample_ids or [],
@@ -1159,7 +1370,9 @@ class MalvaClient:
 
         started = time.time()
         while time.time() - started < max_wait:
-            status_payload = self._request("GET", f"/exports/cell-expression/{export_id}")
+            status_payload = self._request(
+                "GET", self._endpoint("cell_expression_export_job", export_id=export_id)
+            )
             status = status_payload.get("status")
             if status == "completed":
                 break
@@ -1173,7 +1386,9 @@ class MalvaClient:
         else:
             raise MalvaAPIError(f"Cell-expression values export timed out after {max_wait} seconds")
 
-        response = self._request_raw("GET", f"/exports/cell-expression/{export_id}/download")
+        response = self._request_raw(
+            "GET", self._endpoint("cell_expression_export_download", export_id=export_id)
+        )
         decoded = msgpack.unpackb(response.content, raw=False, strict_map_key=False)
         if decoded.get("format") != "cell_expression_values_v1":
             raise MalvaAPIError("Unexpected cell-expression values payload format")
@@ -1233,7 +1448,9 @@ class MalvaClient:
         include_barcodes: bool,
         include_sample_metadata: bool,
     ) -> CellExpressionMatrixResult:
-        response = self._request("GET", f"/search/{job_id}", params={"max_cells": 0})
+        response = self._request(
+            "GET", self._endpoint("search_job", job_id=job_id), params={"max_cells": 0}
+        )
         status = response.get("status") if hasattr(response, "get") else None
         if status and status != "completed":
             raise MalvaAPIError(f"Search job {job_id} is {status}")
@@ -1329,7 +1546,7 @@ class MalvaClient:
         include_barcodes: bool,
         include_sample_metadata: bool,
     ) -> CellExpressionMatrixResult:
-        response = self._request("GET", f"/search/{job_id}/cell-ids")
+        response = self._request("GET", self._endpoint("search_job_cell_ids", job_id=job_id))
         results = response.get("results", {}) if isinstance(response, dict) else {}
         if not results:
             raise MalvaAPIError("No cell IDs returned for this search job")
@@ -1410,7 +1627,11 @@ class MalvaClient:
         params = {}
         if sample_ids:
             params["sample_ids"] = ",".join(str(s) for s in sample_ids)
-        response = self._request_raw("GET", f"/search/{job_id}/global-cell-ids", params=params)
+        response = self._request_raw(
+            "GET",
+            self._endpoint("search_job_global_cell_ids", job_id=job_id),
+            params=params,
+        )
         decoded = msgpack.unpackb(response.content, raw=False, strict_map_key=False)
         cells = np.frombuffer(decoded.get("c", b""), dtype=np.int64)
         samples = np.frombuffer(decoded.get("s", b""), dtype=np.int64)
@@ -1469,7 +1690,9 @@ class MalvaClient:
         if include_barcodes:
             params["barcodes"] = "1"
 
-        response = self._request("GET", f"/api/expression/results/{job_id}/cells", params=params)
+        response = self._request(
+            "GET", self._endpoint("search_job_cells", job_id=job_id), params=params
+        )
         samples_payload = response.get("samples", {}) if isinstance(response, dict) else {}
         entries = []
         barcode_rows = []
@@ -1529,28 +1752,37 @@ class MalvaClient:
 
     def retrieve_cells(
         self,
-        search_job: Union[str, SearchResult, Dict[str, Any]],
+        search_job: Union[str, SearchResult, Dict[str, Any], pd.DataFrame],
         features: Optional[Union[str, List[str]]] = None,
         sample_ids: Optional[Union[int, str, List[Union[int, str]]]] = None,
         include_barcodes: bool = False,
         include_sample_metadata: bool = True,
         poll_interval: int = 2,
         max_wait: int = 300,
+        provider: Optional[str] = None,
     ) -> CellExpressionMatrixResult:
         """
         Retrieve positive cells for an existing search job.
 
         Run :meth:`search` or :meth:`search_sequences` first, then pass the
-        returned SearchResult or its job_id here. This method does not start a
-        new search and does not use the ZIP export workflow. The client first
-        asks the search service for per-feature cell/sample/expression arrays so
-        the ``value`` column contains raw per-cell expression/k-mer counts when
-        available. The fast global cell-ID endpoint is used only as a fallback;
-        it cannot carry per-cell expression values and therefore reports
-        positive-cell indicators.
+        returned SearchResult or its job_id here. A DataFrame returned by
+        :meth:`search_federated` is also accepted: the client reads
+        ``frame.attrs["shards"]`` and retrieves cells from one completed shard.
+        Pass ``provider`` (provider id or name) to choose a specific shard;
+        otherwise the first completed shard with a search job is used. This
+        method does not start a new search and does not use the ZIP export
+        workflow. The client first asks the search service for per-feature
+        cell/sample/expression arrays so the ``value`` column contains raw
+        per-cell expression/k-mer counts when available. The fast global cell-ID
+        endpoint is used only as a fallback; it cannot carry per-cell expression
+        values and therefore reports positive-cell indicators.
 
         """
-        job_id, result = self._resolve_search_job(search_job, poll_interval, max_wait)
+        if isinstance(search_job, pd.DataFrame):
+            job_id = self._search_job_from_federated_frame(search_job, provider=provider)
+            result = None
+        else:
+            job_id, result = self._resolve_search_job(search_job, poll_interval, max_wait)
         feature_list = self._normalise_feature_list(features)
         if feature_list is None and result is not None:
             try:
@@ -1751,7 +1983,7 @@ class MalvaClient:
             f"Submitting batch search: {len(sequences)} sequences, {total_nt:,} total nucleotides"
         )
 
-        response = self._request("POST", "/search", json=payload)
+        response = self._request("POST", self._endpoint("search"), json=payload)
 
         job_id = response.get("job_id")
         if not job_id:
@@ -1839,7 +2071,7 @@ class MalvaClient:
             min_kmer_presence,
             max_kmer_presence,
         )
-        response = self._request("POST", "/search", json=payload)
+        response = self._request("POST", self._endpoint("search"), json=payload)
 
         job_id = response.get("job_id")
         if not job_id:
@@ -1907,7 +2139,7 @@ class MalvaClient:
                 else:
                     params[key] = [value] if value else []
 
-        return self._request("GET", "/samples/api/search", params=params)
+        return self._request("GET", self._endpoint("samples"), params=params)
 
     def search_samples(
         self,
@@ -1993,7 +2225,7 @@ class MalvaClient:
             DataFrame containing study information
         """
         params = self._provider_params(provider)
-        response = self._request("GET", "/samples/api/studies", params=params or None)
+        response = self._request("GET", self._endpoint("studies"), params=params or None)
         studies = response.get("studies", [])
         if studies:
             return pd.DataFrame(studies)
@@ -2043,12 +2275,12 @@ class MalvaClient:
         download_url = response.get("download_url")
         token = response.get("download_token")
         if not download_url and token:
-            download_url = f"/api/download/{token}"
+            download_url = self._endpoint("download_token", token=token)
         if not download_url:
             raise MalvaAPIError("Download URL not provided by server")
         parsed_download = urlparse(download_url)
         if parsed_download.scheme and parsed_download.netloc:
-            if parsed_download.path.startswith("/api/download/"):
+            if parsed_download.path.startswith(("/api/download/", "/api/downloads/")):
                 parsed_base = urlparse(self.base_url)
                 download_url = urlunparse(
                     (
@@ -2255,7 +2487,7 @@ class MalvaClient:
         data = {"ids": sample_ids}
         response = self._request(
             "POST",
-            "/api/sample-metadata",
+            self._endpoint("sample_metadata"),
             json=data,
             params=self._provider_params(provider) or None,
         )
@@ -2314,7 +2546,10 @@ class MalvaClient:
         }
         if include_all_database_cells and not sample_id_list and not cell_type_list:
             queued = self._request(
-                "POST", "/exports/all-cells", json=request_payload, params=provider_params or None
+                "POST",
+                self._endpoint("all_cells_export"),
+                json=request_payload,
+                params=provider_params or None,
             )
             export_id = queued.get("export_id")
             if not export_id:
@@ -2323,7 +2558,9 @@ class MalvaClient:
             status_payload = queued
             while time.time() - start_time < max_wait:
                 status_payload = self._request(
-                    "GET", f"/exports/all-cells/{export_id}", params=provider_params or None
+                    "GET",
+                    self._endpoint("all_cells_export_job", export_id=export_id),
+                    params=provider_params or None,
                 )
                 status = status_payload.get("status")
                 if status == "completed":
@@ -2339,13 +2576,13 @@ class MalvaClient:
                 raise MalvaAPIError(f"All-cells export timed out after {max_wait} seconds")
             response = self._request_raw(
                 "GET",
-                f"/exports/all-cells/{export_id}/download",
+                self._endpoint("all_cells_export_download", export_id=export_id),
                 params=provider_params or None,
             )
         else:
             response = self._request_raw(
                 "POST",
-                "/api/cells/by-filter",
+                self._endpoint("cells_by_metadata"),
                 json=request_payload,
                 params=provider_params or None,
             )
@@ -2463,7 +2700,9 @@ class MalvaClient:
     def get_available_filters(self, provider: Optional[str] = None) -> Dict[str, Any]:
         """Get available filter options for samples."""
         return self._request(
-            "GET", "/samples/api/filters", params=self._provider_params(provider) or None
+            "GET",
+            self._endpoint("available_filters"),
+            params=self._provider_params(provider) or None,
         )
 
     @staticmethod
@@ -2581,7 +2820,7 @@ class MalvaClient:
         if requested_ids:
             payload["provider_ids"] = requested_ids
 
-        submitted = self._request("POST", "/api/expression/submit", json=payload)
+        submitted = self._request("POST", self._endpoint("search_federated"), json=payload)
         job_id = submitted.get("job_id")
         if not job_id:
             raise MalvaAPIError("No federated job_id received from Explorer")
@@ -2613,7 +2852,7 @@ class MalvaClient:
             delay = self._adaptive_poll_delay(elapsed, poll_interval)
             if delay > 0:
                 time.sleep(delay)
-            state = self._request("GET", f"/api/expression/federated/{job_id}")
+            state = self._request("GET", self._endpoint("search_federated_job", job_id=job_id))
             if isinstance(state, dict):
                 if state.get("status"):
                     job_status = state.get("status")
@@ -2670,7 +2909,7 @@ class MalvaClient:
             try:
                 data = self._request(
                     "GET",
-                    f"/api/expression/results/{shard['search_job_id']}",
+                    self._endpoint("search_shard_results", job_id=shard["search_job_id"]),
                     params=params,
                 )
             except MalvaAPIError as exc:
@@ -2787,7 +3026,7 @@ class MalvaClient:
         if self.dataset_id:
             data["dataset_id"] = self.dataset_id
 
-        response = self._request("POST", "/search", json=data)
+        response = self._request("POST", self._endpoint("search"), json=data)
         job_id = response["job_id"]
 
         # Save to local storage
@@ -2865,7 +3104,7 @@ class MalvaClient:
         status_response = self.get_job_status(job_id)
 
         if status_response["status"] == "completed":
-            # Use lazy loading — SearchResult will fetch /api/expression-data/{job_id}/results
+            # Use lazy loading — SearchResult fetches the job results endpoint
             save_job_status(
                 job_id=job_id, status="completed", server_url=self.base_url, results_data={}
             )
@@ -2961,7 +3200,7 @@ class MalvaClient:
             True if cancellation was successful
         """
         try:
-            response = self._request("DELETE", f"/search/{job_id}")
+            response = self._request("DELETE", self._endpoint("search_job", job_id=job_id))
 
             # Update local storage
             from malva_client.storage import save_job_status
@@ -3299,7 +3538,9 @@ class MalvaClient:
         :meth:`set_workspace` (or the constructor) to scope subsequent
         searches to that index.
         """
-        response = self._request("GET", "/datasets", params=self._provider_params(provider) or None)
+        response = self._request(
+            "GET", self._endpoint("datasets"), params=self._provider_params(provider) or None
+        )
         if isinstance(response, list):
             return response
         return response.get("datasets", []) if isinstance(response, dict) else []
@@ -3317,7 +3558,7 @@ class MalvaClient:
         """
         return self._request(
             "GET",
-            "/samples/api/datasets/hierarchy",
+            self._endpoint("datasets_hierarchy"),
             params=self._provider_params(provider) or None,
         )
 
@@ -3348,7 +3589,7 @@ class MalvaClient:
         params = {"page": page, "page_size": page_size}
         params.update(self._provider_params(provider))
         response = self._request(
-            "GET", f"/samples/api/datasets/{dataset_id}/studies", params=params
+            "GET", self._endpoint("dataset_studies", dataset_id=dataset_id), params=params
         )
         if response.get("studies") or page != 1:
             return response
@@ -3408,7 +3649,7 @@ class MalvaClient:
         params.update(self._provider_params(provider))
         response = self._request(
             "GET",
-            f"/samples/api/datasets/{dataset_id}/studies/{study_name}/samples",
+            self._endpoint("study_samples", dataset_id=dataset_id, study_name=study_name),
             params=params,
         )
         if response.get("samples") or page != 1:
@@ -3456,7 +3697,11 @@ class MalvaClient:
         """
         params = self._provider_params(provider)
         try:
-            return self._request("GET", f"/samples/api/sample/{sample_uuid}", params=params or None)
+            return self._request(
+                "GET",
+                self._endpoint("sample_details", sample_uuid=sample_uuid),
+                params=params or None,
+            )
         except MalvaAPIError as exc:
             if self._is_not_found_error(exc):
                 raise
@@ -3490,7 +3735,9 @@ class MalvaClient:
         params.update(self._provider_params(provider))
         if search:
             params["search"] = search
-        response = self._request("GET", f"/samples/api/filters/{column}/values", params=params)
+        response = self._request(
+            "GET", self._endpoint("filter_values", column=column), params=params
+        )
         return response.get("values", [])
 
     def get_overview_stats(self, provider: Optional[str] = None) -> Dict[str, Any]:
@@ -3505,7 +3752,7 @@ class MalvaClient:
             Dictionary with overview statistics (total samples, studies, etc.)
         """
         return self._request(
-            "GET", "/samples/api/overview", params=self._provider_params(provider) or None
+            "GET", self._endpoint("overview"), params=self._provider_params(provider) or None
         )
 
     # ── Coexpression Analysis Methods ──

@@ -6,7 +6,9 @@ from malva_client.config import Config
 
 def _client(**kwargs):
     with patch.object(MalvaClient, "_test_connection"):
-        return MalvaClient(base_url="https://test.malva.bio", api_token="tok", **kwargs)
+        client = MalvaClient(base_url="https://test.malva.bio", api_token="tok", **kwargs)
+    client._endpoint_style = "legacy"
+    return client
 
 
 def test_workspace_context_is_sent_as_headers():

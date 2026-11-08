@@ -21,10 +21,13 @@ def client():
     ``?provider=<id>`` is the routing contract for the metadata proxies.
     """
     with patch.object(MalvaClient, "_test_connection"):
-        return MalvaClient(
+        client = MalvaClient(
             base_url=FEDERATION_BASE_URL,
             api_token="federation-test-token",
         )
+    # This suite pins the legacy Explorer routes directly.
+    client._endpoint_style = "legacy"
+    return client
 
 
 @pytest.fixture

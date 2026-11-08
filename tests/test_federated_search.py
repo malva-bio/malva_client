@@ -30,6 +30,7 @@ def _client(monkeypatch, responses):
     client.base_url = "http://explorer.example"
     client.dataset_id = None
     client.provider_id = None
+    client._endpoint_style = "legacy"
     calls = []
 
     def fake_request(method, endpoint, **kwargs):

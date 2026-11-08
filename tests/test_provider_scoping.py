@@ -15,7 +15,9 @@ BASE = "https://test.malva.bio"
 
 def _client(**kwargs):
     with patch.object(MalvaClient, "_test_connection"):
-        return MalvaClient(base_url=BASE, api_token="tok", **kwargs)
+        client = MalvaClient(base_url=BASE, api_token="tok", **kwargs)
+    client._endpoint_style = "legacy"
+    return client
 
 
 def _query(request):
