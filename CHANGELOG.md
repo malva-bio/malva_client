@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.5.0] - 2026-11-09
 ### Added
 - `stream_cell_expression()` returns a `CellExpressionStream` that yields
   sparse per-cell batches and converts them with `to_anndata()`,
@@ -35,6 +35,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `client.endpoint_style` expose the resolved style.
 - `retrieve_cells()` accepts the DataFrame returned by `search_federated()` and
   retrieves cells from a completed shard, optionally selected with `provider=`.
+- `scripts/live_check.py` runs the whole public client surface against a
+  deployed server, including a Scanpy reference query, and writes a PASS/FAIL
+  report. The `live-check` CI job uploads that report as a build artifact.
 
 ### Fixed
 - `retrieve_cells()` now forwards an explicitly selected federated shard's
