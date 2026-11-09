@@ -293,7 +293,15 @@ def main() -> int:
         write_report(Path(args.out), args.url, token_set, recorder, None, result="SKIPPED")
         return 0
 
-    client = MalvaClient(base_url=args.url, api_token=args.token, timeout=args.timeout)
+    client = recorder.record(
+        "client_init",
+        lambda: MalvaClient(base_url=args.url, api_token=args.token, timeout=args.timeout),
+    )
+    if client is None:
+        report = write_report(Path(args.out), args.url, token_set, recorder, args.dataset)
+        print(f"report: {report}")
+        print(f"result: {recorder.result}")
+        return 1
 
     recorder.record("authenticate", client.get_quota_status)
     hierarchy = recorder.record("datasets_hierarchy", client.get_datasets_hierarchy)
