@@ -1,15 +1,15 @@
 """Tests for malva_client.exceptions."""
 
 from malva_client.exceptions import (
-    MalvaAPIError,
     AuthenticationError,
-    SearchError,
-    QuotaExceededError,
-    ValidationError,
     ConfigurationError,
-    StorageError,
+    MalvaAPIError,
     NetworkError,
+    QuotaExceededError,
+    SearchError,
+    StorageError,
     TimeoutError,
+    ValidationError,
 )
 
 
@@ -73,7 +73,14 @@ class TestAllExceptionsInheritFromBase:
 
 class TestExceptionStr:
     def test_str_returns_message(self):
-        for cls in [MalvaAPIError, AuthenticationError, ValidationError,
-                    ConfigurationError, StorageError, NetworkError, TimeoutError]:
+        for cls in [
+            MalvaAPIError,
+            AuthenticationError,
+            ValidationError,
+            ConfigurationError,
+            StorageError,
+            NetworkError,
+            TimeoutError,
+        ]:
             err = cls("test message")
             assert str(err) == "test message"

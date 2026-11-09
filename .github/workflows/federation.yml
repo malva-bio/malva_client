@@ -1,0 +1,66 @@
+name: federation
+
+# Federation is not available on the mainstream/free deployment, so this
+# workflow is deliberately separate from ci.yml. The offline contract job runs
+# when the `federation` label is added to a pull request; the live job only runs
+# on demand or on the daily schedule.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "37 4 * * *"
+  pull_request:
+    types: [labeled]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  contract:
+    if: github.event_name != 'pull_request' || github.event.label.name == 'federation'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup
+      - run: >-
+          uv run --no-project python -m pytest tests_federation -q
+          -m "federation and not federation_live"
+
+  live:
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    # The federation-enabled Explorer is reachable from the organisation's
+    # private network, so reuse the self-hosted runner like ci.yml's
+    # integration job. Configure MALVA_FEDERATION_API_URL (variable),
+    # MALVA_FEDERATION_API_TOKEN (secret) and optionally
+    # MALVA_FEDERATION_GENE (variable).
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 30
+    env:
+      MALVA_FEDERATION_API_URL: ${{ vars.MALVA_FEDERATION_API_URL }}
+      MALVA_FEDERATION_API_TOKEN: ${{ secrets.MALVA_FEDERATION_API_TOKEN }}
+      MALVA_FEDERATION_GENE: ${{ vars.MALVA_FEDERATION_GENE }}
+      # This job explicitly exists to run against a live federation Explorer:
+      # missing configuration must fail it, not skip every test and go green.
+      MALVA_FEDERATION_REQUIRE_LIVE: "1"
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup
+      - name: Require live federation configuration
+        run: |
+          missing=0
+          if [ -z "${MALVA_FEDERATION_API_URL:-}" ]; then
+            echo "::error::MALVA_FEDERATION_API_URL is not configured"
+            missing=1
+          fi
+          if [ -z "${MALVA_FEDERATION_API_TOKEN:-}" ]; then
+            echo "::error::MALVA_FEDERATION_API_TOKEN is not configured"
+            missing=1
+          fi
+          exit "$missing"
+      - run: >-
+          uv run --no-project python -m pytest tests_federation -q
+          -m federation_live --durations=10

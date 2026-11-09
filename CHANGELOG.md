@@ -5,6 +5,56 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+### Added
+- Workspace/provider context on `MalvaClient` (`workspace`, `dataset_id`,
+  `provider_id`), `set_workspace()`, `get_workspace()` and `get_datasets()`.
+  Config file/env support uses `MALVA_WORKSPACE`, `MALVA_DATASET_ID` and
+  `MALVA_PROVIDER_ID`.
+- `provider=` scoping on sample/metadata methods, sent as the `?provider=`
+  query parameter. Explicit arguments override the client default.
+- `search_federated()` with per-provider provenance in `df.attrs`, visible
+  failed-shard errors, an optional `strict=True`, and a stable empty-result
+  schema.
+- Study discovery falls back to the dataset hierarchy when
+  `/samples/api/studies` or the per-dataset studies endpoint is empty.
+- Canonical Explorer endpoints are preferred, with automatic one-time fallback
+  to the historical paths. `MALVA_ENDPOINT_STYLE=auto|canonical|legacy` and
+  `client.endpoint_style` expose the resolved style.
+- `retrieve_cells()` accepts the DataFrame returned by `search_federated()` and
+  retrieves cells from a completed shard, optionally selected with `provider=`.
+
+### Fixed
+- `retrieve_cells()` now forwards an explicitly selected federated shard's
+  provider id as `?provider=` to every search-service retrieval call and skips
+  the local values export, so remote shard jobs resolve on their own service.
+- Federated searches without explicit `provider_ids` now resolve the default
+  provider list from `get_workspace()` before submitting, so canonical
+  `POST /api/search` is dispatched as a federated job. Failed or empty
+  workspace lookups omit the field and log a warning.
+- `retrieve_cells()` now treats cell-expression values-export timeouts as
+  recoverable and falls back through the full-search, cell-ID, global-ID and
+  Explorer fetchers while preserving the final aggregated error.
+- Unknown federation provider ids are rejected before submission instead of
+  producing a zero-shard job that stays `running`.
+- A zero-shard federated job that never leaves `running` now raises a clear
+  error after the poll budget.
+- `get_sample_details()` surfaces the server error body and provider context.
+- `get_study_samples()` raises instead of silently returning an empty list when
+  the hierarchy reports samples that the provider route cannot return.
+
+## [0.4.0] - 2026-10-26
+### Added
+- Cell Explorer client methods: build, list, preview, delete, download and load
+  per-user metacell cohorts stored as Zarr. The cohort schema is
+  `malva.cell_explorer.v1` (`obs/*`, `var/gene`, `X`, `layers/raw`, optional
+  `obsm/X_umap`).
+- `malva_client cell-explorer` CLI commands for listing, building and
+  downloading cohorts.
+- Large Explorer responses above the API Gateway 10 MB cap are followed
+  transparently when the Explorer returns a `303` redirect to a presigned S3
+  URL.
+
 ## [0.3.4] - 2026-06-05
 ### Added
 - Coverage APIs accept `stage_callback` and log separate search, server-result generation, download, and parse stages for large coverage responses.

@@ -1,0 +1,35 @@
+name: build-wheels
+
+# Builds the sdist and the wheel (pure Python), without publishing. Runs on
+# every pull request so a PR proves the package builds before it is merged, and
+# release-pypi.yml also calls it as a reusable workflow before publishing.
+on:
+  workflow_call:
+  pull_request:
+  workflow_dispatch:
+
+# least privilege: the build only reads the repository
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v8.1.0
+      - run: uv build --out-dir dist
+      - name: Smoke-test the wheel
+        run: |
+          uv venv --python 3.12 /tmp/malva-client-smoke
+          # --no-deps: malva_client imports lazily, so the metadata/import smoke
+          # check does not need the heavy runtime dependencies.
+          VIRTUAL_ENV=/tmp/malva-client-smoke uv pip install --no-deps dist/*.whl
+          /tmp/malva-client-smoke/bin/python -c \
+            "import malva_client, importlib.metadata as m; print(m.version('malva-client'))"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/*
+          if-no-files-found: error

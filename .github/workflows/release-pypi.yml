@@ -1,0 +1,71 @@
+name: release-pypi
+
+# Publishes the version in pyproject.toml to PyPI. The build lives in
+# build-wheels.yml (which also runs on every pull request, without publishing),
+# so this workflow checks the version, builds, and publishes.
+#
+# Bump the version in pyproject.toml and add a CHANGELOG entry on a branch,
+# merge it to main, then push a matching tag (vX.Y.Z) or run this workflow
+# manually. See PUBLISHING.md for the one-time PyPI trusted-publisher setup.
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish the built artifacts to PyPI (uncheck for a build-only run)
+        type: boolean
+        default: true
+  push:
+    tags: ["v*"]
+
+concurrency:
+  group: release-pypi-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  # Fail loudly if the tag does not match the version in pyproject.toml, so a
+  # release can never publish a version other than the one that was tagged.
+  version-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+      - name: Check the tag matches pyproject.toml
+        if: ${{ github.event_name == 'push' }}
+        run: |
+          version=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          tag="${GITHUB_REF_NAME#v}"
+          echo "pyproject version: $version"
+          echo "tag:               $tag"
+          if [ "$version" != "$tag" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match pyproject version $version"
+            exit 1
+          fi
+
+  build:
+    needs: [version-check]
+    uses: ./.github/workflows/build-wheels.yml
+
+  publish:
+    needs: [build]
+    if: ${{ github.event_name == 'push' || inputs.publish }}
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/malva-client
+    permissions:
+      # OIDC trusted publishing: lets PyPI verify this workflow without a token.
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - run: ls -la dist
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        # Without trusted publishing, drop the id-token permission above and use
+        # an API token instead (see PUBLISHING.md):
+        # with:
+        #   password: ${{ secrets.PYPI_API_TOKEN }}
