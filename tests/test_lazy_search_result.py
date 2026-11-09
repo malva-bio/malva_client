@@ -1,9 +1,14 @@
 """Lazy SearchResult accessors must trigger the deferred results fetch."""
 
+from typing import TYPE_CHECKING, cast
+
 import pandas as pd
 import pytest
 
 from malva_client.models import SearchResult
+
+if TYPE_CHECKING:
+    from malva_client.client import MalvaClient
 
 
 class _StubResult(SearchResult):
@@ -24,6 +29,10 @@ def _reset_counter():
     _StubResult.calls = 0
 
 
+def _new_result() -> _StubResult:
+    return _StubResult({"job_id": "job-1"}, cast("MalvaClient", None))
+
+
 @pytest.mark.parametrize(
     "accessor",
     [
@@ -35,7 +44,7 @@ def _reset_counter():
     ],
 )
 def test_lazy_access_triggers_single_fetch(accessor):
-    result = _StubResult({"job_id": "job-1"}, None)
+    result = _new_result()
     assert _StubResult.calls == 0
 
     accessor(result)
@@ -44,7 +53,7 @@ def test_lazy_access_triggers_single_fetch(accessor):
 
 
 def test_lazy_fetch_happens_only_once():
-    result = _StubResult({"job_id": "job-1"}, None)
+    result = _new_result()
 
     assert result.shape == (3, 1)
     assert len(result) == 3
