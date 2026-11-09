@@ -20,6 +20,7 @@ import os
 import platform
 import time
 import traceback
+import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
@@ -82,8 +83,32 @@ def describe(value: Any) -> Dict[str, Any]:
         if value and isinstance(value[0], dict):
             summary["first_keys"] = [str(k) for k in list(value[0])[:20]]
         return summary
+    frame = getattr(value, "df", None)
+    if pd is None or not isinstance(frame, pd.DataFrame):
+        dataframe = getattr(value, "to_dataframe", None)
+        if callable(dataframe):
+            try:
+                frame = dataframe()
+            except Exception:  # pragma: no cover - defensive
+                frame = None
+    if pd is not None and isinstance(frame, pd.DataFrame):
+        summary = {
+            "type": type(value).__name__,
+            "rows": int(frame.shape[0]),
+            "columns": [str(c) for c in frame.columns][:20],
+            "head": json.loads(frame.head(3).to_json(orient="records", date_format="iso")),
+        }
+        if "rank" in frame.columns:
+            best = frame[frame["rank"] == 1]
+            summary["top_match_per_cluster"] = json.loads(
+                best.head(25).to_json(orient="records", date_format="iso")
+            )
+        if "cell_type" in frame.columns:
+            counts = frame["cell_type"].astype(object).fillna("(none)").value_counts().head(10)
+            summary["cell_type_counts"] = {str(k): int(v) for k, v in counts.items()}
+        return summary
     attributes = {}
-    for attr in ("ncells", "n_cells", "n_genes", "shape", "job_id", "cluster_order"):
+    for attr in ("ncells", "n_cells", "n_genes", "n_obs", "n_vars", "shape", "job_id"):
         if hasattr(value, attr):
             try:
                 candidate = getattr(value, attr)
@@ -107,8 +132,11 @@ class Recorder:
             print(f"SKIP {name}: {skip}")
             return None
         started = time.monotonic()
+        caught: List[warnings.WarningMessage] = []
         try:
-            value = fn()
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                value = fn()
         except Exception as exc:
             self.checks.append(
                 Check(
@@ -121,11 +149,15 @@ class Recorder:
             )
             print(f"FAIL {name}: {type(exc).__name__}: {exc}")
             return None
+        details = describe(value)
+        messages = [f"{type(item.message).__name__}: {item.message}" for item in caught]
+        if messages:
+            details["warnings"] = [_trim(message, 400) for message in messages[:10]]
         check = Check(
             name=name,
             status="PASS",
             seconds=time.monotonic() - started,
-            details=describe(value),
+            details=details,
         )
         self.checks.append(check)
         print(f"PASS {name} ({check.seconds:.2f}s)")
@@ -323,6 +355,36 @@ def main() -> int:
         lambda: client.retrieve_cells(search_result, features=args.gene),
         skip=None if search_result is not None else "gene search did not complete",
     )
+
+    if dataset_id is None:
+        for name in ("umap_coordinates", "search_to_anndata", "coexpression"):
+            recorder.record(name, lambda: None, skip="no dataset id discovered")
+    else:
+        recorder.record("umap_coordinates", lambda: client.get_umap_coordinates(dataset_id))
+        recorder.record(
+            "search_to_anndata",
+            lambda: search_result.to_anndata() if search_result is not None else None,
+            skip=None if search_result is not None else "gene search did not complete",
+        )
+
+        def _coexpression() -> Any:
+            frame = search_result.df
+            sample_ids: List[int] = []
+            if "rel" in frame.columns and not frame.empty:
+                top = frame.sort_values("rel", ascending=False)["sample_id"].drop_duplicates()
+                sample_ids = [int(value) for value in top.head(3)]
+            return client.get_coexpression(
+                search_result.job_id,
+                dataset_id,
+                filter_sample_ids=sample_ids or None,
+                max_wait=240,
+            )
+
+        recorder.record(
+            "coexpression",
+            _coexpression,
+            skip=None if search_result is not None else "gene search did not complete",
+        )
 
     if args.skip_reference_query:
         recorder.record("reference_query", lambda: None, skip="--skip-reference-query")
