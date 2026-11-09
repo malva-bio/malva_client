@@ -16,6 +16,20 @@ class AuthenticationError(MalvaAPIError):
     pass
 
 
+class ClientVersionError(MalvaAPIError):
+    """The client is older than the minimum version accepted by the server."""
+
+    def __init__(
+        self,
+        message: str,
+        min_version: Optional[str] = None,
+        client_version: Optional[str] = None,
+    ):
+        super().__init__(message)
+        self.min_version = min_version
+        self.client_version = client_version
+
+
 class SearchError(MalvaAPIError):
     """Search operation failed"""
 

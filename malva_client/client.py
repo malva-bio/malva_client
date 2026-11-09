@@ -15,9 +15,11 @@ import numpy as np
 import pandas as pd
 import requests
 
+from malva_client import __version__ as _CLIENT_VERSION
 from malva_client.config import Config
 from malva_client.exceptions import (
     AuthenticationError,
+    ClientVersionError,
     MalvaAPIError,
     QuotaExceededError,
     SearchError,
@@ -373,6 +375,12 @@ class MalvaClient:
 
         self.session = requests.Session()
         self.session.verify = verify_ssl
+        self.session.headers.update(
+            {
+                "X-Malva-Client-Version": _CLIENT_VERSION,
+                "User-Agent": f"malva-client/{_CLIENT_VERSION}",
+            }
+        )
 
         if api_token:
             self.session.headers.update({"Authorization": f"Bearer {api_token}"})
@@ -571,6 +579,22 @@ class MalvaClient:
                     raise MalvaAPIError(f"Not found: {error_msg}")
                 except (json.JSONDecodeError, ValueError):
                     raise MalvaAPIError(f"Endpoint not found: {endpoint}")
+
+            # Handle a server-side minimum client version
+            elif response.status_code == 426:
+                try:
+                    error_data = response.json()
+                except (json.JSONDecodeError, ValueError):
+                    error_data = {}
+                raise ClientVersionError(
+                    error_data.get(
+                        "error",
+                        f"Client version {_CLIENT_VERSION} is no longer supported; "
+                        "upgrade malva_client",
+                    ),
+                    min_version=error_data.get("min_client_version"),
+                    client_version=error_data.get("client_version", _CLIENT_VERSION),
+                )
 
             # Handle quota exceeded
             elif response.status_code == 429:
@@ -932,6 +956,21 @@ class MalvaClient:
         if response.status_code in [401, 403]:
             response.close()
             raise AuthenticationError("Authentication failed")
+        if response.status_code == 426:
+            try:
+                error_data = response.json()
+            except (json.JSONDecodeError, ValueError):
+                error_data = {}
+            response.close()
+            raise ClientVersionError(
+                error_data.get(
+                    "error",
+                    f"Client version {_CLIENT_VERSION} is no longer supported; "
+                    "upgrade malva_client",
+                ),
+                min_version=error_data.get("min_client_version"),
+                client_version=error_data.get("client_version", _CLIENT_VERSION),
+            )
         if response.status_code == 429:
             response.close()
             raise QuotaExceededError("Search quota exceeded")
