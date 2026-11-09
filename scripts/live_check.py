@@ -122,6 +122,37 @@ def describe(value: Any) -> Dict[str, Any]:
     return {"type": type(value).__name__, "repr": _trim(value)}
 
 
+class SkipCheck(Exception):
+    """Raise from a check to record it as skipped instead of failed."""
+
+
+_TRANSIENT_ERRORS = (
+    "503",
+    "504",
+    "no available server",
+    "service unavailable",
+    "gateway time",
+    "connection",
+    "timeout",
+)
+
+
+def retrying(fn: Callable[[], Any], attempts: int = 3, delay: float = 8.0) -> Any:
+    """Retry a call whose failure looks like a temporary server outage."""
+    for attempt in range(1, attempts + 1):
+        try:
+            return fn()
+        except Exception as exc:
+            transient = isinstance(exc, MalvaAPIError) and any(
+                token in str(exc).lower() for token in _TRANSIENT_ERRORS
+            )
+            if attempt == attempts or not transient:
+                raise
+            print(f"  retrying after {type(exc).__name__}: {_trim(exc)}")
+            time.sleep(delay * attempt)
+    return None
+
+
 class Recorder:
     def __init__(self) -> None:
         self.checks: List[Check] = []
@@ -137,6 +168,10 @@ class Recorder:
             with warnings.catch_warnings(record=True) as caught:
                 warnings.simplefilter("always")
                 value = fn()
+        except SkipCheck as exc:
+            self.checks.append(Check(name=name, status="SKIP", details={"reason": str(exc)}))
+            print(f"SKIP {name}: {exc}")
+            return None
         except Exception as exc:
             self.checks.append(
                 Check(
@@ -360,7 +395,16 @@ def main() -> int:
         for name in ("umap_coordinates", "search_to_anndata", "coexpression"):
             recorder.record(name, lambda: None, skip="no dataset id discovered")
     else:
-        recorder.record("umap_coordinates", lambda: client.get_umap_coordinates(dataset_id))
+
+        def _umap() -> Any:
+            try:
+                return client.get_umap_coordinates(dataset_id)
+            except MalvaAPIError as exc:
+                if "not found" in str(exc).lower():
+                    raise SkipCheck("the dataset has no UMAP coordinates") from exc
+                raise
+
+        recorder.record("umap_coordinates", _umap)
         recorder.record(
             "search_to_anndata",
             lambda: search_result.to_anndata() if search_result is not None else None,
@@ -373,11 +417,13 @@ def main() -> int:
             if "rel" in frame.columns and not frame.empty:
                 top = frame.sort_values("rel", ascending=False)["sample_id"].drop_duplicates()
                 sample_ids = [int(value) for value in top.head(3)]
-            return client.get_coexpression(
-                search_result.job_id,
-                dataset_id,
-                filter_sample_ids=sample_ids or None,
-                max_wait=240,
+            return retrying(
+                lambda: client.get_coexpression(
+                    search_result.job_id,
+                    dataset_id,
+                    filter_sample_ids=sample_ids or None,
+                    max_wait=240,
+                )
             )
 
         recorder.record(
@@ -394,11 +440,13 @@ def main() -> int:
         adata, groupby = scanpy_query_dataset()
         recorder.record(
             "reference_query",
-            lambda: client.find_metacells(
-                adata,
-                groupby=groupby,
-                dataset_id=dataset_id,
-                top_n=args.top_n,
+            lambda: retrying(
+                lambda: client.find_metacells(
+                    adata,
+                    groupby=groupby,
+                    dataset_id=dataset_id,
+                    top_n=args.top_n,
+                )
             ),
         )
 
