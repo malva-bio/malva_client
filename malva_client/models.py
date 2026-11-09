@@ -993,6 +993,30 @@ class SearchResult(MalvaDataFrame):
         self._ensure_loaded()
         return len(self._df)
 
+    def __getitem__(self, key):
+        self._ensure_loaded()
+        return self._df[key]
+
+    @property
+    def shape(self):
+        self._ensure_loaded()
+        return self._df.shape
+
+    def __getattr__(self, name):
+        if name.startswith("__"):
+            raise AttributeError(name)
+        try:
+            pending = object.__getattribute__(self, "_needs_lazy_fetch")
+        except AttributeError:
+            pending = False
+        if pending:
+            self._ensure_loaded()
+        try:
+            frame = object.__getattribute__(self, "_df")
+        except AttributeError as exc:
+            raise AttributeError(name) from exc
+        return getattr(frame, name)
+
     @property
     def total_cells(self) -> int:
         """Get total number of cells found"""
