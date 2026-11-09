@@ -18,6 +18,7 @@ __all__ = [
     "AuthenticationError",
     "SearchError",
     "QuotaExceededError",
+    "ClientVersionError",
     "ValidationError",
     "ConfigurationError",
     "SearchResult",
@@ -49,11 +50,13 @@ def __getattr__(name):
         "AuthenticationError",
         "SearchError",
         "QuotaExceededError",
+        "ClientVersionError",
         "ValidationError",
         "ConfigurationError",
     ):
         from .exceptions import (
             AuthenticationError,
+            ClientVersionError,
             ConfigurationError,
             MalvaAPIError,
             QuotaExceededError,

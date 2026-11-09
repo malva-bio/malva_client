@@ -27,30 +27,6 @@ Generate an API token at [malva.bio](https://malva.bio) (login with ORCID, then 
 malva_client config --server https://malva.mdc-berlin.de --token YOUR_API_TOKEN
 ```
 
-## Endpoint compatibility
-
-The client uses the canonical Explorer API paths (for example
-`/api/datasets`, `/api/samples` and `/api/search/<job>/results`) and falls back
-to the historical paths (`/datasets`, `/samples/api/*`, `/search*`) when the
-server does not expose them. Canonical endpoints are preferred.
-
-Detection runs once per client: an authenticated `GET /api/account/quota` probe
-returning 200 selects canonical mode, while a 404 selects legacy mode. The
-resolved style is cached and reused for every subsequent request. A 401 raises
-the normal authentication error.
-
-Override detection with `MALVA_ENDPOINT_STYLE`:
-
-```bash
-export MALVA_ENDPOINT_STYLE=auto       # default: probe once and cache
-export MALVA_ENDPOINT_STYLE=canonical  # force canonical paths (no probe)
-export MALVA_ENDPOINT_STYLE=legacy     # force historical paths (no probe)
-```
-
-The resolved value is available as the read-only `client.endpoint_style`
-property; call `client.reset_endpoint_style()` to discard an `auto` result and
-probe again on the next request.
-
 ## Quick Start (CLI)
 
 ```bash
