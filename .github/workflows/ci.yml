@@ -90,3 +90,24 @@ jobs:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/setup
       - run: uv run --no-project python -m pytest -q -m integration --durations=25
+
+  # End-to-end smoke run of every public client feature against the deployed
+  # server, including a reference query built from a bundled Scanpy dataset.
+  # The Markdown/JSON report is uploaded even when the run fails so the result
+  # can be inspected from the workflow run.
+  live-check:
+    runs-on: ${{ fromJSON((github.event.pull_request.head.repo.fork && '["ubuntu-latest"]') || vars.MALVA_RUNNER_LABELS || '["ubuntu-latest"]') }}
+    timeout-minutes: 45
+    env:
+      MALVA_API_URL: ${{ vars.MALVA_API_URL }}
+      MALVA_API_TOKEN: ${{ secrets.MALVA_API_TOKEN }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup
+      - run: uv pip install scanpy
+      - run: .venv/bin/python scripts/live_check.py --out reports
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: live-check-report
+          path: reports
