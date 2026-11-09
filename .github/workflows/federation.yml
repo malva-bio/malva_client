@@ -37,7 +37,7 @@ jobs:
     # integration job. Configure MALVA_FEDERATION_API_URL (variable),
     # MALVA_FEDERATION_API_TOKEN (secret) and optionally
     # MALVA_FEDERATION_GENE (variable).
-    runs-on: [self-hosted, linux, x64]
+    runs-on: ${{ fromJSON(vars.MALVA_RUNNER_LABELS || '["ubuntu-latest"]') }}
     timeout-minutes: 30
     env:
       MALVA_FEDERATION_API_URL: ${{ vars.MALVA_FEDERATION_API_URL }}
