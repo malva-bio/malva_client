@@ -6,7 +6,7 @@ import tempfile
 import time
 import warnings
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple, Union
 from urllib.parse import urljoin, urlparse, urlunparse
 
 import anndata as ad
@@ -26,8 +26,11 @@ from malva_client.exceptions import (
 )
 from malva_client.models import (
     CellExpressionMatrixResult,
+    CellExpressionStream,
     CoexpressionResult,
     CoverageResult,
+    DifferentialExpressionResult,
+    MetacellMatchResult,
     SearchResult,
     UMAPCoordinates,
 )
@@ -161,6 +164,57 @@ def _expr_data_from_columnar(expr_col: dict) -> dict:
         "columns": expr_col.get("columns", []),
         "celltype_sample_counts": expr_col.get("celltype_sample_counts", {}),
     }
+
+
+def _looks_like_raw_counts(X, sample_size: int = 10000) -> bool:
+    """Heuristic: non-negative, finite, integer-valued expression values.
+
+    Works for dense arrays and scipy sparse matrices without densifying.
+    Used only to warn the user; the data is never modified.
+    """
+    from scipy import sparse
+
+    if sparse.issparse(X):
+        data = X.data
+        if data.size == 0:
+            return False
+        sample = data[:sample_size]
+    else:
+        arr = np.asarray(X)
+        if arr.size == 0:
+            return False
+        sample = arr.ravel()[:sample_size]
+    sample = np.asarray(sample)
+    if sample.size == 0 or not np.all(np.isfinite(sample)):
+        return False
+    if float(sample.min()) < 0 or float(sample.max()) <= 0:
+        return False
+    return bool(np.allclose(sample, np.round(sample)))
+
+
+def _cluster_pseudobulk(X, codes, n_groups: int):
+    """Mean expression per cluster using sparse group-indicator multiplication.
+
+    Returns a CSR matrix (n_groups × n_vars).  Only non-zero entries are kept.
+    """
+    from scipy import sparse
+
+    n_obs = X.shape[0]
+    keep = codes >= 0
+    kept_codes = codes[keep]
+    kept_rows = np.flatnonzero(keep)
+    indicator = sparse.csr_matrix(
+        (np.ones(len(kept_rows), dtype=np.float64), (kept_codes, kept_rows)),
+        shape=(n_groups, n_obs),
+    )
+    Xcsr = X.tocsr() if sparse.issparse(X) else sparse.csr_matrix(np.asarray(X))
+    sums = indicator @ Xcsr
+    counts = np.bincount(kept_codes, minlength=n_groups).astype(np.float64)
+    inv_counts = np.zeros(n_groups, dtype=np.float64)
+    nonzero = counts > 0
+    inv_counts[nonzero] = 1.0 / counts[nonzero]
+    means = sparse.diags(inv_counts) @ sums
+    return means.tocsr()
 
 
 class GeneResult:
@@ -384,7 +438,6 @@ class MalvaClient:
 
         if api_token:
             self.session.headers.update({"Authorization": f"Bearer {api_token}"})
-
         self._apply_workspace_headers()
         self._test_connection()
 
@@ -1819,6 +1872,200 @@ class MalvaClient:
                 how="inner",
             )
         return result
+
+    def stream_cell_expression(
+        self,
+        sample_ids: Optional[Union[int, str, List[Union[int, str]]]] = None,
+        gene_ids: Optional[Union[str, List[str]]] = None,
+        dataset_id: Optional[str] = None,
+        max_batch_bytes: int = 4 * 1024 * 1024,
+        chunk_size: int = 64 * 1024,
+        cells: Optional[Iterable[Any]] = None,
+    ) -> CellExpressionStream:
+        """Stream sparse per-cell expression batches for selected samples.
+
+        By default this returns a :class:`~malva_client.models.CellExpressionStream`
+        that yields one pandas ``DataFrame`` per server batch, exactly like the
+        previous generator API::
+
+            for batch in client.stream_cell_expression(
+                sample_ids=[30064771072],
+                gene_ids=["CD3D", "CD3E", "CD247"],
+                dataset_id="Human_Cell_Atlas",
+            ):
+                print(batch.head())
+
+        DataFrames contain ``sample_id``, ``cell_id``, ``store_index``, ``gene``
+        and ``value``. Only non-zero values are returned; absent
+        ``(sample_id, cell_id, gene)`` combinations are zero. Passing
+        ``gene_ids`` is strongly recommended: without it the server must scan
+        every non-zero entry in the selected petal stores.
+
+        The wrapper also provides ``to_anndata()``, ``write_h5ad(path)`` and
+        ``iter_anndata()`` for standard AnnData workflows.
+        """
+        dataset_id = self._default_dataset_id(dataset_id)
+        gene_list = None
+        if gene_ids is not None:
+            if isinstance(gene_ids, str):
+                gene_list = [gene_ids]
+            else:
+                gene_list = [str(gene).strip() for gene in gene_ids if str(gene).strip()]
+        if cells is not None:
+            if sample_ids is not None:
+                raise ValueError("Pass either sample_ids or cells, not both")
+            known_samples = None
+            if isinstance(cells, (list, tuple)):
+                known_samples = sorted(
+                    {
+                        int(cell.get("sample_id"))
+                        if isinstance(cell, dict)
+                        else int(cell[0])
+                        if isinstance(cell, (tuple, list)) and len(cell) == 2
+                        else int(getattr(cell, "sample_id"))
+                        for cell in cells
+                    }
+                )
+        else:
+            if sample_ids is None:
+                raise ValueError("Pass sample_ids or cells")
+            if isinstance(sample_ids, (int, str)):
+                sample_ids = [sample_ids]
+            known_samples = [int(sample_id) for sample_id in sample_ids]
+            if not known_samples:
+                raise ValueError("sample_ids must contain at least one sample id")
+
+        return CellExpressionStream(
+            lambda: self._iter_cell_expression_batches(
+                sample_ids=None if cells is not None else sample_ids,
+                gene_ids=gene_list,
+                dataset_id=dataset_id,
+                max_batch_bytes=max_batch_bytes,
+                chunk_size=chunk_size,
+                cells=cells,
+            ),
+            client=self,
+            dataset_id=dataset_id,
+            sample_ids=known_samples,
+            gene_ids=gene_list,
+        )
+
+    def _iter_cell_expression_batches(
+        self,
+        sample_ids: Optional[Union[int, str, List[Union[int, str]]]] = None,
+        gene_ids: Optional[Union[str, List[str]]] = None,
+        dataset_id: Optional[str] = None,
+        max_batch_bytes: int = 4 * 1024 * 1024,
+        chunk_size: int = 64 * 1024,
+        cells: Optional[Iterable[Any]] = None,
+    ):
+        """Yield the raw pandas batches from the server frame stream."""
+        if cells is not None:
+            if sample_ids is not None:
+                raise ValueError("Pass either sample_ids or cells, not both")
+            cell_payload: List[Dict[str, int]] = []
+            for cell in cells:
+                if isinstance(cell, dict):
+                    sample_id = cell.get("sample_id")
+                    cell_id = cell.get("cell_id")
+                elif isinstance(cell, (tuple, list)) and len(cell) == 2:
+                    sample_id, cell_id = cell
+                else:
+                    sample_id = getattr(cell, "sample_id", None)
+                    cell_id = getattr(cell, "cell_id", None)
+                if sample_id is None or cell_id is None:
+                    raise ValueError(
+                        "Each cell must be (sample_id, cell_id), a dict, or an object with those fields"
+                    )
+                cell_payload.append({"sample_id": int(sample_id), "cell_id": int(cell_id)})
+            if not cell_payload:
+                raise ValueError("cells must contain at least one cell")
+            payload: Dict[str, Any] = {
+                "cells": cell_payload,
+                "max_batch_bytes": int(max_batch_bytes),
+            }
+        else:
+            if sample_ids is None:
+                raise ValueError("Pass sample_ids or cells")
+            if isinstance(sample_ids, (int, str)):
+                sample_ids = [sample_ids]
+            samples = [int(sample_id) for sample_id in sample_ids]
+            if not samples:
+                raise ValueError("sample_ids must contain at least one sample id")
+            payload = {
+                "sample_ids": samples,
+                "max_batch_bytes": int(max_batch_bytes),
+            }
+        if dataset_id:
+            payload["dataset_id"] = str(dataset_id)
+        if gene_ids is not None:
+            if isinstance(gene_ids, str):
+                gene_ids = [gene_ids]
+            genes = [str(gene).strip() for gene in gene_ids if str(gene).strip()]
+            if genes:
+                payload["gene_ids"] = genes
+
+        url = urljoin(self.base_url + "/", "api/expression/cell-expression-stream")
+        response = self.session.post(
+            url,
+            json=payload,
+            stream=True,
+            timeout=(10, self.timeout),
+        )
+        try:
+            if response.status_code == 401:
+                raise AuthenticationError("API token was rejected by the cell expression stream")
+            if response.status_code == 403:
+                raise AuthenticationError("API token is not allowed to stream cell expression")
+            if not response.ok:
+                detail = response.text[:500] if response.text else ""
+                raise MalvaAPIError(
+                    f"Cell expression stream failed ({response.status_code}): {detail}"
+                )
+
+            features_by_store: Dict[int, List[str]] = {}
+            buffer = bytearray()
+            for chunk in response.iter_content(chunk_size=chunk_size):
+                if not chunk:
+                    continue
+                buffer.extend(chunk)
+                while len(buffer) >= 8:
+                    frame_size = struct.unpack(">Q", buffer[:8])[0]
+                    if len(buffer) < 8 + frame_size:
+                        break
+                    frame = msgpack.unpackb(bytes(buffer[8 : 8 + frame_size]), raw=False)
+                    del buffer[: 8 + frame_size]
+                    frame_type = frame.get("type")
+                    if frame_type == "features":
+                        store_index = int(frame.get("store_index", 0))
+                        features_by_store[store_index] = list(frame.get("features") or [])
+                        continue
+                    if frame_type != "data":
+                        continue
+
+                    count = int(frame.get("n") or 0)
+                    if count == 0:
+                        continue
+                    store_index = int(frame.get("store_index", 0))
+                    feature_index = np.frombuffer(frame["feature_index"], dtype="<i4")
+                    features = features_by_store.get(store_index, [])
+                    gene_names = [
+                        features[int(index)]
+                        if 0 <= int(index) < len(features)
+                        else f"feature_{int(index)}"
+                        for index in feature_index
+                    ]
+                    yield pd.DataFrame(
+                        {
+                            "sample_id": np.frombuffer(frame["sample_ids"], dtype="<i8"),
+                            "cell_id": np.frombuffer(frame["cell_ids"], dtype="<i8"),
+                            "store_index": np.full(count, store_index, dtype=np.int32),
+                            "gene": gene_names,
+                            "value": np.frombuffer(frame["values"], dtype="<f4"),
+                        }
+                    )
+        finally:
+            response.close()
 
     def retrieve_cells(
         self,
@@ -3910,6 +4157,155 @@ class MalvaClient:
             return "/api/coexpression/tasks"
         return "/tasks"
 
+    def _wait_coexpression_task(
+        self,
+        response: Dict[str, Any],
+        task_endpoint: str,
+        poll_interval: int = 2,
+        max_wait: int = 600,
+    ) -> Dict[str, Any]:
+        """Poll a coexpression task response until completion and return the raw result."""
+        status = response.get("status")
+        task_id = response.get("task_id")
+        if status not in {"pending", "running"} or not task_id:
+            return response
+
+        start_time = time.time()
+        while time.time() - start_time < max_wait:
+            task = self._request("GET", f"{task_endpoint.rstrip('/')}/{task_id}")
+            task_status = task.get("status")
+            if task_status == "completed":
+                return task
+            if task_status in {"failed", "error"}:
+                raise MalvaAPIError(f"Coexpression task failed: {task.get('error', 'unknown')}")
+            logger.info(f"Coexpression task {task_id} status: {task_status}")
+            time.sleep(poll_interval)
+        raise MalvaAPIError(f"Coexpression task {task_id} timed out after {max_wait} seconds")
+
+    def project_cells_to_metacells(
+        self,
+        cell_ids: List[int],
+        sample_ids: List[int],
+        dataset_id: str,
+        poll_interval: int = 2,
+        max_wait: int = 300,
+    ) -> List[str]:
+        """Map explicit cells to atlas metacell IDs without a coexpression query.
+
+        This is the efficient group-definition step: send the cell IDs and
+        encoded sample IDs, receive only the positive metacell IDs, then pass
+        those IDs to :meth:`differential_expression`.
+        """
+        if len(cell_ids) != len(sample_ids):
+            raise ValueError("cell_ids and sample_ids must have the same length")
+        if not cell_ids:
+            raise ValueError("At least one cell_id is required")
+
+        data = {
+            "dataset_id": dataset_id,
+            "cell_ids": [int(c) for c in cell_ids],
+            "sample_ids": [int(s) for s in sample_ids],
+        }
+        response, endpoint = self._request_first_available(
+            "POST",
+            ["/api/coexpression/cell-to-metacell", "/query/cell-to-metacell"],
+            json=data,
+        )
+        task_endpoint = self._coexpression_task_endpoint(endpoint)
+        result = self._wait_coexpression_task(
+            response, task_endpoint, poll_interval=poll_interval, max_wait=max_wait
+        )
+        return list(result.get("metacell_ids") or [])
+
+    def differential_expression(
+        self,
+        metacell_ids_a: List[str],
+        metacell_ids_b: List[str],
+        dataset_id: str,
+        top_n_genes: int = 0,
+        min_log2fc: float = 0.0,
+        min_pct: float = 0.1,
+        poll_interval: int = 2,
+        max_wait: int = 600,
+    ) -> DifferentialExpressionResult:
+        """Run differential expression between two metacell groups.
+
+        ``top_n_genes=0`` returns the full tested gene set, matching the
+        Explorer analysis workflow.
+        """
+        if not metacell_ids_a or not metacell_ids_b:
+            raise ValueError("Both metacell_ids_a and metacell_ids_b are required")
+
+        data = {
+            "dataset_id": dataset_id,
+            "metacell_ids_a": [str(m) for m in metacell_ids_a],
+            "metacell_ids_b": [str(m) for m in metacell_ids_b],
+            "top_n_genes": int(top_n_genes),
+            "min_log2fc": float(min_log2fc),
+            "min_pct": float(min_pct),
+        }
+        response, endpoint = self._request_first_available(
+            "POST",
+            ["/api/coexpression/differential", "/query/differential"],
+            json=data,
+        )
+        task_endpoint = self._coexpression_task_endpoint(endpoint)
+        raw = self._wait_coexpression_task(
+            response, task_endpoint, poll_interval=poll_interval, max_wait=max_wait
+        )
+        return DifferentialExpressionResult(raw, self)
+
+    def differential_expression_from_cells(
+        self,
+        cell_ids_a: List[int],
+        sample_ids_a: List[int],
+        cell_ids_b: List[int],
+        sample_ids_b: List[int],
+        dataset_id: str,
+        top_n_genes: int = 0,
+        min_log2fc: float = 0.0,
+        min_pct: float = 0.1,
+        poll_interval: int = 2,
+        max_wait: int = 600,
+    ) -> DifferentialExpressionResult:
+        """Resolve two explicit cell groups to metacells and run DE server-side.
+
+        Use this when the caller already has raw cell IDs and does not need the
+        intermediate metacell list; no sample metadata is sent.
+        """
+        for name, cells, samples in (
+            ("A", cell_ids_a, sample_ids_a),
+            ("B", cell_ids_b, sample_ids_b),
+        ):
+            if len(cells) != len(samples):
+                raise ValueError(f"cell_ids_{name} and sample_ids_{name} must match")
+            if not cells:
+                raise ValueError(f"At least one cell_id is required for group {name}")
+
+        data = {
+            "dataset_id": dataset_id,
+            "cell_ids_a": [int(c) for c in cell_ids_a],
+            "sample_ids_a": [int(s) for s in sample_ids_a],
+            "cell_ids_b": [int(c) for c in cell_ids_b],
+            "sample_ids_b": [int(s) for s in sample_ids_b],
+            "top_n_genes": int(top_n_genes),
+            "min_log2fc": float(min_log2fc),
+            "min_pct": float(min_pct),
+        }
+        response, endpoint = self._request_first_available(
+            "POST",
+            [
+                "/api/coexpression/differential-from-cells",
+                "/query/differential-from-cells",
+            ],
+            json=data,
+        )
+        task_endpoint = self._coexpression_task_endpoint(endpoint)
+        raw = self._wait_coexpression_task(
+            response, task_endpoint, poll_interval=poll_interval, max_wait=max_wait
+        )
+        return DifferentialExpressionResult(raw, self)
+
     def project_cells(
         self,
         cell_ids: List[int],
@@ -4056,6 +4452,215 @@ class MalvaClient:
             task_endpoint=self._coexpression_task_endpoint(endpoint),
             poll_interval=poll_interval,
             max_wait=max_wait,
+        )
+
+    def find_metacells(
+        self,
+        adata,
+        groupby: str,
+        top_n: int = 50,
+        dataset_id: Optional[str] = None,
+        *,
+        layer: Optional[str] = None,
+        feature_ids: Optional[Iterable[str]] = None,
+        sample_metadata: Optional[Union[pd.DataFrame, Dict[Any, Any]]] = None,
+    ) -> MetacellMatchResult:
+        """Find Malva atlas metacells that look most like each local cluster.
+
+        The AnnData object stays local: clusters are averaged into pseudobulk
+        profiles and only those few cluster × gene vectors are sent to Malva.
+
+        Args:
+            adata: AnnData object with cells in ``obs`` and genes in ``var``.
+            groupby: Categorical ``adata.obs`` column defining the clusters.
+            top_n: Number of metacell neighbours per cluster (1–1000, default 50).
+            dataset_id: Malva dataset / coexpression index identifier.
+            layer: Optional ``adata.layers`` key to use instead of ``adata.X``.
+            feature_ids: Optional Malva feature IDs aligned to ``adata.var_names``.
+                Defaults to ``adata.var_names``.
+            sample_metadata: Optional local sample metadata (DataFrame indexed by
+                ``sample_id``, or a mapping ``sample_id -> row``). It is merged
+                locally after the response; no metadata is requested from Malva.
+
+        Returns:
+            :class:`~malva_client.models.MetacellMatchResult`, a DataFrame-like
+            object with ``to_dataframe()``, ``enrich()`` and ``assign_labels()``.
+            Its columns are ``cluster``, ``rank``, ``metacell_id``, ``sample_id``,
+            ``cell_type``, ``n_cells``, ``similarity``, ``distance``, and
+            ``enrichment_score`` (plus any local sample metadata columns).
+        """
+        if not dataset_id:
+            raise ValueError("dataset_id is required")
+        if not 1 <= int(top_n) <= 1000:
+            raise ValueError("top_n must be between 1 and 1000")
+        if groupby not in adata.obs.columns:
+            raise KeyError(f"'{groupby}' is not a column in adata.obs")
+
+        if layer is None:
+            X = adata.X
+        else:
+            if layer not in adata.layers:
+                raise KeyError(f"'{layer}' is not a layer in adata.layers")
+            X = adata.layers[layer]
+
+        obs = adata.obs[groupby]
+        if not isinstance(obs.dtype, pd.CategoricalDtype):
+            warnings.warn(
+                f"adata.obs['{groupby}'] is not categorical; treating each unique "
+                "value as a cluster. For Scanpy-style workflows, make it categorical "
+                "with adata.obs['{}'] = adata.obs['{}'].astype('category').".format(
+                    groupby, groupby
+                ),
+                UserWarning,
+                stacklevel=2,
+            )
+        categorical = obs if isinstance(obs.dtype, pd.CategoricalDtype) else obs.astype("category")
+        codes = categorical.cat.codes.to_numpy(dtype=np.int64)
+        labels = [str(label) for label in categorical.cat.categories]
+
+        if _looks_like_raw_counts(X):
+            matrix_name = "adata.X" if layer is None else f"adata.layers['{layer}']"
+            warnings.warn(
+                f"{matrix_name} looks like raw counts (non-negative integers). "
+                "Malva similarity expects normalized expression; consider running "
+                "sc.pp.normalize_total(adata, target_sum=1e4) followed by "
+                "sc.pp.log1p(adata). The data is not modified.",
+                UserWarning,
+                stacklevel=2,
+            )
+
+        var_names = np.asarray([str(v) for v in adata.var_names], dtype=object)
+        if feature_ids is None:
+            gene_ids = var_names
+        else:
+            gene_ids = np.asarray([str(f) for f in feature_ids], dtype=object)
+            if len(gene_ids) != len(var_names):
+                raise ValueError(
+                    "feature_ids must have one entry per adata.var_names ("
+                    f"{len(var_names)} expected, got {len(gene_ids)})"
+                )
+
+        means = _cluster_pseudobulk(X, codes, len(labels))
+        clusters = []
+        empty_clusters = []
+        for i, label in enumerate(labels):
+            row = means.getrow(i)
+            if row.nnz == 0:
+                empty_clusters.append(label)
+                continue
+            clusters.append(
+                {
+                    "name": label,
+                    "gene_ids": [str(gene_ids[j]) for j in row.indices],
+                    "values": [float(v) for v in row.data],
+                }
+            )
+
+        if empty_clusters:
+            warnings.warn(
+                "Skipping clusters with no non-zero expression: "
+                + ", ".join(empty_clusters[:10])
+                + ("..." if len(empty_clusters) > 10 else ""),
+                UserWarning,
+                stacklevel=2,
+            )
+        if not clusters:
+            raise ValueError("No clusters with non-zero expression to compare")
+
+        payload = {
+            "dataset_id": dataset_id,
+            "clusters": clusters,
+            "top_n": int(top_n),
+            "metric": "cosine",
+        }
+        response, _endpoint = self._request_first_available(
+            "POST",
+            ["/api/coexpression/clusters-to-metacells", "/query/clusters-to-metacells"],
+            json=payload,
+        )
+
+        missing_count = 0
+        missing_examples: List[str] = []
+        for cluster in response.get("clusters", []):
+            n_missing = int(cluster.get("n_missing_genes") or 0)
+            if n_missing:
+                missing_count += n_missing
+                missing_examples.extend(cluster.get("missing_genes") or [])
+        if missing_count:
+            examples = ", ".join(missing_examples[:10])
+            warnings.warn(
+                f"{missing_count} gene(s) were not found in the Malva dataset and "
+                f"were ignored{': ' + examples if examples else ''}",
+                UserWarning,
+                stacklevel=2,
+            )
+
+        columns = [
+            "cluster",
+            "rank",
+            "metacell_id",
+            "sample_id",
+            "cell_type",
+            "n_cells",
+            "similarity",
+            "distance",
+            "enrichment_score",
+        ]
+        rows = []
+        for cluster in response.get("clusters", []):
+            for neighbor in cluster.get("neighbors", []):
+                rows.append(
+                    {
+                        "cluster": cluster.get("name"),
+                        "rank": neighbor.get("rank"),
+                        "metacell_id": neighbor.get("metacell_id"),
+                        "sample_id": neighbor.get("sample_id"),
+                        "cell_type": neighbor.get("cell_type"),
+                        "n_cells": neighbor.get("n_cells"),
+                        "similarity": neighbor.get("similarity"),
+                        "distance": neighbor.get("distance"),
+                        "enrichment_score": neighbor.get("enrichment_score"),
+                    }
+                )
+        frame = pd.DataFrame(rows, columns=columns)
+
+        result = MetacellMatchResult(
+            frame,
+            client=self,
+            dataset_id=dataset_id,
+            groupby=groupby,
+            cluster_order=labels,
+            sample_metadata=sample_metadata,
+        )
+        if sample_metadata is not None:
+            result.enrich()
+        return result
+
+    def compare_clusters_to_metacells(
+        self,
+        adata,
+        groupby: str,
+        top_n: int = 50,
+        dataset_id: Optional[str] = None,
+        *,
+        layer: Optional[str] = None,
+        feature_ids: Optional[Iterable[str]] = None,
+        sample_metadata: Optional[Union[pd.DataFrame, Dict[Any, Any]]] = None,
+    ) -> MetacellMatchResult:
+        """Deprecated alias for :meth:`find_metacells`."""
+        warnings.warn(
+            "compare_clusters_to_metacells() is deprecated; use find_metacells() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.find_metacells(
+            adata,
+            groupby,
+            top_n=top_n,
+            dataset_id=dataset_id,
+            layer=layer,
+            feature_ids=feature_ids,
+            sample_metadata=sample_metadata,
         )
 
     # ── Cell Explorer ─────────────────────────────────────────────────────

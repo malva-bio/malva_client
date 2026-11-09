@@ -13,7 +13,10 @@ SearchResult
    .. autoproperty:: status
    .. autoproperty:: results
    .. autoproperty:: total_cells
+   .. automethod:: enrich
    .. automethod:: enrich_with_metadata
+   .. automethod:: to_anndata
+   .. automethod:: write_h5ad
 
 MalvaDataFrame
 --------------
@@ -28,12 +31,39 @@ MalvaDataFrame
    .. automethod:: aggregate_by
    .. automethod:: plot_expression_by
    .. automethod:: plot_expression_summary
+   .. automethod:: to_dataframe
    .. automethod:: to_pandas
    .. automethod:: available_fields
    .. automethod:: available_filter_fields
    .. automethod:: field_info
    .. automethod:: unique_values
    .. automethod:: value_counts
+
+CellExpressionStream
+--------------------
+
+.. autoclass:: malva_client.models.CellExpressionStream
+   :no-members:
+   :show-inheritance:
+
+   .. automethod:: __init__
+   .. automethod:: enrich
+   .. automethod:: to_anndata
+   .. automethod:: write_h5ad
+   .. automethod:: iter_anndata
+
+MetacellMatchResult
+-------------------
+
+.. autoclass:: malva_client.models.MetacellMatchResult
+   :no-members:
+   :show-inheritance:
+
+   .. automethod:: __init__
+   .. automethod:: to_dataframe
+   .. automethod:: to_pandas
+   .. automethod:: enrich
+   .. automethod:: assign_labels
 
 CellExpressionMatrixResult
 --------------------------

@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- `stream_cell_expression()` returns a `CellExpressionStream` that yields
+  sparse per-cell batches and converts them with `to_anndata()`,
+  `iter_anndata()` or `write_h5ad()`, optionally enriched with sample metadata.
+- `SearchResult.to_anndata()` builds a cells × genes AnnData object (obs are
+  `sample_id` × `cell_type` pairs) with provenance in `uns["malva"]`.
+- `find_metacells()` and the `MetacellMatchResult` wrapper map local clusters to
+  Malva metacells, with `assign_labels()` writing cell-type labels back to the
+  input AnnData. `compare_clusters_to_metacells()` remains as a deprecated
+  alias.
+- `differential_expression()`, `differential_expression_from_cells()` and
+  `DifferentialExpressionResult` expose server-computed DE tables.
+- `project_cells_to_metacells()` projects an AnnData object onto metacells.
 - Workspace/provider context on `MalvaClient` (`workspace`, `dataset_id`,
   `provider_id`), `set_workspace()`, `get_workspace()` and `get_datasets()`.
   Config file/env support uses `MALVA_WORKSPACE`, `MALVA_DATASET_ID` and
