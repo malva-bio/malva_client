@@ -1,18 +1,174 @@
 import gzip
 import io
 import logging
+import sqlite3
+import tempfile
 import zipfile
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional, Tuple, Union
 
+import anndata as ad
 import numpy as np
 import pandas as pd
+from scipy import sparse
 
 from malva_client.exceptions import (
     MalvaAPIError,
 )
 
+if TYPE_CHECKING:
+    from malva_client.client import MalvaClient
+
 logger = logging.getLogger(__name__)
+
+
+def _make_unique_names(values: Iterable[Any]) -> List[str]:
+    """Turn arbitrary labels into unique strings, preserving order."""
+    seen: Dict[str, int] = {}
+    names: List[str] = []
+    for value in values:
+        name = str(value)
+        count = seen.get(name, 0)
+        seen[name] = count + 1
+        names.append(name if count == 0 else f"{name}_{count}")
+    return names
+
+
+def _is_missing(value: Any) -> bool:
+    """Return True for scalar missing values without failing on lists/arrays."""
+    if isinstance(value, (list, tuple, dict, set, np.ndarray)):
+        return False
+    try:
+        result = pd.isna(value)
+    except (TypeError, ValueError):
+        return False
+    return bool(result) if isinstance(result, (bool, np.bool_)) else False
+
+
+def _coerce_obs_id(series: pd.Series) -> pd.Series:
+    """Use int64 when possible so h5ad can store ID columns without strings."""
+    numeric = pd.to_numeric(series, errors="coerce")
+    if numeric.notna().all():
+        as_int = numeric.astype("int64")
+        if np.allclose(numeric.to_numpy(dtype=float), as_int.to_numpy(dtype=float)):
+            return as_int
+        return numeric.astype("float64")
+    return series.astype(str)
+
+
+def _metadata_to_frame(metadata: Any) -> pd.DataFrame:
+    """Normalise local sample metadata to a DataFrame with a ``sample_id`` column."""
+    if metadata is None:
+        return pd.DataFrame()
+    if isinstance(metadata, pd.DataFrame):
+        frame = metadata.copy()
+        if "sample_id" not in frame.columns:
+            frame = frame.reset_index()
+        if "sample_id" not in frame.columns and len(frame.columns):
+            frame = frame.rename(columns={frame.columns[0]: "sample_id"})
+        return frame
+    if isinstance(metadata, dict):
+        if not metadata:
+            return pd.DataFrame()
+        try:
+            frame = pd.DataFrame.from_dict(metadata, orient="index")
+        except ValueError:
+            frame = pd.DataFrame(metadata)
+        frame = frame.reset_index()
+        if "sample_id" not in frame.columns and len(frame.columns):
+            frame = frame.rename(columns={frame.columns[0]: "sample_id"})
+        return frame
+    return pd.DataFrame(metadata)
+
+
+def _merge_sample_metadata(frame: pd.DataFrame, metadata: Any) -> pd.DataFrame:
+    """Left-merge metadata by ``sample_id`` without duplicating existing columns."""
+    meta = _metadata_to_frame(metadata)
+    if meta.empty or "sample_id" not in meta.columns or "sample_id" not in frame.columns:
+        return frame
+    duplicate = [
+        column for column in meta.columns if column in frame.columns and column != "sample_id"
+    ]
+    if duplicate:
+        meta = meta.drop(columns=duplicate)
+    if meta.shape[1] <= 1:
+        return frame
+    return frame.merge(meta, on="sample_id", how="left", suffixes=("", "_metadata"))
+
+
+def _empty_anndata() -> ad.AnnData:
+    return ad.AnnData(X=sparse.csr_matrix((0, 0), dtype=np.float32))
+
+
+def _frame_to_anndata(
+    batch: pd.DataFrame,
+    *,
+    sample_metadata: Any = None,
+    uns: Optional[Dict[str, Any]] = None,
+) -> ad.AnnData:
+    """Convert one sparse long-format expression batch to a cells × genes AnnData."""
+    required = {"sample_id", "cell_id", "gene", "value"}
+    missing = required.difference(batch.columns)
+    if missing:
+        raise ValueError(
+            "Expression batches must contain sample_id, cell_id, gene, and value columns "
+            f"(missing: {', '.join(sorted(missing))})"
+        )
+    if batch.empty:
+        return _empty_anndata()
+
+    frame = batch.loc[:, ["sample_id", "cell_id", "gene", "value"]].copy()
+    frame["_obs_key"] = frame["sample_id"].astype(str) + ":" + frame["cell_id"].astype(str)
+    frame["_gene_key"] = frame["gene"].astype(str)
+
+    obs_keys = sorted(pd.unique(frame["_obs_key"]).tolist())
+    gene_keys = sorted(pd.unique(frame["_gene_key"]).tolist())
+    obs_index = {key: idx for idx, key in enumerate(obs_keys)}
+    var_index = {key: idx for idx, key in enumerate(gene_keys)}
+
+    rows = frame["_obs_key"].map(obs_index).to_numpy(dtype=np.int64)
+    cols = frame["_gene_key"].map(var_index).to_numpy(dtype=np.int64)
+    values = pd.to_numeric(frame["value"], errors="coerce").fillna(0.0).to_numpy(dtype=np.float32)
+    matrix = sparse.coo_matrix(
+        (values, (rows, cols)), shape=(len(obs_keys), len(gene_keys)), dtype=np.float32
+    ).tocsr()
+
+    first = frame.drop_duplicates("_obs_key").set_index("_obs_key")
+    obs = pd.DataFrame(
+        {
+            "sample_id": first.loc[obs_keys, "sample_id"].to_numpy(),
+            "cell_id": first.loc[obs_keys, "cell_id"].to_numpy(),
+        },
+        index=pd.Index(_make_unique_names(obs_keys), name="obs_names"),
+    )
+    if sample_metadata is not None:
+        obs = _merge_sample_metadata(obs.reset_index(), sample_metadata)
+        obs = obs.set_index("obs_names")
+    obs["sample_id"] = _coerce_obs_id(obs["sample_id"])
+    obs["cell_id"] = _coerce_obs_id(obs["cell_id"])
+
+    var = pd.DataFrame(index=pd.Index(gene_keys, name="gene"))
+    result = ad.AnnData(X=matrix, obs=obs, var=var)
+    if uns:
+        result.uns["malva"] = _json_safe(uns)
+    return result
+
+
+def _json_safe(value: Any) -> Any:
+    """Convert numpy/pandas scalars to plain Python values for h5ad ``uns``."""
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, (np.integer,)):
+        return int(value)
+    if isinstance(value, (np.floating,)):
+        return float(value)
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, (pd.Timestamp,)):
+        return value.isoformat()
+    return value
 
 
 def _expr_data_from_columnar(expr_col: dict) -> dict:
@@ -72,6 +228,7 @@ class MalvaDataFrame:
         self, expr_df: pd.DataFrame, client: "MalvaClient", sample_metadata: Dict[int, Dict] = None
     ):
         self.client = client
+        self._base_df = expr_df.copy()
         self._df = expr_df.copy()
         self._sample_metadata = sample_metadata or {}
         self._enrich_with_metadata()
@@ -79,9 +236,13 @@ class MalvaDataFrame:
     def _enrich_with_metadata(self):
         """Enrich the dataframe with sample metadata using simplified field names"""
         if not self._sample_metadata:
+            self._extract_celltype_sample_counts()
             return
 
-        # Create metadata DataFrame with renamed columns
+        # Rebuild from the expression-only frame so repeated enrichment is idempotent.
+        base = getattr(self, "_base_df", None)
+        if base is None:
+            base = self._df
         metadata_records = []
         for sample_id, metadata in self._sample_metadata.items():
             record = {"sample_id": sample_id}
@@ -100,13 +261,19 @@ class MalvaDataFrame:
 
         if metadata_records:
             metadata_df = pd.DataFrame(metadata_records)
+            duplicate = [
+                column
+                for column in metadata_df.columns
+                if column in base.columns and column != "sample_id"
+            ]
+            if duplicate:
+                metadata_df = metadata_df.drop(columns=duplicate)
 
-            # Merge with expression data
-            self._df = self._df.merge(
-                metadata_df, on="sample_id", how="left", suffixes=("", "_metadata")
-            )
-
-            self._convert_to_categorical()
+            if metadata_df.shape[1] > 1:
+                self._df = base.merge(
+                    metadata_df, on="sample_id", how="left", suffixes=("", "_metadata")
+                )
+                self._convert_to_categorical()
 
         self._extract_celltype_sample_counts()
 
@@ -585,9 +752,13 @@ class MalvaDataFrame:
 
         return sample_counts
 
-    def to_pandas(self) -> pd.DataFrame:
-        """Convert to regular pandas DataFrame"""
+    def to_dataframe(self) -> pd.DataFrame:
+        """Convert to a regular pandas DataFrame (copy)."""
         return self._df.copy()
+
+    def to_pandas(self) -> pd.DataFrame:
+        """Deprecated alias for :meth:`to_dataframe`."""
+        return self.to_dataframe()
 
     def available_fields(self) -> Dict[str, List[str]]:
         """
@@ -774,7 +945,9 @@ class SearchResult(MalvaDataFrame):
         expr_df = self._convert_to_dataframe()
         self._needs_lazy_fetch = expr_df.empty and bool(self._job_id)
 
-        super().__init__(expr_df, client, sample_metadata={})
+        local_metadata = raw_data.get("_sample_metadata", {}) if isinstance(raw_data, dict) else {}
+        super().__init__(expr_df, client, sample_metadata=local_metadata)
+        self._sample_metadata = local_metadata
 
     def _ensure_loaded(self):
         """Lazily fetch expression data from the server if not yet loaded."""
@@ -805,6 +978,7 @@ class SearchResult(MalvaDataFrame):
             if isinstance(response, dict) and response.get("job_id"):
                 self._job_id = response.get("job_id")
             self._df = self._convert_to_dataframe()
+            self._base_df = self._df.copy()
             sample_meta = response.get("_sample_metadata", {}) if isinstance(response, dict) else {}
             self._sample_metadata = sample_meta
             self._enrich_with_metadata()
@@ -1027,43 +1201,158 @@ class SearchResult(MalvaDataFrame):
             # Fallback to counting combinations
             return len(self._df)
 
-    def enrich_with_metadata(self) -> "SearchResult":
-        """
-        Enrich the search results with sample metadata
+    def enrich(self, sample_metadata: Optional[Union[pd.DataFrame, Dict[Any, Any]]] = None):
+        """Attach sample metadata to the result and return ``self``.
 
-        Returns:
-            Self with enriched metadata
+        Metadata already available locally is reused. Only sample IDs that are
+        still missing are requested from Malva, so calling ``enrich()`` again is
+        cheap. This method is metadata-only: it never runs GO or cell-type
+        enrichment.
         """
-        if self._enriched:
-            return self
-
-        # Ensure lazy-loaded data is available before checking emptiness
         self._ensure_loaded()
-
         if self._df.empty:
             return self
 
-        # Get unique sample IDs
-        sample_ids = self._df["sample_id"].unique().tolist()
+        sample_ids = self._df["sample_id"].drop_duplicates().tolist()
+        local = dict(self._sample_metadata or {})
 
-        # Fetch sample metadata
-        try:
-            sample_metadata = self.client.get_sample_metadata(sample_ids)
-            total_cells = (
-                self._df["cell_count"].sum() if "cell_count" in self._df.columns else len(self._df)
-            )
-            print(
-                f"✓ Enriched with metadata for {len(sample_metadata)} samples ({total_cells:,} total cells)"
-            )
-        except Exception as e:
-            logging.warning(f"Could not fetch sample metadata: {e}")
-            sample_metadata = {}
+        if sample_metadata is not None:
+            meta = _metadata_to_frame(sample_metadata)
+            for _, row in meta.iterrows():
+                sample_id = row.get("sample_id")
+                if sample_id is None:
+                    continue
+                try:
+                    sample_id = int(sample_id)
+                except (TypeError, ValueError):
+                    pass
+                values = {
+                    key: value
+                    for key, value in row.drop(labels=["sample_id"]).to_dict().items()
+                    if not _is_missing(value)
+                }
+                local.setdefault(sample_id, {}).update(values)
 
-        # Update the metadata and re-enrich
-        self._sample_metadata = sample_metadata
+        missing = []
+        for sample_id in sample_ids:
+            try:
+                key = int(sample_id)
+            except (TypeError, ValueError):
+                key = sample_id
+            if key not in local or not local.get(key):
+                missing.append(sample_id)
+
+        if missing and self.client is not None:
+            try:
+                fetched = self.client.get_sample_metadata(missing)
+            except Exception as exc:  # pragma: no cover - network failure path
+                logger.warning("Could not fetch sample metadata: %s", exc)
+                fetched = {}
+            for sample_id, values in (fetched or {}).items():
+                try:
+                    key = int(sample_id)
+                except (TypeError, ValueError):
+                    key = sample_id
+                local.setdefault(key, {}).update(values or {})
+
+        self._sample_metadata = local
         self._enrich_with_metadata()
         self._enriched = True
+        return self
 
+    def enrich_with_metadata(self) -> "SearchResult":
+        """Deprecated alias for :meth:`enrich`."""
+        return self.enrich()
+
+    def to_anndata(self) -> ad.AnnData:
+        """Materialise the aggregated search result as a sample × cell-type AnnData.
+
+        Observations are unique ``sample_id`` × ``cell_type`` pairs, variables
+        are genes (``gene_sequence``), and ``X`` is a sparse float32 matrix of
+        relative normalized expression (``rel``). Sample metadata is included in
+        ``obs`` when available and provenance is stored in ``uns['malva']``.
+        """
+        self._ensure_loaded()
+        if self._df.empty:
+            return _empty_anndata()
+
+        frame = self._df.copy()
+        if "cell_type" not in frame.columns:
+            frame["cell_type"] = "unknown"
+        if "gene_sequence" not in frame.columns:
+            raise ValueError("SearchResult has no 'gene_sequence' column to use as var_names")
+
+        value_column = "rel"
+        if value_column not in frame.columns:
+            value_column = "exp" if "exp" in frame.columns else None
+        if value_column is None:
+            frame["_value"] = 1.0
+            value_column = "_value"
+
+        frame["_obs_key"] = frame["sample_id"].astype(str) + ":" + frame["cell_type"].astype(str)
+        frame["_gene_key"] = frame["gene_sequence"].astype(str)
+
+        obs_keys = sorted(pd.unique(frame["_obs_key"]).tolist())
+        var_keys = sorted(pd.unique(frame["_gene_key"]).tolist())
+        obs_index = {key: idx for idx, key in enumerate(obs_keys)}
+        var_index = {key: idx for idx, key in enumerate(var_keys)}
+
+        rows = frame["_obs_key"].map(obs_index).to_numpy(dtype=np.int64)
+        cols = frame["_gene_key"].map(var_index).to_numpy(dtype=np.int64)
+        values = (
+            pd.to_numeric(frame[value_column], errors="coerce")
+            .fillna(0.0)
+            .to_numpy(dtype=np.float32)
+        )
+        matrix = sparse.coo_matrix(
+            (values, (rows, cols)), shape=(len(obs_keys), len(var_keys)), dtype=np.float32
+        ).tocsr()
+
+        # One representative row per observation for metadata columns.
+        representative = frame.drop_duplicates("_obs_key").set_index("_obs_key")
+        obs = pd.DataFrame(
+            {
+                "sample_id": representative.loc[obs_keys, "sample_id"].to_numpy(),
+                "cell_type": representative.loc[obs_keys, "cell_type"].to_numpy(),
+            },
+            index=pd.Index(_make_unique_names(obs_keys), name="obs_names"),
+        )
+        metadata = self._sample_metadata
+        if metadata:
+            aliased = {}
+            for sample_id, values in metadata.items():
+                row = dict(values or {})
+                for original, mapped in self.FIELD_MAPPING.items():
+                    if original in row:
+                        row[mapped] = row[original]
+                aliased[sample_id] = row
+            metadata = aliased
+        obs = _merge_sample_metadata(obs.reset_index(), metadata)
+        obs = obs.set_index("obs_names")
+        obs["sample_id"] = _coerce_obs_id(obs["sample_id"])
+
+        # Number of genes with a non-zero value per observation.
+        obs["n_genes"] = np.asarray((matrix > 0).sum(axis=1)).ravel().astype(np.int64)
+
+        var = pd.DataFrame(index=pd.Index(var_keys, name="gene_sequence"))
+
+        result = ad.AnnData(X=matrix, obs=obs, var=var)
+        result.uns["malva"] = _json_safe(
+            {
+                "source": "search",
+                "job_id": self.job_id,
+                "status": self.status,
+                "layout": "sample_x_cell_type_by_gene",
+                "value": value_column,
+                "obs_axis": "sample_id:cell_type",
+                "var_axis": "gene_sequence",
+            }
+        )
+        return result
+
+    def write_h5ad(self, path: Union[str, Path]):
+        """Write the aggregate result to ``path`` as a standard ``.h5ad`` file."""
+        self.to_anndata().write_h5ad(path)
         return self
 
     def __repr__(self) -> str:
@@ -1184,13 +1473,473 @@ class SearchResult(MalvaDataFrame):
         return "".join(html)
 
 
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
+def _arrays_to_anndata(
+    sample_ids: Iterable[Any],
+    cell_ids: Iterable[Any],
+    genes: Iterable[Any],
+    values: Iterable[Any],
+    *,
+    sample_metadata: Any = None,
+    uns: Optional[Dict[str, Any]] = None,
+    var_names: Optional[Iterable[str]] = None,
+) -> ad.AnnData:
+    """Build a cells × genes sparse AnnData from aligned long-format arrays."""
+    sample_ids = np.asarray(list(sample_ids), dtype=object)
+    cell_ids = np.asarray(list(cell_ids), dtype=object)
+    genes = np.asarray([str(gene) for gene in genes], dtype=object)
+    values = np.asarray(list(values), dtype=np.float32)
+    if len(sample_ids) == 0:
+        return _empty_anndata()
 
-import numpy as np
-import pandas as pd
+    obs_keys = np.asarray(
+        [f"{sample}:{cell}" for sample, cell in zip(sample_ids, cell_ids)], dtype=object
+    )
+    unique_obs = sorted(pd.unique(obs_keys).tolist())
+    gene_keys = (
+        [str(gene) for gene in var_names]
+        if var_names is not None
+        else sorted(pd.unique(genes).tolist())
+    )
+    obs_index = {key: idx for idx, key in enumerate(unique_obs)}
+    var_index = {key: idx for idx, key in enumerate(gene_keys)}
 
-if TYPE_CHECKING:
-    from malva_client.client import MalvaClient
+    rows = np.fromiter((obs_index[key] for key in obs_keys), dtype=np.int64, count=len(obs_keys))
+    cols = np.fromiter((var_index[key] for key in genes), dtype=np.int64, count=len(genes))
+    matrix = sparse.coo_matrix(
+        (values, (rows, cols)), shape=(len(unique_obs), len(gene_keys)), dtype=np.float32
+    ).tocsr()
+
+    first_seen: Dict[str, int] = {}
+    for index, key in enumerate(obs_keys):
+        first_seen.setdefault(key, index)
+    first_positions = [first_seen[key] for key in unique_obs]
+
+    obs = pd.DataFrame(
+        {
+            "sample_id": sample_ids[first_positions],
+            "cell_id": cell_ids[first_positions],
+        },
+        index=pd.Index(_make_unique_names(unique_obs), name="obs_names"),
+    )
+    if sample_metadata is not None:
+        obs = _merge_sample_metadata(obs.reset_index(), sample_metadata)
+        obs = obs.set_index("obs_names")
+    obs["sample_id"] = _coerce_obs_id(obs["sample_id"])
+    obs["cell_id"] = _coerce_obs_id(obs["cell_id"])
+
+    var = pd.DataFrame(index=pd.Index(gene_keys, name="gene"))
+    result = ad.AnnData(X=matrix, obs=obs, var=var)
+    if uns:
+        result.uns["malva"] = _json_safe(uns)
+    return result
+
+
+class CellExpressionStream:
+    """Iterable wrapper around a server cell-expression stream.
+
+    Iterating the object yields the same pandas DataFrames as before: one frame
+    per server batch with ``sample_id``, ``cell_id``, ``store_index``, ``gene``
+    and ``value`` columns. The convenience methods materialise those batches as
+    standard AnnData objects.
+    """
+
+    def __init__(
+        self,
+        batches: Any,
+        *,
+        client: Optional[Any] = None,
+        dataset_id: Optional[str] = None,
+        sample_ids: Optional[List[Any]] = None,
+        gene_ids: Optional[List[str]] = None,
+        sample_metadata: Optional[Any] = None,
+    ):
+        self._batches = batches
+        self.client = client
+        self.dataset_id = dataset_id
+        self.sample_ids = list(sample_ids) if sample_ids is not None else None
+        self.gene_ids = list(gene_ids) if gene_ids is not None else None
+        self._sample_metadata = _metadata_to_frame(sample_metadata)
+        self._enriched = False
+
+    def __iter__(self):
+        source = self._batches() if callable(self._batches) else self._batches
+        return iter(source)
+
+    def __repr__(self) -> str:
+        return f"CellExpressionStream(dataset_id={self.dataset_id!r})"
+
+    def enrich(self, sample_metadata: Optional[Union[pd.DataFrame, Dict[Any, Any]]] = None):
+        """Attach local sample metadata used by the AnnData conversion methods."""
+        if sample_metadata is not None:
+            meta = _metadata_to_frame(sample_metadata)
+            if self._sample_metadata.empty:
+                self._sample_metadata = meta
+            else:
+                self._sample_metadata = pd.concat(
+                    [self._sample_metadata, meta], ignore_index=True
+                ).drop_duplicates("sample_id", keep="last")
+
+        if (
+            (self._sample_metadata.empty or not self._enriched)
+            and self.client is not None
+            and self.sample_ids
+        ):
+            known = set()
+            if not self._sample_metadata.empty and "sample_id" in self._sample_metadata.columns:
+                known = {str(value) for value in self._sample_metadata["sample_id"].tolist()}
+            missing = [sample_id for sample_id in self.sample_ids if str(sample_id) not in known]
+            if missing:
+                try:
+                    fetched = self.client.get_sample_metadata(missing)
+                except Exception as exc:  # pragma: no cover - network failure path
+                    logger.warning("Could not fetch sample metadata: %s", exc)
+                    fetched = {}
+                if fetched:
+                    meta = _metadata_to_frame(fetched)
+                    if self._sample_metadata.empty:
+                        self._sample_metadata = meta
+                    else:
+                        self._sample_metadata = pd.concat(
+                            [self._sample_metadata, meta], ignore_index=True
+                        ).drop_duplicates("sample_id", keep="last")
+        self._enriched = True
+        return self
+
+    def _collect_parts(self, aggregate: bool):
+        sample_parts = []
+        cell_parts = []
+        gene_parts = []
+        value_parts = []
+        for batch in self:
+            if batch is None or batch.empty:
+                continue
+            required = {"sample_id", "cell_id", "gene", "value"}
+            missing = required.difference(batch.columns)
+            if missing:
+                raise ValueError(
+                    "Expression batches must contain sample_id, cell_id, gene, and value "
+                    f"columns (missing: {', '.join(sorted(missing))})"
+                )
+            if aggregate:
+                sample_parts.append(batch["sample_id"].to_numpy(copy=True))
+                cell_parts.append(batch["cell_id"].to_numpy(copy=True))
+                gene_parts.append(batch["gene"].astype(str).to_numpy(copy=True))
+                value_parts.append(
+                    pd.to_numeric(batch["value"], errors="coerce")
+                    .fillna(0.0)
+                    .to_numpy(dtype=np.float32)
+                )
+            else:
+                yield batch
+        if aggregate:
+            if not sample_parts:
+                yield _empty_anndata()
+                return
+            sample_ids = np.concatenate(sample_parts)
+            cell_ids = np.concatenate(cell_parts)
+            genes = np.concatenate(gene_parts)
+            values = np.concatenate(value_parts)
+            yield _arrays_to_anndata(
+                sample_ids,
+                cell_ids,
+                genes,
+                values,
+                sample_metadata=self._sample_metadata,
+                uns=self._uns(),
+            )
+
+    def _uns(self) -> Dict[str, Any]:
+        return {
+            "source": "cell_expression_stream",
+            "dataset_id": self.dataset_id,
+            "sample_ids": self.sample_ids,
+            "gene_ids": self.gene_ids,
+            "layout": "cells_by_genes",
+        }
+
+    def to_anndata(self) -> ad.AnnData:
+        """Materialise the full stream as a cells × genes sparse AnnData.
+
+        Observation names are ``sample_id:cell_id`` and variables are genes.
+        This is a terminal operation: the whole stream is consumed.
+        """
+        parts = list(self._collect_parts(aggregate=True))
+        return parts[0] if parts else _empty_anndata()
+
+    def iter_anndata(self):
+        """Yield one sparse AnnData per server batch.
+
+        Parts can be combined with :func:`anndata.concat`, for example
+        ``ad.concat(stream.iter_anndata(), join="outer", fill_value=0)``.
+        """
+        for batch in self:
+            if batch is None or batch.empty:
+                continue
+            uns = self._uns()
+            uns["batch"] = True
+            yield _frame_to_anndata(
+                batch,
+                sample_metadata=self._sample_metadata,
+                uns=uns,
+            )
+
+    def write_h5ad(self, path: Union[str, Path]):
+        """Write the stream to ``path`` with bounded memory.
+
+        The stream is spooled to a temporary SQLite database, then assembled in
+        cell chunks of at most ``cell_chunk_size`` observations. Only one chunk
+        is held in memory at a time. Read the result lazily with
+        ``anndata.read_h5ad(path, backed="r")``.
+        """
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        cell_chunk_size = 10_000
+        part_paths: List[str] = []
+        with tempfile.TemporaryDirectory(prefix="malva_stream_") as tmpdir:
+            db_path = str(Path(tmpdir) / "entries.sqlite")
+            connection = sqlite3.connect(db_path)
+            try:
+                connection.execute(
+                    "CREATE TABLE entries (sample_id, cell_id, gene TEXT, value REAL)"
+                )
+                empty = True
+                for batch in self:
+                    if batch is None or batch.empty:
+                        continue
+                    required = {"sample_id", "cell_id", "gene", "value"}
+                    missing = required.difference(batch.columns)
+                    if missing:
+                        raise ValueError(
+                            "Expression batches must contain sample_id, cell_id, gene, and "
+                            f"value columns (missing: {', '.join(sorted(missing))})"
+                        )
+                    empty = False
+                    rows = [
+                        (
+                            sample_id,
+                            cell_id,
+                            str(gene),
+                            float(value) if value is not None else 0.0,
+                        )
+                        for sample_id, cell_id, gene, value in zip(
+                            batch["sample_id"].tolist(),
+                            batch["cell_id"].tolist(),
+                            batch["gene"].tolist(),
+                            pd.to_numeric(batch["value"], errors="coerce").fillna(0.0).tolist(),
+                        )
+                    ]
+                    connection.executemany(
+                        "INSERT INTO entries VALUES (?, ?, ?, ?)",
+                        rows,
+                    )
+                connection.commit()
+
+                if empty:
+                    _empty_anndata().write_h5ad(path)
+                    return self
+
+                var_names = [
+                    row[0]
+                    for row in connection.execute(
+                        "SELECT DISTINCT gene FROM entries ORDER BY gene"
+                    ).fetchall()
+                ]
+
+                cursor = connection.execute(
+                    "SELECT sample_id, cell_id, gene, value FROM entries "
+                    "ORDER BY sample_id, cell_id, gene"
+                )
+                part_index = 0
+                while True:
+                    chunk_sample: List[Any] = []
+                    chunk_cell: List[Any] = []
+                    chunk_gene: List[Any] = []
+                    chunk_value: List[float] = []
+                    seen_cells = set()
+                    while len(seen_cells) < cell_chunk_size:
+                        row = cursor.fetchone()
+                        if row is None:
+                            break
+                        sample_id, cell_id, gene, value = row
+                        chunk_sample.append(sample_id)
+                        chunk_cell.append(cell_id)
+                        chunk_gene.append(gene)
+                        chunk_value.append(value)
+                        seen_cells.add((sample_id, cell_id))
+                    if not chunk_sample:
+                        break
+                    part = _arrays_to_anndata(
+                        chunk_sample,
+                        chunk_cell,
+                        chunk_gene,
+                        chunk_value,
+                        sample_metadata=self._sample_metadata,
+                        uns=self._uns(),
+                        var_names=var_names,
+                    )
+                    part_path = str(Path(tmpdir) / f"part_{part_index:05d}.h5ad")
+                    part.write_h5ad(part_path, compression="gzip")
+                    part_paths.append(part_path)
+                    part_index += 1
+            finally:
+                connection.close()
+
+            if not part_paths:
+                _empty_anndata().write_h5ad(path)
+                return self
+
+            if len(part_paths) == 1:
+                import shutil
+
+                shutil.copyfile(part_paths[0], path)
+                return self
+
+            concat_on_disk = getattr(getattr(ad, "experimental", None), "concat_on_disk", None)
+            if concat_on_disk is not None:
+                if path.exists():
+                    path.unlink()
+                concat_on_disk(
+                    part_paths,
+                    path,
+                    join="outer",
+                    fill_value=0,
+                    uns_merge="first",
+                )
+            else:  # pragma: no cover - compatibility with old anndata
+                parts = [ad.read_h5ad(part_path) for part_path in part_paths]
+                ad.concat(parts, join="outer", fill_value=0).write_h5ad(path)
+        return self
+
+
+class MetacellMatchResult:
+    """Small, DataFrame-like result returned by :meth:`MalvaClient.find_metacells`."""
+
+    def __init__(
+        self,
+        matches: pd.DataFrame,
+        *,
+        client: Optional[Any] = None,
+        dataset_id: Optional[str] = None,
+        groupby: Optional[str] = None,
+        cluster_order: Optional[List[str]] = None,
+        sample_metadata: Optional[Any] = None,
+    ):
+        self._matches = matches.copy()
+        self.client = client
+        self.dataset_id = dataset_id
+        self.groupby = groupby
+        self.cluster_order = list(cluster_order or [])
+        self._sample_metadata = _metadata_to_frame(sample_metadata)
+        self.labels_: Optional[pd.DataFrame] = None
+
+    def __getattr__(self, name: str):
+        if name.startswith("_"):
+            raise AttributeError(name)
+        return getattr(self._matches, name)
+
+    def __getitem__(self, key):
+        return self._matches[key]
+
+    def __len__(self):
+        return len(self._matches)
+
+    def __repr__(self) -> str:
+        return f"MetacellMatchResult({len(self._matches)} rows)\n{self._matches!r}"
+
+    def to_dataframe(self) -> pd.DataFrame:
+        """Return the ranked metacell matches as a pandas DataFrame."""
+        return self._matches.copy()
+
+    def to_pandas(self) -> pd.DataFrame:
+        """Deprecated alias for :meth:`to_dataframe`."""
+        return self.to_dataframe()
+
+    def enrich(self, sample_metadata: Optional[Union[pd.DataFrame, Dict[Any, Any]]] = None):
+        """Merge local sample metadata (and keep metacell columns) in place."""
+        meta = self._sample_metadata
+        if sample_metadata is not None:
+            incoming = _metadata_to_frame(sample_metadata)
+            if meta.empty:
+                meta = incoming
+            else:
+                meta = pd.concat([meta, incoming], ignore_index=True).drop_duplicates(
+                    "sample_id", keep="last"
+                )
+        self._sample_metadata = meta
+        if not meta.empty:
+            self._matches = _merge_sample_metadata(self._matches, meta)
+        return self
+
+    def assign_labels(
+        self,
+        adata: Optional[Any] = None,
+        groupby: Optional[str] = None,
+        *,
+        column: str = "malva_cell_type",
+        confidence_column: Optional[str] = None,
+        weight: str = "similarity",
+        write_to_obs: bool = True,
+    ) -> pd.DataFrame:
+        """Assign one Malva cell-type label per local cluster.
+
+        Labels are chosen by summing the neighbour weights per metacell cell
+        type for each cluster. Confidence is the winning share of the total
+        weight. When ``adata`` is supplied (and ``write_to_obs`` is true), the
+        labels are written to ``adata.obs[column]``.
+        """
+        if self._matches.empty:
+            labels = pd.DataFrame(
+                columns=["cluster", "cell_type", "confidence", "n_metacells", "weight"]
+            )
+            self.labels_ = labels
+            return labels
+
+        frame = self._matches.copy()
+        if "cell_type" not in frame.columns:
+            raise ValueError("Metacell matches have no 'cell_type' column")
+        if "cluster" not in frame.columns:
+            raise ValueError("Metacell matches have no 'cluster' column")
+        if weight not in frame.columns:
+            weight = "similarity" if "similarity" in frame.columns else None
+        if weight is None:
+            frame["_weight"] = 1.0
+            weight = "_weight"
+        frame["_weight"] = pd.to_numeric(frame[weight], errors="coerce").fillna(0.0)
+
+        grouped = (
+            frame.groupby(["cluster", "cell_type"], observed=True)
+            .agg(weight=("_weight", "sum"), n_metacells=("metacell_id", "nunique"))
+            .reset_index()
+        )
+        total = grouped.groupby("cluster", observed=True)["weight"].transform("sum")
+        grouped["confidence"] = np.where(total > 0, grouped["weight"] / total, 0.0)
+        best = (
+            grouped.sort_values(["cluster", "weight"], ascending=[True, False])
+            .drop_duplicates("cluster")
+            .set_index("cluster")
+        )
+        labels = best[["cell_type", "confidence", "n_metacells", "weight"]].copy()
+        labels.index.name = "cluster"
+        if self.cluster_order:
+            order = [cluster for cluster in self.cluster_order if cluster in labels.index]
+            order += [cluster for cluster in labels.index if cluster not in order]
+            labels = labels.loc[order]
+        labels = labels.reset_index()
+        self.labels_ = labels
+
+        if adata is not None and write_to_obs:
+            groupby = groupby or self.groupby
+            if groupby is None:
+                raise ValueError("groupby is required when writing labels to adata.obs")
+            if groupby not in adata.obs.columns:
+                raise KeyError(f"'{groupby}' is not a column in adata.obs")
+            mapping = dict(zip(labels["cluster"].astype(str), labels["cell_type"]))
+            values = adata.obs[groupby].astype(str)
+            adata.obs[column] = values.map(mapping).astype("category")
+            if confidence_column:
+                confidence_map = dict(zip(labels["cluster"].astype(str), labels["confidence"]))
+                adata.obs[confidence_column] = values.map(confidence_map).astype(float)
+        return labels
 
 
 class CellExpressionMatrixResult:
@@ -2565,3 +3314,58 @@ class CoexpressionResult:
 
     def __len__(self) -> int:
         return len(self.correlated_genes)
+
+
+class DifferentialExpressionResult:
+    """Differential-expression result returned by the coexpression service.
+
+    Wraps ``POST /api/coexpression/differential`` (metacell groups) and
+    ``POST /api/coexpression/differential-from-cells`` (cell IDs).  The
+    ``genes`` list is the full tested set when ``top_n_genes=0``.
+    """
+
+    def __init__(self, raw_data: Dict[str, Any], client: Optional["MalvaClient"] = None):
+        self.raw_data = raw_data
+        self.client = client
+        self.dataset_id = raw_data.get("dataset_id", "")
+        self.genes = raw_data.get("genes", [])
+        self.n_metacells_a = raw_data.get("n_metacells_a", 0)
+        self.n_metacells_b = raw_data.get("n_metacells_b", 0)
+        self.query_time_ms = raw_data.get("query_time_ms", 0.0)
+        self.go_enrichment_a = raw_data.get("go_enrichment_a", [])
+        self.go_enrichment_b = raw_data.get("go_enrichment_b", [])
+
+    def to_dataframe(self) -> pd.DataFrame:
+        """Return the per-gene statistics as a DataFrame."""
+        if not self.genes:
+            return pd.DataFrame(
+                columns=[
+                    "gene",
+                    "log2_fold_change",
+                    "mean_a",
+                    "mean_b",
+                    "p_value",
+                    "adjusted_p_value",
+                    "pct_a",
+                    "pct_b",
+                    "auc",
+                ]
+            )
+        return pd.DataFrame(self.genes)
+
+    def significant(self, alpha: float = 0.05) -> pd.DataFrame:
+        """Return genes with adjusted p-value below ``alpha``."""
+        df = self.to_dataframe()
+        if df.empty or "adjusted_p_value" not in df.columns:
+            return df
+        return df[df["adjusted_p_value"] < alpha].copy()
+
+    def __len__(self) -> int:
+        return len(self.genes)
+
+    def __repr__(self) -> str:
+        return (
+            f"DifferentialExpressionResult(dataset='{self.dataset_id}', "
+            f"genes={len(self.genes)}, "
+            f"metacells_a={self.n_metacells_a}, metacells_b={self.n_metacells_b})"
+        )

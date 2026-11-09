@@ -38,6 +38,8 @@ Client
    .. automethod:: project_cells
    .. automethod:: get_coexpression
    .. automethod:: get_coexpression_genes
+   .. automethod:: find_metacells
+   .. automethod:: compare_clusters_to_metacells
 
    .. rubric:: Samples & Datasets
 

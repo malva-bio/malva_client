@@ -161,22 +161,41 @@ See :doc:`query_parameters` for guidance on choosing these values.
 Work with Results
 -----------------
 
-Enrich aggregate search results with sample metadata, then filter and aggregate
-using pandas-like methods:
+``enrich()`` attaches sample metadata and returns the same result object, so it
+chains naturally. Only sample IDs that are not already available locally are
+requested from Malva:
 
 .. code-block:: python
 
    result = client.search("SPP1")
-   result.enrich_with_metadata()
+   result.enrich()
 
    print(result.available_filter_fields())
 
    # This may be empty if no matching rows exist in the current index.
    brain = result.filter_by(organ="brain")
-   print(brain.to_pandas().head())
+   print(brain.to_dataframe().head())
 
    by_cell_type = result.aggregate_by("cell_type", agg_func="mean")
    print(by_cell_type.head())
+
+The older ``enrich_with_metadata()`` name still works and is an alias.
+
+Convert search results to AnnData
+---------------------------------
+
+Use ``to_anndata()`` to get a standard in-memory AnnData object. The layout is
+fixed and easy to remember: observations are unique ``sample_id`` ×
+``cell_type`` pairs, variables are genes, and ``X`` is a sparse float32 matrix
+of relative expression. Sample and cell-type metadata are in ``obs`` and
+provenance is in ``uns["malva"]``:
+
+.. code-block:: python
+
+   adata = client.search("SPP1, CD3D").enrich().to_anndata()
+   print(adata)
+   print(adata.obs.head())
+   print(adata.var_names[:10])
 
 
 Expression Columns
@@ -243,6 +262,93 @@ the metadata-defined cell universe independently and reuse it across searches:
 Fetching every cell in the database is also supported through
 ``get_cells_by_metadata(include_all_database_cells=True)``, but it is a large
 operation and is intentionally not part of the quick-start workflow.
+
+Stream per-cell expression
+--------------------------
+
+For selected samples, ``stream_cell_expression()`` streams sparse non-zero
+per-cell values in batches instead of building one large matrix in memory.
+Pass a gene panel whenever possible; without one the server has to scan the
+full expression store.
+
+.. code-block:: python
+
+   for batch in client.stream_cell_expression(
+       sample_ids=[sample_id],
+       gene_ids=["SPP1", "CD3D"],
+   ):
+       print(batch.head())
+
+Each batch is a pandas ``DataFrame`` with ``sample_id``, ``cell_id``,
+``store_index``, ``gene``, and ``value`` columns. Only non-zero entries are
+returned. Iterate over the batches rather than wrapping large streams in
+``list()``.
+
+The returned object is a small ``CellExpressionStream`` wrapper. You can still
+loop over it exactly as above, or convert it to AnnData. ``to_anndata()`` reads
+the whole stream and builds a cells × genes sparse float32 matrix; observation
+names are ``sample_id:cell_id`` and variables are genes:
+
+.. code-block:: python
+
+   stream = client.stream_cell_expression(
+       sample_ids=[sample_id],
+       gene_ids=["SPP1", "CD3D"],
+   )
+   adata = stream.to_anndata()
+   print(adata)
+
+For large selections, use ``write_h5ad()``. It writes the stream to disk with
+bounded memory and can be read lazily afterwards:
+
+.. code-block:: python
+
+   client.stream_cell_expression(
+       sample_ids=[sample_id],
+       gene_ids=["SPP1", "CD3D"],
+   ).write_h5ad("cells.h5ad")
+
+   import anndata as ad
+   backed = ad.read_h5ad("cells.h5ad", backed="r")
+   print(backed)
+
+If you prefer to build the matrix yourself, ``iter_anndata()`` yields one
+AnnData per server batch. Combine the parts with ``anndata.concat``:
+
+.. code-block:: python
+
+   import anndata as ad
+
+   parts = client.stream_cell_expression(
+       sample_ids=[sample_id],
+       gene_ids=["SPP1", "CD3D"],
+   ).iter_anndata()
+   combined = ad.concat(parts, join="outer", fill_value=0)
+   print(combined)
+
+
+Get expression for specific cells
+--------------------------------
+
+If you already have a list of cells, pass ``(sample_id, cell_id)`` pairs.
+Cells come back in the same order:
+
+.. code-block:: python
+
+    cells = sorted_cells  # list of (sample_id, cell_id) pairs
+    for batch in client.stream_cell_expression(
+        cells=cells,
+        gene_ids=["CD3D", "CD3E"],
+    ):
+        print(batch.head())
+
+This is useful when you have sorted a cell table by expression and want to
+fetch the cells in high-to-low order. Leave out ``gene_ids`` to get all
+features for each cell.
+
+The server needs a cell-major CSR index in the expression store. If the store
+does not have one, the call fails with a clear "not available yet" error
+instead of scanning the whole store.
 
 Coverage Results
 ----------------
@@ -313,6 +419,76 @@ in ``positive_cells``:
    sample_ids = positive_cells["sample_id"].dropna().astype(int).unique().tolist()
    denominator_cells = client.get_cells_by_metadata(sample_ids=sample_ids)
    print(denominator_cells.head())
+
+Compare Your Clusters to Malva Metacells
+-----------------------------------------
+
+If you have your own AnnData object, you can ask which Malva cells look most
+like each of your clusters. The data stays local: the client averages cells
+inside each cluster and sends only the small cluster × gene matrix, not every
+cell.
+
+.. code-block:: python
+
+   import scanpy as sc
+
+   # Normalise and log-transform first (the client warns if X still looks
+   # like raw integer counts). Your object is never modified by the client.
+   sc.pp.normalize_total(adata, target_sum=1e4)
+   sc.pp.log1p(adata)
+
+   matches = client.find_metacells(
+       adata,
+       groupby="leiden",          # any categorical obs column
+       dataset_id="Human_Cell_Atlas",
+       top_n=50,
+   )
+   print(matches.to_dataframe().head())
+
+The result is a small ``MetacellMatchResult`` object with one row per cluster
+and ranked metacell. Use ``to_dataframe()`` whenever you want a plain pandas
+table. Columns are ``cluster``, ``rank``, ``metacell_id``, ``sample_id``,
+``cell_type``, ``n_cells``, ``similarity`` (cosine), ``distance``
+(``1 - similarity``), and ``enrichment_score`` (a per-cluster z-score of
+similarity across all metacells).
+
+Sample metadata is merged locally when you already have it, so no extra
+metadata request is made:
+
+.. code-block:: python
+
+   sample_meta = my_sample_table.set_index("sample_id")  # your own table
+   matches = client.find_metacells(
+       adata,
+       groupby="leiden",
+       dataset_id="Human_Cell_Atlas",
+       sample_metadata=sample_meta,
+   ).enrich()
+
+Genes that are not present in the Malva dataset are ignored, and the client
+warns which ones were missing.
+
+Assign one label per cluster
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+``assign_labels()`` sums the neighbour similarities per metacell cell type and
+picks the best label for each cluster. It returns a small table with the label,
+confidence, and number of supporting metacells. Pass ``adata`` to also write
+the labels (and optionally the confidence) into ``obs``:
+
+.. code-block:: python
+
+   labels = matches.assign_labels(
+       adata,
+       column="malva_cell_type",
+       confidence_column="malva_confidence",
+   )
+   print(labels)
+
+   print(adata.obs[["leiden", "malva_cell_type", "malva_confidence"]].head())
+
+``compare_clusters_to_metacells()`` remains available as a deprecated alias for
+``find_metacells()``.
 
 Asynchronous Jobs
 -----------------

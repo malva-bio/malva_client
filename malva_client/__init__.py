@@ -7,7 +7,7 @@ try:
 
     __version__ = _get_version("malva_client")
 except Exception:
-    __version__ = "0.4.0"
+    __version__ = "0.5.0"
 __author__ = "Malva Team"
 __email__ = "hello@malva.bio"
 
@@ -23,9 +23,12 @@ __all__ = [
     "ConfigurationError",
     "SearchResult",
     "CellExpressionMatrixResult",
+    "CellExpressionStream",
+    "MetacellMatchResult",
     "CoverageResult",
     "SingleCellResult",
     "CoexpressionResult",
+    "DifferentialExpressionResult",
     "UMAPCoordinates",
     "Config",
     "search_gene",
@@ -69,15 +72,21 @@ def __getattr__(name):
     elif name in (
         "SearchResult",
         "CellExpressionMatrixResult",
+        "CellExpressionStream",
+        "MetacellMatchResult",
         "CoverageResult",
         "SingleCellResult",
         "CoexpressionResult",
+        "DifferentialExpressionResult",
         "UMAPCoordinates",
     ):
         from .models import (
             CellExpressionMatrixResult,
+            CellExpressionStream,
             CoexpressionResult,
             CoverageResult,
+            DifferentialExpressionResult,
+            MetacellMatchResult,
             SearchResult,
             SingleCellResult,
             UMAPCoordinates,
