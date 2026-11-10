@@ -81,6 +81,7 @@ class TestAggregation:
         assert payload["dataset_id"] == "ds1"
         assert payload["top_n"] == 5
         assert payload["metric"] == "cosine"
+        assert payload["space"] == "hellinger"
         clusters = {c["name"]: c for c in payload["clusters"]}
         assert set(clusters) == {"a", "b"}
         assert clusters["a"]["gene_ids"] == ["G1", "G3"]
@@ -214,6 +215,17 @@ class TestValidation:
         adata = _adata(np.full((2, 3), 1.5), pd.Categorical(["a", "a"]))
         with pytest.raises(KeyError, match="not a column"):
             mock_client.compare_clusters_to_metacells(adata, "nope", dataset_id="ds1")
+
+    def test_space_is_forwarded(self, mock_client, monkeypatch):
+        adata = _adata(np.full((2, 3), 1.5), pd.Categorical(["a", "a"]))
+        captured = _capture(monkeypatch, mock_client, _response(clusters=["a"]))
+        mock_client.find_metacells(adata, "cluster", dataset_id="ds1", space="clr")
+        assert captured["json"]["space"] == "clr"
+
+    def test_invalid_space_raises(self, mock_client):
+        adata = _adata(np.full((2, 3), 1.5), pd.Categorical(["a", "a"]))
+        with pytest.raises(ValueError, match="space must be 'clr' or 'hellinger'"):
+            mock_client.find_metacells(adata, "cluster", dataset_id="ds1", space="cosine")
 
     def test_feature_ids_must_align(self, mock_client):
         adata = _adata(np.full((2, 3), 1.5), pd.Categorical(["a", "a"]))

@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.2] - 2026-11-10
+### Changed
+- `find_metacells()` now requests the server's `hellinger` space by default.
+  Hellinger/Bhattacharyya cosine operates on `sqrt(p)` of the panel
+  composition, downweights high-expression housekeeping genes, and improves
+  rare-subtype matching (notably megakaryocyte/platelet and
+  macrophage-lineage queries) without a trained model.
+### Added
+- `find_metacells(space="clr"|"hellinger")` selects the scoring representation.
+  Servers that do not support the field ignore it and return CLR, so older
+  deployments keep working.
+
 ## [0.6.1] - 2026-11-10
 ### Changed
 - `MetacellMatchResult.assign_labels()` now defaults to `weight="auto"`, which
