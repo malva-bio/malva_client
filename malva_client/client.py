@@ -4486,8 +4486,12 @@ class MalvaClient:
             :class:`~malva_client.models.MetacellMatchResult`, a DataFrame-like
             object with ``to_dataframe()``, ``enrich()`` and ``assign_labels()``.
             Its columns are ``cluster``, ``rank``, ``metacell_id``, ``sample_id``,
-            ``cell_type``, ``n_cells``, ``similarity``, ``distance``, and
-            ``enrichment_score`` (plus any local sample metadata columns).
+            ``cell_type``, ``n_cells``, ``similarity``, ``distance``,
+            ``enrichment_score`` and ``percentile`` (plus any local sample
+            metadata columns). Similarity is computed server-side in CLR
+            (centred-log-ratio) space on a fixed variable-gene panel; values are
+            normally normalized expression (e.g. ``log1p(CP10K)``), and raw
+            counts are also accepted.
         """
         if not dataset_id:
             raise ValueError("dataset_id is required")
@@ -4518,13 +4522,14 @@ class MalvaClient:
         codes = categorical.cat.codes.to_numpy(dtype=np.int64)
         labels = [str(label) for label in categorical.cat.categories]
 
-        if _looks_like_raw_counts(X):
+        raw_counts = _looks_like_raw_counts(X)
+        if raw_counts:
             matrix_name = "adata.X" if layer is None else f"adata.layers['{layer}']"
             warnings.warn(
                 f"{matrix_name} looks like raw counts (non-negative integers). "
-                "Malva similarity expects normalized expression; consider running "
-                "sc.pp.normalize_total(adata, target_sum=1e4) followed by "
-                "sc.pp.log1p(adata). The data is not modified.",
+                "Malva can score these as proportions, but normalized expression is "
+                "recommended: run sc.pp.normalize_total(adata, target_sum=1e4) "
+                "followed by sc.pp.log1p(adata). The data is not modified.",
                 UserWarning,
                 stacklevel=2,
             )
@@ -4541,6 +4546,7 @@ class MalvaClient:
                 )
 
         means = _cluster_pseudobulk(X, codes, len(labels))
+        transform = "counts" if raw_counts else "auto"
         clusters = []
         empty_clusters = []
         for i, label in enumerate(labels):
@@ -4553,6 +4559,7 @@ class MalvaClient:
                     "name": label,
                     "gene_ids": [str(gene_ids[j]) for j in row.indices],
                     "values": [float(v) for v in row.data],
+                    "transform": transform,
                 }
             )
 
@@ -4605,6 +4612,7 @@ class MalvaClient:
             "similarity",
             "distance",
             "enrichment_score",
+            "percentile",
         ]
         rows = []
         for cluster in response.get("clusters", []):
@@ -4620,6 +4628,7 @@ class MalvaClient:
                         "similarity": neighbor.get("similarity"),
                         "distance": neighbor.get("distance"),
                         "enrichment_score": neighbor.get("enrichment_score"),
+                        "percentile": neighbor.get("percentile"),
                     }
                 )
         frame = pd.DataFrame(rows, columns=columns)
