@@ -530,7 +530,7 @@ class TestMetacellMatchResult:
                 row(3, "B", 0.48),
             ]
         )
-        clr = MetacellMatchResult(frame, representation="clr")
+        clr = MetacellMatchResult(frame, representation="hellinger")
         labels = clr.assign_labels()
         assert labels.loc[0, "cell_type"] == "T"
         assert labels.loc[0, "confidence"] == pytest.approx(1.0 / (1.0 + 0.5 + 1 / 3))

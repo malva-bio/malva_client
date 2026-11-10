@@ -460,6 +460,12 @@ sequencing depth, metacell size and most global technical shifts cancel out.
 Raw counts are accepted too; the server converts them to proportions before
 scoring.
 
+By default ``find_metacells()`` asks for the ``hellinger`` space: the server
+takes the square root of the panel composition and computes a Bhattacharyya
+cosine. This downweights high-expression housekeeping genes and generally
+matches rare subtypes better, while keeping the same speed. Pass
+``space="clr"`` to use the older CLR scoring explicitly.
+
 Sample metadata is merged locally when you already have it, so no extra
 metadata request is made:
 
@@ -480,10 +486,10 @@ Assign one label per cluster
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 ``assign_labels()`` combines the neighbour hits into one label per cluster.
-With CLR-scored results it defaults to reciprocal-rank weights (``1/rank``),
-which keep the best single match dominant while still using the whole
-neighbourhood; this avoids abundant but merely related cell types outvoting the
-top hit. Legacy raw-mean results keep similarity weighting. It returns a small
+With CLR- or Hellinger-scored results it defaults to reciprocal-rank weights
+(``1/rank``), which keep the best single match dominant while still using the
+whole neighbourhood; this avoids abundant but merely related cell types
+outvoting the top hit. Legacy raw-mean results keep similarity weighting. It returns a small
 table with the label, confidence, and number of supporting metacells. Pass
 ``adata`` to also write the labels (and optionally the confidence) into
 ``obs``:
