@@ -75,7 +75,6 @@ def _metacell_response():
     return {
         "dataset_id": "ds1",
         "metric": "cosine",
-        "representation": "clr",
         "top_n": 50,
         "n_metacells": 100,
         "n_clusters": 2,
@@ -447,9 +446,9 @@ class TestMetacellMatchResult:
         assert labels.set_index("cluster").loc["a", "cell_type"] == "T"
         assert labels.set_index("cluster").loc["b", "cell_type"] == "B"
         assert labels.set_index("cluster").loc["a", "confidence"] == pytest.approx(1.0)
-        assert labels.set_index("cluster").loc["b", "confidence"] == pytest.approx(2.0 / 3.0)
+        assert labels.set_index("cluster").loc["b", "confidence"] == pytest.approx(0.8)
         assert adata.obs["malva_cell_type"].tolist() == ["T", "B"]
-        np.testing.assert_allclose(adata.obs["malva_confidence"].tolist(), [1.0, 2.0 / 3.0])
+        np.testing.assert_allclose(adata.obs["malva_confidence"].tolist(), [1.0, 0.8])
 
     def test_assign_labels_without_adata(self, mock_client, monkeypatch):
         _capture_response(monkeypatch, mock_client, _metacell_response())
@@ -492,7 +491,7 @@ class TestMetacellMatchResult:
                 row(2, "m2", "B", -0.4),
             ]
         )
-        labels = MetacellMatchResult(frame).assign_labels(weight="similarity")
+        labels = MetacellMatchResult(frame).assign_labels()
         assert labels.loc[0, "cell_type"] == "T"
         assert labels.loc[0, "confidence"] == pytest.approx(1.0)
 
@@ -503,40 +502,8 @@ class TestMetacellMatchResult:
                 row(2, "m2", "B", -0.2),
             ]
         )
-        labels = MetacellMatchResult(negative).assign_labels(weight="similarity")
+        labels = MetacellMatchResult(negative).assign_labels()
         assert labels.loc[0, "confidence"] == pytest.approx(0.5)
-
-    def test_assign_labels_rank_weights_favour_top_hit(self):
-        def row(rank, cell_type, similarity):
-            return {
-                "cluster": "a",
-                "rank": rank,
-                "metacell_id": f"m{rank}",
-                "sample_id": 1,
-                "cell_type": cell_type,
-                "n_cells": 10,
-                "similarity": similarity,
-                "distance": 1.0 - similarity,
-                "enrichment_score": 0.0,
-                "percentile": 0.5,
-            }
-
-        # Summed similarity would pick B (0.49 + 0.48 > 0.50), but the best
-        # single match is T and CLR responses should use rank weights.
-        frame = pd.DataFrame(
-            [
-                row(1, "T", 0.50),
-                row(2, "B", 0.49),
-                row(3, "B", 0.48),
-            ]
-        )
-        clr = MetacellMatchResult(frame, representation="clr")
-        labels = clr.assign_labels()
-        assert labels.loc[0, "cell_type"] == "T"
-        assert labels.loc[0, "confidence"] == pytest.approx(1.0 / (1.0 + 0.5 + 1 / 3))
-
-        legacy = MetacellMatchResult(frame, representation="raw_mean")
-        assert legacy.assign_labels().loc[0, "cell_type"] == "B"
 
     def test_deprecated_alias_still_works(self, mock_client, monkeypatch):
         _capture_response(monkeypatch, mock_client, _metacell_response())

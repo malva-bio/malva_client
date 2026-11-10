@@ -479,14 +479,10 @@ warns which ones were missing.
 Assign one label per cluster
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-``assign_labels()`` combines the neighbour hits into one label per cluster.
-With CLR-scored results it defaults to reciprocal-rank weights (``1/rank``),
-which keep the best single match dominant while still using the whole
-neighbourhood; this avoids abundant but merely related cell types outvoting the
-top hit. Legacy raw-mean results keep similarity weighting. It returns a small
-table with the label, confidence, and number of supporting metacells. Pass
-``adata`` to also write the labels (and optionally the confidence) into
-``obs``:
+``assign_labels()`` sums the neighbour similarities per metacell cell type and
+picks the best label for each cluster. It returns a small table with the label,
+confidence, and number of supporting metacells. Pass ``adata`` to also write
+the labels (and optionally the confidence) into ``obs``:
 
 .. code-block:: python
 
@@ -498,10 +494,6 @@ table with the label, confidence, and number of supporting metacells. Pass
    print(labels)
 
    print(adata.obs[["leiden", "malva_cell_type", "malva_confidence"]].head())
-
-Use ``weight="similarity"`` to reproduce the previous summed-similarity
-behaviour, or ``weight="rank"`` to request reciprocal-rank weighting
-explicitly. ``weight="auto"`` is the default.
 
 ``compare_clusters_to_metacells()`` remains available as a deprecated alias for
 ``find_metacells()``.

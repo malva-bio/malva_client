@@ -4640,7 +4640,6 @@ class MalvaClient:
             groupby=groupby,
             cluster_order=labels,
             sample_metadata=sample_metadata,
-            representation=response.get("representation"),
         )
         if sample_metadata is not None:
             result.enrich()
