@@ -43,7 +43,6 @@ def _response(clusters=None, missing=0, missing_genes=None):
                         "similarity": 0.9,
                         "distance": 0.1,
                         "enrichment_score": 1.5,
-                        "percentile": 0.99,
                         "rank": 1,
                     }
                 ],
@@ -85,7 +84,6 @@ class TestAggregation:
         assert set(clusters) == {"a", "b"}
         assert clusters["a"]["gene_ids"] == ["G1", "G3"]
         assert clusters["a"]["values"] == pytest.approx([1.5, 1.125])
-        assert clusters["a"]["transform"] == "auto"
         assert clusters["b"]["gene_ids"] == ["G2"]
         assert clusters["b"]["values"] == pytest.approx([3.5])
         # only a few cluster × gene values, not all cells
@@ -101,11 +99,9 @@ class TestAggregation:
             "similarity",
             "distance",
             "enrichment_score",
-            "percentile",
         ]
         assert frame["cluster"].tolist() == ["a", "b"]
         assert frame["rank"].tolist() == [1, 1]
-        assert frame["percentile"].tolist() == [0.99, 0.99]
 
     def test_dense_input_is_supported(self, mock_client, monkeypatch):
         adata = _adata(np.array([[1.5, 0.0, 2.25], [1.5, 0.0, 0.0]]), pd.Categorical(["a", "a"]))
@@ -146,13 +142,12 @@ class TestWarnings:
         X = np.array([[1.0, 0.0, 2.0], [4.0, 0.0, 0.0]])
         adata = _adata(X, pd.Categorical(["a", "a"]))
         before = adata.X.copy()
-        captured = _capture(monkeypatch, mock_client, _response(clusters=["a"]))
+        _capture(monkeypatch, mock_client, _response(clusters=["a"]))
 
         with pytest.warns(UserWarning, match="looks like raw counts"):
             mock_client.compare_clusters_to_metacells(adata, "cluster", dataset_id="ds1")
 
         assert np.array_equal(adata.X, before)
-        assert captured["json"]["clusters"][0]["transform"] == "counts"
 
     def test_missing_atlas_genes_warn(self, mock_client, monkeypatch):
         adata = _adata(np.array([[1.5, 0.0, 2.25], [1.5, 0.0, 0.0]]), pd.Categorical(["a", "a"]))

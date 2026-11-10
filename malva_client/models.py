@@ -1884,11 +1884,8 @@ class MetacellMatchResult:
 
         Labels are chosen by summing the neighbour weights per metacell cell
         type for each cluster. Confidence is the winning share of the total
-        weight. With the default CLR similarity, negative values mean "less
-        similar than the average metacell", so they are clipped to zero and
-        only positive evidence votes; if no neighbour is positive, uniform
-        weights are used. When ``adata`` is supplied (and ``write_to_obs`` is
-        true), the labels are written to ``adata.obs[column]``.
+        weight. When ``adata`` is supplied (and ``write_to_obs`` is true), the
+        labels are written to ``adata.obs[column]``.
         """
         if self._matches.empty:
             labels = pd.DataFrame(
@@ -1908,12 +1905,6 @@ class MetacellMatchResult:
             frame["_weight"] = 1.0
             weight = "_weight"
         frame["_weight"] = pd.to_numeric(frame[weight], errors="coerce").fillna(0.0)
-        if weight == "similarity":
-            # CLR cosine is centred: negative values mean "less similar than the
-            # average metacell" and must not count as evidence for a label.
-            frame["_weight"] = frame["_weight"].clip(lower=0.0)
-            cluster_total = frame.groupby("cluster", observed=True)["_weight"].transform("sum")
-            frame.loc[cluster_total <= 0, "_weight"] = 1.0
 
         grouped = (
             frame.groupby(["cluster", "cell_type"], observed=True)

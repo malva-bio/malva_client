@@ -90,7 +90,6 @@ def _metacell_response():
                         "similarity": 0.9,
                         "distance": 0.1,
                         "enrichment_score": 1.0,
-                        "percentile": 0.995,
                         "rank": 1,
                     },
                     {
@@ -101,7 +100,6 @@ def _metacell_response():
                         "similarity": 0.4,
                         "distance": 0.6,
                         "enrichment_score": 0.5,
-                        "percentile": 0.8,
                         "rank": 2,
                     },
                 ],
@@ -117,7 +115,6 @@ def _metacell_response():
                         "similarity": 0.8,
                         "distance": 0.2,
                         "enrichment_score": 2.0,
-                        "percentile": 0.99,
                         "rank": 1,
                     },
                     {
@@ -128,7 +125,6 @@ def _metacell_response():
                         "similarity": 0.2,
                         "distance": 0.8,
                         "enrichment_score": 0.1,
-                        "percentile": 0.5,
                         "rank": 2,
                     },
                 ],
@@ -407,7 +403,6 @@ class TestMetacellMatchResult:
             "similarity",
             "distance",
             "enrichment_score",
-            "percentile",
         ]
         pd.testing.assert_frame_equal(frame, result.to_pandas())
         assert list(result.columns)[0] == "cluster"
@@ -469,41 +464,6 @@ class TestMetacellMatchResult:
             "weight",
         ]
         assert result.labels_ is labels
-
-    def test_assign_labels_clips_negative_similarities(self):
-        def row(rank, metacell_id, cell_type, similarity):
-            return {
-                "cluster": "a",
-                "rank": rank,
-                "metacell_id": metacell_id,
-                "sample_id": 1,
-                "cell_type": cell_type,
-                "n_cells": 10,
-                "similarity": similarity,
-                "distance": 1.0 - similarity,
-                "enrichment_score": 0.0,
-                "percentile": 0.5,
-            }
-
-        frame = pd.DataFrame(
-            [
-                row(1, "m1", "T", 0.5),
-                row(2, "m2", "B", -0.4),
-            ]
-        )
-        labels = MetacellMatchResult(frame).assign_labels()
-        assert labels.loc[0, "cell_type"] == "T"
-        assert labels.loc[0, "confidence"] == pytest.approx(1.0)
-
-        # When every neighbour is negative, fall back to uniform weights.
-        negative = pd.DataFrame(
-            [
-                row(1, "m1", "T", -0.1),
-                row(2, "m2", "B", -0.2),
-            ]
-        )
-        labels = MetacellMatchResult(negative).assign_labels()
-        assert labels.loc[0, "confidence"] == pytest.approx(0.5)
 
     def test_deprecated_alias_still_works(self, mock_client, monkeypatch):
         _capture_response(monkeypatch, mock_client, _metacell_response())

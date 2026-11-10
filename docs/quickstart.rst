@@ -448,17 +448,9 @@ cell.
 The result is a small ``MetacellMatchResult`` object with one row per cluster
 and ranked metacell. Use ``to_dataframe()`` whenever you want a plain pandas
 table. Columns are ``cluster``, ``rank``, ``metacell_id``, ``sample_id``,
-``cell_type``, ``n_cells``, ``similarity``, ``distance``
-(``1 - similarity``), ``enrichment_score`` (a per-cluster z-score of
-similarity across all metacells), and ``percentile`` (the fraction of atlas
-metacells with a similarity at or below that neighbour).
-
-``similarity`` is a cosine in CLR (centred-log-ratio) space over a fixed panel
-of variable, non-technical genes, not a cosine of raw expression. The server
-divides each profile by its panel total, log-transforms it, and centres it, so
-sequencing depth, metacell size and most global technical shifts cancel out.
-Raw counts are accepted too; the server converts them to proportions before
-scoring.
+``cell_type``, ``n_cells``, ``similarity`` (cosine), ``distance``
+(``1 - similarity``), and ``enrichment_score`` (a per-cluster z-score of
+similarity across all metacells).
 
 Sample metadata is merged locally when you already have it, so no extra
 metadata request is made:
