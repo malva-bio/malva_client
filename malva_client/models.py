@@ -1823,6 +1823,7 @@ class MetacellMatchResult:
         groupby: Optional[str] = None,
         cluster_order: Optional[List[str]] = None,
         sample_metadata: Optional[Any] = None,
+        representation: Optional[str] = None,
     ):
         self._matches = matches.copy()
         self.client = client
@@ -1830,6 +1831,7 @@ class MetacellMatchResult:
         self.groupby = groupby
         self.cluster_order = list(cluster_order or [])
         self._sample_metadata = _metadata_to_frame(sample_metadata)
+        self.representation = representation
         self.labels_: Optional[pd.DataFrame] = None
 
     def __getattr__(self, name: str):
@@ -1877,18 +1879,29 @@ class MetacellMatchResult:
         *,
         column: str = "malva_cell_type",
         confidence_column: Optional[str] = None,
-        weight: str = "similarity",
+        weight: str = "auto",
         write_to_obs: bool = True,
     ) -> pd.DataFrame:
         """Assign one Malva cell-type label per local cluster.
 
         Labels are chosen by summing the neighbour weights per metacell cell
         type for each cluster. Confidence is the winning share of the total
-        weight. With the default CLR similarity, negative values mean "less
-        similar than the average metacell", so they are clipped to zero and
-        only positive evidence votes; if no neighbour is positive, uniform
-        weights are used. When ``adata`` is supplied (and ``write_to_obs`` is
-        true), the labels are written to ``adata.obs[column]``.
+        weight.
+
+        ``weight="auto"`` (the default) uses **reciprocal-rank** weights
+        (``1/rank``) when the server scored in CLR space, and raw similarity for
+        legacy raw-mean responses. CLR similarities are deliberately on a
+        compressed scale, so a plain similarity sum lets abundant but merely
+        related cell types outvote the single best match; reciprocal-rank
+        weights keep the top hit dominant while still using the whole
+        neighbourhood. Pass ``weight="similarity"`` for the old behaviour, or
+        ``weight="rank"`` explicitly.
+
+        Similarity weights are clipped to zero because centred CLR cosine can
+        be negative ("less similar than the average metacell"). If no
+        neighbour has positive evidence, uniform weights are used. When
+        ``adata`` is supplied (and ``write_to_obs`` is true), the labels are
+        written to ``adata.obs[column]``.
         """
         if self._matches.empty:
             labels = pd.DataFrame(
@@ -1902,12 +1915,24 @@ class MetacellMatchResult:
             raise ValueError("Metacell matches have no 'cell_type' column")
         if "cluster" not in frame.columns:
             raise ValueError("Metacell matches have no 'cluster' column")
+        if weight == "auto":
+            is_clr = str(self.representation or "").strip().lower() == "clr"
+            weight = "rank" if is_clr else "similarity"
+        if weight == "rank" and "rank" not in frame.columns:
+            weight = "similarity"
         if weight not in frame.columns:
             weight = "similarity" if "similarity" in frame.columns else None
         if weight is None:
             frame["_weight"] = 1.0
             weight = "_weight"
-        frame["_weight"] = pd.to_numeric(frame[weight], errors="coerce").fillna(0.0)
+        elif weight == "rank":
+            ranks = pd.to_numeric(frame["rank"], errors="coerce")
+            frame["_weight"] = (1.0 / ranks.clip(lower=1.0)).fillna(0.0)
+        else:
+            frame["_weight"] = pd.to_numeric(frame[weight], errors="coerce").fillna(0.0)
+        if weight in ("similarity", "rank"):
+            cluster_total = frame.groupby("cluster", observed=True)["_weight"].transform("sum")
+            frame.loc[cluster_total <= 0, "_weight"] = 1.0
         if weight == "similarity":
             # CLR cosine is centred: negative values mean "less similar than the
             # average metacell" and must not count as evidence for a label.
