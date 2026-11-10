@@ -4463,7 +4463,6 @@ class MalvaClient:
         *,
         layer: Optional[str] = None,
         feature_ids: Optional[Iterable[str]] = None,
-        space: str = "hellinger",
         sample_metadata: Optional[Union[pd.DataFrame, Dict[Any, Any]]] = None,
     ) -> MetacellMatchResult:
         """Find Malva atlas metacells that look most like each local cluster.
@@ -4479,12 +4478,6 @@ class MalvaClient:
             layer: Optional ``adata.layers`` key to use instead of ``adata.X``.
             feature_ids: Optional Malva feature IDs aligned to ``adata.var_names``.
                 Defaults to ``adata.var_names``.
-            space: Server representation used for similarity. ``"hellinger"``
-                (default) scores the square root of the panel composition
-                (Bhattacharyya cosine), which downweights housekeeping genes and
-                generally improves rare-subtype matching. ``"clr"`` keeps the
-                centred-log-ratio behaviour of older servers. Servers that do
-                not know the field ignore it and return CLR.
             sample_metadata: Optional local sample metadata (DataFrame indexed by
                 ``sample_id``, or a mapping ``sample_id -> row``). It is merged
                 locally after the response; no metadata is requested from Malva.
@@ -4504,9 +4497,6 @@ class MalvaClient:
             raise ValueError("dataset_id is required")
         if not 1 <= int(top_n) <= 1000:
             raise ValueError("top_n must be between 1 and 1000")
-        space = str(space or "hellinger").strip().lower()
-        if space not in {"clr", "hellinger"}:
-            raise ValueError("space must be 'clr' or 'hellinger'")
         if groupby not in adata.obs.columns:
             raise KeyError(f"'{groupby}' is not a column in adata.obs")
 
@@ -4589,7 +4579,6 @@ class MalvaClient:
             "clusters": clusters,
             "top_n": int(top_n),
             "metric": "cosine",
-            "space": space,
         }
         response, _endpoint = self._request_first_available(
             "POST",
@@ -4666,7 +4655,6 @@ class MalvaClient:
         *,
         layer: Optional[str] = None,
         feature_ids: Optional[Iterable[str]] = None,
-        space: str = "hellinger",
         sample_metadata: Optional[Union[pd.DataFrame, Dict[Any, Any]]] = None,
     ) -> MetacellMatchResult:
         """Deprecated alias for :meth:`find_metacells`."""
@@ -4682,7 +4670,6 @@ class MalvaClient:
             dataset_id=dataset_id,
             layer=layer,
             feature_ids=feature_ids,
-            space=space,
             sample_metadata=sample_metadata,
         )
 

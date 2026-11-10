@@ -1889,13 +1889,13 @@ class MetacellMatchResult:
         weight.
 
         ``weight="auto"`` (the default) uses **reciprocal-rank** weights
-        (``1/rank``) when the server scored in CLR or Hellinger space, and raw
-        similarity for legacy raw-mean responses. CLR and Hellinger
-        similarities are deliberately on a compressed scale, so a plain
-        similarity sum lets abundant but merely related cell types outvote the
-        single best match; reciprocal-rank weights keep the top hit dominant
-        while still using the whole neighbourhood. Pass ``weight="similarity"``
-        for the old behaviour, or ``weight="rank"`` explicitly.
+        (``1/rank``) when the server scored in CLR space, and raw similarity for
+        legacy raw-mean responses. CLR similarities are deliberately on a
+        compressed scale, so a plain similarity sum lets abundant but merely
+        related cell types outvote the single best match; reciprocal-rank
+        weights keep the top hit dominant while still using the whole
+        neighbourhood. Pass ``weight="similarity"`` for the old behaviour, or
+        ``weight="rank"`` explicitly.
 
         Similarity weights are clipped to zero because centred CLR cosine can
         be negative ("less similar than the average metacell"). If no
@@ -1916,10 +1916,7 @@ class MetacellMatchResult:
         if "cluster" not in frame.columns:
             raise ValueError("Metacell matches have no 'cluster' column")
         if weight == "auto":
-            is_clr = str(self.representation or "").strip().lower() in {
-                "clr",
-                "hellinger",
-            }
+            is_clr = str(self.representation or "").strip().lower() == "clr"
             weight = "rank" if is_clr else "similarity"
         if weight == "rank" and "rank" not in frame.columns:
             weight = "similarity"
