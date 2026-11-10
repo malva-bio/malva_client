@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+### Changed
+- `find_metacells()` scores cluster-to-metacell similarity in CLR
+  (centred-log-ratio) space on a fixed panel of variable, non-technical genes
+  instead of raw-expression cosine. This cancels sequencing depth and metacell
+  size, compresses high-expression genes, and is substantially more robust to
+  study/batch structure. Raw-count input is now accepted as well as normalised
+  expression.
+### Added
+- `find_metacells()` results include a `percentile` column: the fraction of
+  atlas metacells whose similarity is at or below that neighbour.
+
 ## [0.5.0] - 2026-11-09
 ### Added
 - `stream_cell_expression()` returns a `CellExpressionStream` that yields
