@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.1] - 2026-11-10
+### Changed
+- `MetacellMatchResult.assign_labels()` now defaults to `weight="auto"`, which
+  uses reciprocal-rank weights (`1/rank`) for CLR-scored responses. CLR
+  similarities are deliberately compressed, so summing them lets abundant but
+  merely related cell types outvote the best single match; rank weighting keeps
+  the top hit dominant while still using the whole neighbourhood. Legacy
+  raw-mean responses continue to use similarity weights.
+### Added
+- `MetacellMatchResult.representation` records the server scoring space, and
+  `assign_labels(weight="rank"|"similarity")` allows an explicit override.
+
 ## [0.6.0] - 2026-11-10
 ### Changed
 - `find_metacells()` scores cluster-to-metacell similarity in CLR
