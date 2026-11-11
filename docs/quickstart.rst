@@ -442,6 +442,9 @@ cell.
        groupby="leiden",          # any categorical obs column
        dataset_id="Human_Cell_Atlas",
        top_n=50,
+       method="cosine",           # exact legacy default
+       # method="hellinger"      # optional composition space
+       # method="panel_lda"      # optional weighted-panel space
    )
    print(matches.to_dataframe().head())
 
@@ -471,10 +474,13 @@ warns which ones were missing.
 Assign one label per cluster
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-``assign_labels()`` sums the neighbour similarities per metacell cell type and
-picks the best label for each cluster. It returns a small table with the label,
-confidence, and number of supporting metacells. Pass ``adata`` to also write
-the labels (and optionally the confidence) into ``obs``:
+``assign_labels()`` uses the server's per-cell-type top-k scores for the
+``hellinger``/``panel_lda`` spaces, and falls back to summing neighbour
+similarities for legacy ``cosine`` results. Pass ``weight="similarity"`` or
+``weight="rank"`` to force the old neighbour aggregation. It returns a small
+table with the label, confidence, and number of supporting metacells. Pass
+``adata`` to also write the labels (and optionally the confidence) into
+``obs``:
 
 .. code-block:: python
 

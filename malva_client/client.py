@@ -4463,6 +4463,7 @@ class MalvaClient:
         *,
         layer: Optional[str] = None,
         feature_ids: Optional[Iterable[str]] = None,
+        method: str = "cosine",
         sample_metadata: Optional[Union[pd.DataFrame, Dict[Any, Any]]] = None,
     ) -> MetacellMatchResult:
         """Find Malva atlas metacells that look most like each local cluster.
@@ -4478,6 +4479,12 @@ class MalvaClient:
             layer: Optional ``adata.layers`` key to use instead of ``adata.X``.
             feature_ids: Optional Malva feature IDs aligned to ``adata.var_names``.
                 Defaults to ``adata.var_names``.
+            method: Scoring space. ``"cosine"`` (default) preserves the legacy
+                full-gene raw-mean cosine. ``"hellinger"`` uses Bhattacharyya
+                cosine on a variable-gene composition panel; ``"panel_lda"``
+                uses a between/within-type weighted panel cosine. The new
+                spaces also return per-cell-type top-k scores used by
+                :meth:`MetacellMatchResult.assign_labels`.
             sample_metadata: Optional local sample metadata (DataFrame indexed by
                 ``sample_id``, or a mapping ``sample_id -> row``). It is merged
                 locally after the response; no metadata is requested from Malva.
@@ -4489,6 +4496,9 @@ class MalvaClient:
             ``cell_type``, ``n_cells``, ``similarity``, ``distance``, and
             ``enrichment_score`` (plus any local sample metadata columns).
         """
+        method = str(method or "cosine").strip().lower()
+        if method not in {"cosine", "hellinger", "panel_lda"}:
+            raise ValueError("method must be 'cosine', 'hellinger' or 'panel_lda'")
         if not dataset_id:
             raise ValueError("dataset_id is required")
         if not 1 <= int(top_n) <= 1000:
@@ -4518,7 +4528,8 @@ class MalvaClient:
         codes = categorical.cat.codes.to_numpy(dtype=np.int64)
         labels = [str(label) for label in categorical.cat.categories]
 
-        if _looks_like_raw_counts(X):
+        raw_counts = _looks_like_raw_counts(X)
+        if raw_counts:
             matrix_name = "adata.X" if layer is None else f"adata.layers['{layer}']"
             warnings.warn(
                 f"{matrix_name} looks like raw counts (non-negative integers). "
@@ -4548,13 +4559,14 @@ class MalvaClient:
             if row.nnz == 0:
                 empty_clusters.append(label)
                 continue
-            clusters.append(
-                {
-                    "name": label,
-                    "gene_ids": [str(gene_ids[j]) for j in row.indices],
-                    "values": [float(v) for v in row.data],
-                }
-            )
+            cluster = {
+                "name": label,
+                "gene_ids": [str(gene_ids[j]) for j in row.indices],
+                "values": [float(v) for v in row.data],
+            }
+            if method != "cosine":
+                cluster["transform"] = "counts" if raw_counts else "auto"
+            clusters.append(cluster)
 
         if empty_clusters:
             warnings.warn(
@@ -4573,6 +4585,8 @@ class MalvaClient:
             "top_n": int(top_n),
             "metric": "cosine",
         }
+        if method != "cosine":
+            payload["space"] = method
         response, _endpoint = self._request_first_available(
             "POST",
             ["/api/coexpression/clusters-to-metacells", "/query/clusters-to-metacells"],
@@ -4624,6 +4638,23 @@ class MalvaClient:
                 )
         frame = pd.DataFrame(rows, columns=columns)
 
+        score_rows = []
+        for cluster in response.get("clusters", []):
+            for score in cluster.get("cell_type_scores") or []:
+                score_rows.append(
+                    {
+                        "cluster": cluster.get("name"),
+                        "cell_type": score.get("cell_type"),
+                        "score": score.get("score"),
+                        "n_metacells": score.get("n_metacells"),
+                        "rank": score.get("rank"),
+                    }
+                )
+        cell_type_scores = pd.DataFrame(
+            score_rows,
+            columns=["cluster", "cell_type", "score", "n_metacells", "rank"],
+        )
+
         result = MetacellMatchResult(
             frame,
             client=self,
@@ -4631,6 +4662,8 @@ class MalvaClient:
             groupby=groupby,
             cluster_order=labels,
             sample_metadata=sample_metadata,
+            representation=response.get("space"),
+            cell_type_scores=cell_type_scores,
         )
         if sample_metadata is not None:
             result.enrich()
@@ -4645,6 +4678,7 @@ class MalvaClient:
         *,
         layer: Optional[str] = None,
         feature_ids: Optional[Iterable[str]] = None,
+        method: str = "cosine",
         sample_metadata: Optional[Union[pd.DataFrame, Dict[Any, Any]]] = None,
     ) -> MetacellMatchResult:
         """Deprecated alias for :meth:`find_metacells`."""
@@ -4660,6 +4694,7 @@ class MalvaClient:
             dataset_id=dataset_id,
             layer=layer,
             feature_ids=feature_ids,
+            method=method,
             sample_metadata=sample_metadata,
         )
 

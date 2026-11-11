@@ -1823,6 +1823,8 @@ class MetacellMatchResult:
         groupby: Optional[str] = None,
         cluster_order: Optional[List[str]] = None,
         sample_metadata: Optional[Any] = None,
+        representation: Optional[str] = None,
+        cell_type_scores: Optional[pd.DataFrame] = None,
     ):
         self._matches = matches.copy()
         self.client = client
@@ -1830,6 +1832,12 @@ class MetacellMatchResult:
         self.groupby = groupby
         self.cluster_order = list(cluster_order or [])
         self._sample_metadata = _metadata_to_frame(sample_metadata)
+        self.representation = representation
+        self._cell_type_scores = (
+            cell_type_scores.copy()
+            if isinstance(cell_type_scores, pd.DataFrame)
+            else pd.DataFrame()
+        )
         self.labels_: Optional[pd.DataFrame] = None
 
     def __getattr__(self, name: str):
@@ -1877,15 +1885,20 @@ class MetacellMatchResult:
         *,
         column: str = "malva_cell_type",
         confidence_column: Optional[str] = None,
-        weight: str = "similarity",
+        weight: str = "auto",
         write_to_obs: bool = True,
     ) -> pd.DataFrame:
         """Assign one Malva cell-type label per local cluster.
 
-        Labels are chosen by summing the neighbour weights per metacell cell
-        type for each cluster. Confidence is the winning share of the total
-        weight. When ``adata`` is supplied (and ``write_to_obs`` is true), the
-        labels are written to ``adata.obs[column]``.
+        With the new ``method="hellinger"`` / ``"panel_lda"`` spaces the server
+        returns per-cell-type top-k scores. ``weight="auto"`` (the default) uses
+        those scores when present and falls back to the legacy similarity sum
+        for raw-cosine results. Pass ``weight="similarity"`` or ``weight="rank"``
+        to force the legacy neighbour aggregation. Confidence is the winning
+        share of the positive scores/weights.
+
+        When ``adata`` is supplied (and ``write_to_obs`` is true), the labels
+        are written to ``adata.obs[column]``.
         """
         if self._matches.empty:
             labels = pd.DataFrame(
@@ -1899,6 +1912,17 @@ class MetacellMatchResult:
             raise ValueError("Metacell matches have no 'cell_type' column")
         if "cluster" not in frame.columns:
             raise ValueError("Metacell matches have no 'cluster' column")
+        if weight == "auto":
+            weight = "server" if not self._cell_type_scores.empty else "similarity"
+        if weight == "server":
+            if self._cell_type_scores.empty:
+                weight = "similarity"
+            else:
+                labels = self._labels_from_scores()
+                self.labels_ = labels
+                if adata is not None and write_to_obs:
+                    self._write_labels(adata, groupby, column, confidence_column, labels)
+                return labels
         if weight not in frame.columns:
             weight = "similarity" if "similarity" in frame.columns else None
         if weight is None:
@@ -1928,18 +1952,47 @@ class MetacellMatchResult:
         self.labels_ = labels
 
         if adata is not None and write_to_obs:
-            groupby = groupby or self.groupby
-            if groupby is None:
-                raise ValueError("groupby is required when writing labels to adata.obs")
-            if groupby not in adata.obs.columns:
-                raise KeyError(f"'{groupby}' is not a column in adata.obs")
-            mapping = dict(zip(labels["cluster"].astype(str), labels["cell_type"]))
-            values = adata.obs[groupby].astype(str)
-            adata.obs[column] = values.map(mapping).astype("category")
-            if confidence_column:
-                confidence_map = dict(zip(labels["cluster"].astype(str), labels["confidence"]))
-                adata.obs[confidence_column] = values.map(confidence_map).astype(float)
+            self._write_labels(adata, groupby, column, confidence_column, labels)
         return labels
+
+    def _labels_from_scores(self) -> pd.DataFrame:
+        scores = self._cell_type_scores.copy()
+        scores["score"] = pd.to_numeric(scores["score"], errors="coerce").fillna(0.0)
+        positive = scores["score"].clip(lower=0.0)
+        # Confidence is the winning share of the five strongest candidate
+        # types, not of all 300+ atlas labels.  This keeps the value comparable
+        # to the legacy top-neighbour confidence while still being relative.
+        top5 = positive.groupby(scores["cluster"], observed=True).apply(
+            lambda s: float(s.nlargest(5).sum())
+        )
+        denom = scores["cluster"].map(top5).astype(float)
+        scores["confidence"] = np.where(denom > 0, positive / denom, 0.0)
+        best = (
+            scores.sort_values(["cluster", "score"], ascending=[True, False])
+            .drop_duplicates("cluster")
+            .set_index("cluster")
+        )
+        labels = best[["cell_type", "confidence", "n_metacells", "score"]].copy()
+        labels = labels.rename(columns={"score": "weight"})
+        labels.index.name = "cluster"
+        if self.cluster_order:
+            order = [cluster for cluster in self.cluster_order if cluster in labels.index]
+            order += [cluster for cluster in labels.index if cluster not in order]
+            labels = labels.loc[order]
+        return labels.reset_index()
+
+    def _write_labels(self, adata, groupby, column, confidence_column, labels) -> None:
+        groupby = groupby or self.groupby
+        if groupby is None:
+            raise ValueError("groupby is required when writing labels to adata.obs")
+        if groupby not in adata.obs.columns:
+            raise KeyError(f"'{groupby}' is not a column in adata.obs")
+        mapping = dict(zip(labels["cluster"].astype(str), labels["cell_type"]))
+        values = adata.obs[groupby].astype(str)
+        adata.obs[column] = values.map(mapping).astype("category")
+        if confidence_column:
+            confidence_map = dict(zip(labels["cluster"].astype(str), labels["confidence"]))
+            adata.obs[confidence_column] = values.map(confidence_map).astype(float)
 
 
 class CellExpressionMatrixResult:
