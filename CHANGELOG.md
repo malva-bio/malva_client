@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-11-11
+### Added
+- `find_metacells(method=...)` supports the optional `"hellinger"` and
+  `"panel_lda"` server scoring spaces while keeping `"cosine"` as the exact
+  legacy default.
+- `MetacellMatchResult.assign_labels()` now uses server per-cell-type top-k
+  scores for the new spaces (`weight="auto"`), and still supports the legacy
+  similarity/rank neighbour aggregation via `weight="similarity"`/`"rank"`.
+
 ## [0.5.0] - 2026-11-09
 ### Added
 - `stream_cell_expression()` returns a `CellExpressionStream` that yields

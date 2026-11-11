@@ -19,7 +19,7 @@ def _adata(X, labels):
     )
 
 
-def _response(clusters=None, missing=0, missing_genes=None):
+def _response(clusters=None, missing=0, missing_genes=None, scores=None):
     clusters = clusters or ["a", "b"]
     return {
         "dataset_id": "ds1",
@@ -34,6 +34,7 @@ def _response(clusters=None, missing=0, missing_genes=None):
                 "n_matched_genes": 3 - missing,
                 "n_missing_genes": missing,
                 "missing_genes": missing_genes or [],
+                "cell_type_scores": (scores or {}).get(name, []),
                 "neighbors": [
                     {
                         "metacell_id": f"1__{name}",
@@ -80,6 +81,7 @@ class TestAggregation:
         assert payload["dataset_id"] == "ds1"
         assert payload["top_n"] == 5
         assert payload["metric"] == "cosine"
+        assert "space" not in payload
         clusters = {c["name"]: c for c in payload["clusters"]}
         assert set(clusters) == {"a", "b"}
         assert clusters["a"]["gene_ids"] == ["G1", "G3"]
@@ -216,3 +218,49 @@ class TestValidation:
             mock_client.compare_clusters_to_metacells(
                 adata, "cluster", dataset_id="ds1", feature_ids=["G1"]
             )
+
+    def test_hellinger_method_is_forwarded(self, mock_client, monkeypatch):
+        adata = _adata(np.array([[1.5, 0.0, 2.5], [1.5, 0.0, 0.0]]), pd.Categorical(["a", "a"]))
+        captured = _capture(monkeypatch, mock_client, _response(clusters=["a"]))
+        mock_client.find_metacells(adata, "cluster", dataset_id="ds1", method="hellinger")
+        payload = captured["json"]
+        assert payload["space"] == "hellinger"
+        assert payload["clusters"][0]["transform"] == "auto"
+
+    def test_panel_lda_method_is_forwarded(self, mock_client, monkeypatch):
+        adata = _adata(np.array([[1.0, 0.0, 2.0]]), pd.Categorical(["a"]))
+        captured = _capture(monkeypatch, mock_client, _response(clusters=["a"]))
+        mock_client.find_metacells(adata, "cluster", dataset_id="ds1", method="panel_lda")
+        assert captured["json"]["space"] == "panel_lda"
+
+    def test_invalid_method_raises(self, mock_client):
+        adata = _adata(np.array([[1.0, 0.0, 2.0]]), pd.Categorical(["a"]))
+        with pytest.raises(ValueError, match="method must be"):
+            mock_client.find_metacells(adata, "cluster", dataset_id="ds1", method="cosine2")
+
+    def test_server_scores_drive_assign_labels_by_default(self, mock_client, monkeypatch):
+        adata = _adata(np.array([[1.0, 0.0, 2.0], [1.0, 0.0, 0.0]]), pd.Categorical(["a", "a"]))
+        scores = {
+            "a": [
+                {"cell_type": "T", "score": 0.2, "n_metacells": 2, "rank": 2},
+                {"cell_type": "B", "score": 0.8, "n_metacells": 2, "rank": 1},
+            ]
+        }
+        _capture(monkeypatch, mock_client, _response(clusters=["a"], scores=scores))
+        result = mock_client.find_metacells(adata, "cluster", dataset_id="ds1", method="hellinger")
+        labels = result.assign_labels(write_to_obs=False)
+        assert labels.iloc[0]["cell_type"] == "B"
+        assert labels.iloc[0]["confidence"] == pytest.approx(0.8 / 1.0)
+
+    def test_explicit_similarity_weight_keeps_legacy_aggregation(self, mock_client, monkeypatch):
+        adata = _adata(np.array([[1.0, 0.0, 2.0], [1.0, 0.0, 0.0]]), pd.Categorical(["a", "a"]))
+        scores = {
+            "a": [
+                {"cell_type": "T", "score": 0.2, "n_metacells": 2, "rank": 2},
+                {"cell_type": "B", "score": 0.8, "n_metacells": 2, "rank": 1},
+            ]
+        }
+        _capture(monkeypatch, mock_client, _response(clusters=["a"], scores=scores))
+        result = mock_client.find_metacells(adata, "cluster", dataset_id="ds1", method="hellinger")
+        labels = result.assign_labels(weight="similarity", write_to_obs=False)
+        assert labels.iloc[0]["cell_type"] == "a"
