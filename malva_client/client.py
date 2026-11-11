@@ -138,6 +138,54 @@ _ENDPOINT_PATHS = {
 
 _ENDPOINT_STYLES = {"auto", "canonical", "legacy"}
 
+# Result grouping axes understood by the server. `None` means "omit the field"
+# and keeps the historical (sample, cell_type) payload byte-identical.
+_GROUP_BY_AXES = ("cell_type", "leiden")
+
+
+def _validate_group_by(group_by) -> str:
+    """Return a normalised ``group_by`` value or raise ``ValueError``."""
+    axis = str(group_by).strip().lower()
+    if axis not in _GROUP_BY_AXES:
+        raise ValueError("group_by must be 'cell_type' or 'leiden'")
+    return axis
+
+
+def _merge_federated_grouping(blocks: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Collapse per-shard ``grouping`` blocks into one federation-level view.
+
+    A federation is only truly Leiden-grouped when every contributing shard
+    applied the axis; one fallback shard means the merged frame is the usual
+    cell-type view (with a ``mixed_federation`` reason), never a frame with
+    silently dropped rows.
+    """
+    blocks = [block for block in blocks if isinstance(block, dict)]
+    if not blocks:
+        return None
+    requested = (
+        "leiden"
+        if any(str(block.get("requested")) == "leiden" for block in blocks)
+        else "cell_type"
+    )
+    leiden = [block for block in blocks if str(block.get("applied")) == "leiden"]
+    applied = "cell_type"
+    reason = None
+    if requested == "leiden":
+        if leiden and len(leiden) == len(blocks):
+            applied = "leiden"
+        elif leiden:
+            reason = "mixed_federation"
+        else:
+            reason = blocks[0].get("fallback_reason") or "axis_unavailable"
+    axes = ["cell_type", "leiden"] if applied == "leiden" else ["cell_type"]
+    return {
+        "requested": requested,
+        "applied": applied,
+        "axes": axes,
+        "annotation": leiden[0].get("annotation") if leiden else None,
+        "fallback_reason": reason,
+    }
+
 
 def _expr_data_from_columnar(expr_col: dict) -> dict:
     """Reconstruct row-major expression_data from compact_v2 columnar format."""
@@ -148,6 +196,7 @@ def _expr_data_from_columnar(expr_col: dict) -> dict:
             "data": [],
             "samples": expr_col.get("samples", []),
             "cell_types": expr_col.get("cell_types", []),
+            "clusters": expr_col.get("clusters", []),
             "columns": expr_col.get("columns", []),
             "celltype_sample_counts": expr_col.get("celltype_sample_counts", {}),
         }
@@ -161,6 +210,7 @@ def _expr_data_from_columnar(expr_col: dict) -> dict:
         "data": [[si[j], ci[j], v0[j], v1[j], v2[j], v3[j], v4[j]] for j in range(n)],
         "samples": expr_col.get("samples", []),
         "cell_types": expr_col.get("cell_types", []),
+        "clusters": expr_col.get("clusters", []),
         "columns": expr_col.get("columns", []),
         "celltype_sample_counts": expr_col.get("celltype_sample_counts", {}),
     }
@@ -721,6 +771,7 @@ class MalvaClient:
         stranded: Optional[bool],
         min_kmer_presence: int,
         max_kmer_presence: int,
+        group_by: Optional[str] = None,
     ) -> dict:
         """Build the POST /search payload with correctly mapped parameters.
 
@@ -728,6 +779,9 @@ class MalvaClient:
         the HTTP level) to avoid holding a long-lived connection that would
         hit nginx proxy_read_timeout on slow queries.  The client-level
         wait_for_completion flag is handled by polling after submission.
+
+        ``group_by`` is omitted for the legacy request (``None``), keeping the
+        payload byte-for-byte identical for every caller that does not opt in.
         """
         payload = {
             "query": query,
@@ -743,6 +797,8 @@ class MalvaClient:
             payload["unstranded_mode"] = False
         elif stranded is False:
             payload["unstranded_mode"] = True
+        if group_by is not None:
+            payload["group_by"] = _validate_group_by(group_by)
         if self.dataset_id:
             payload["dataset_id"] = self.dataset_id
         return payload
@@ -804,6 +860,7 @@ class MalvaClient:
         stranded: Optional[bool] = None,
         min_kmer_presence: int = 0,
         max_kmer_presence: int = 100000,
+        group_by: Optional[str] = None,
     ) -> SearchResult:
         """
         Search by gene name, natural-language description, or DNA sequence.
@@ -836,6 +893,12 @@ class MalvaClient:
             max_kmer_presence: Exclude k-mers that appear in more than this
                 many cells.  Useful to remove highly repetitive/ubiquitous
                 k-mers.  Default ``100000``.
+            group_by: Result dimension requested from the server. ``None``
+                (default) keeps the legacy cell-type grouping and omits the
+                field entirely. ``"leiden"`` asks for cluster-keyed rows plus
+                ``cluster_annotations``; inspect ``result.grouping.applied``
+                to see which dimension the server actually returned (a server
+                without the axis falls back to ``"cell_type"``).
 
         Returns:
             :class:`SearchResult` with per-(sample, cell-type) expression
@@ -860,6 +923,7 @@ class MalvaClient:
             stranded,
             min_kmer_presence,
             max_kmer_presence,
+            group_by,
         )
         response = self._request("POST", self._endpoint("search"), json=payload)
 
@@ -2364,6 +2428,7 @@ class MalvaClient:
         stranded: Optional[bool] = None,
         min_kmer_presence: int = 0,
         max_kmer_presence: int = 100000,
+        group_by: Optional[str] = None,
     ) -> SearchResult:
         """
         Search for multiple gene symbols in a single request.
@@ -2384,6 +2449,10 @@ class MalvaClient:
                 many cells.  Default ``0``.
             max_kmer_presence: Exclude k-mers appearing in more than this
                 many cells.  Default ``100000``.
+            group_by: Result dimension. ``None`` (default) keeps the legacy
+                request unchanged; ``"leiden"`` opts into cluster-keyed rows.
+                ``result.grouping.applied`` reports the dimension actually
+                returned.
 
         Returns:
             :class:`SearchResult`.
@@ -2405,6 +2474,7 @@ class MalvaClient:
             stranded,
             min_kmer_presence,
             max_kmer_presence,
+            group_by,
         )
         response = self._request("POST", self._endpoint("search"), json=payload)
 
@@ -3102,6 +3172,7 @@ class MalvaClient:
         poll_interval: int = 2,
         max_wait: int = 300,
         strict: bool = False,
+        group_by: Optional[str] = None,
     ) -> pd.DataFrame:
         """Search every configured Explorer provider and keep the origin.
 
@@ -3136,6 +3207,11 @@ class MalvaClient:
             max_wait: Maximum seconds to wait for all shards.
             strict: Raise :class:`MalvaAPIError` if any shard failed, even when
                 other shards returned rows.
+            group_by: Result dimension forwarded to the Explorer submit.
+                ``None`` (default) keeps the legacy request. ``"leiden"`` asks
+                for cluster-keyed rows; a mixed federation (or a provider
+                without the axis) merges into a cell-type view. The aggregate
+                ``grouping`` block is stored in ``df.attrs["grouping"]``.
 
         Returns:
             A pandas DataFrame with one row per provider, sample and cell type.
@@ -3170,6 +3246,8 @@ class MalvaClient:
                     )
 
         payload: Dict[str, Any] = {"query": query}
+        if group_by is not None:
+            payload["group_by"] = _validate_group_by(group_by)
         dataset = self._default_dataset_id(dataset_id)
         if dataset:
             payload["dataset_id"] = dataset
@@ -3226,6 +3304,8 @@ class MalvaClient:
         errors: List[str] = []
         shard_errors: List[Dict[str, Any]] = []
         provider_metadata: List[Dict[str, Any]] = []
+        groupings: List[Dict[str, Any]] = []
+        cluster_annotations: Dict[str, Any] = {}
 
         def _record_error(shard: Dict[str, Any], provider_name: str, message: str) -> None:
             errors.append(f"{provider_name}: {message}")
@@ -3275,6 +3355,12 @@ class MalvaClient:
             genes = {}
             if isinstance(data, dict):
                 genes = data.get("genes") or data.get("results") or {}
+                if data.get("grouping") is not None:
+                    groupings.append(data["grouping"])
+                if data.get("cluster_annotations"):
+                    cluster_annotations[str(provider_id or provider_name)] = data[
+                        "cluster_annotations"
+                    ]
             if not genes:
                 continue
             result = SearchResult(
@@ -3325,6 +3411,11 @@ class MalvaClient:
             "errors": errors,
             "shard_errors": shard_errors,
         }
+        merged_grouping = _merge_federated_grouping(groupings)
+        if merged_grouping is not None:
+            attrs["grouping"] = merged_grouping
+        if cluster_annotations:
+            attrs["cluster_annotations"] = cluster_annotations
 
         if not frames:
             if errors:

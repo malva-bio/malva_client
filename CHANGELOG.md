@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+### Added
+- Opt-in Leiden grouping: `search()`, `search_genes()` and `search_federated()`
+  accept `group_by="leiden"` (default `None`, which omits the field and keeps
+  the legacy request unchanged). `SearchResult.grouping` reports which
+  dimension the server actually returned (`grouping["applied"]` is the
+  authoritative value, including the `cell_type` fallback and its
+  `fallback_reason`), and `SearchResult.cluster_annotations` exposes the
+  per-(sample, cluster) annotation table. Cluster-keyed frames gain a
+  `cluster_id` column whose `cell_type` is resolved from those annotations.
+  Federated searches expose the aggregate block in `df.attrs["grouping"]` and
+  the per-provider maps in `df.attrs["cluster_annotations"]`. `retrieve_cells`
+  is unchanged.
+
 ## [0.7.0] - 2026-11-11
 ### Added
 - `find_metacells(method=...)` supports the optional `"hellinger"` and

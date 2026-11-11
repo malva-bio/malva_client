@@ -108,6 +108,41 @@ and ``shard_errors``. Failed shards emit a warning and are listed in
 ``attrs["errors"]`` instead of being silently dropped. Pass ``strict=True`` to
 raise ``MalvaAPIError`` when any shard fails.
 
+Leiden grouping (opt-in)
+^^^^^^^^^^^^^^^^^^^^^^^^
+
+``search``, ``search_genes`` and ``search_federated`` accept ``group_by``.
+The default is ``None``, which omits the field and keeps the historical
+cell-type request byte-for-byte. Pass ``group_by="leiden"`` to ask for rows
+keyed by ``(sample_id, cluster_id)`` plus the per-cluster annotations:
+
+.. code-block:: python
+
+   result = client.search("FOXP3", group_by="leiden")
+   print(result.grouping["applied"])          # "leiden" or "cell_type"
+   print(result.cluster_annotations.head())   # sample/cluster -> cell type
+
+The server may not be able to provide the axis (an older deployment, a provider
+that does not advertise it, or a mixed federation). In that case it still
+answers normally and ``result.grouping`` reports the fallback:
+
+.. code-block:: python
+
+   grouping = result.grouping
+   if grouping["applied"] == "leiden":
+       frame = result.df            # cluster-keyed rows, with cluster_id
+       labels = result.cluster_annotations
+   else:
+       frame = result.df            # the usual cell-type view
+       print(grouping["fallback_reason"])   # e.g. "axis_unavailable"
+
+Always branch on ``grouping["applied"]``: it is the authoritative statement of
+which dimension the frame actually carries. ``grouping["annotation"]`` reports
+the annotation version/method when Leiden was applied; ``grouping["axes"]``
+lists the axes the response supports. For federated searches the aggregate
+block is in ``df.attrs["grouping"]`` and the per-provider annotation maps are
+in ``df.attrs["cluster_annotations"]``. ``retrieve_cells`` is unchanged.
+
 Study discovery
 ^^^^^^^^^^^^^^^
 

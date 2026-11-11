@@ -925,6 +925,84 @@ class MalvaDataFrame:
         return self._df[field].value_counts().head(limit)
 
 
+_CLUSTER_ANNOTATION_COLUMNS = [
+    "sample_id",
+    "cluster_id",
+    "cell_type",
+    "cl_id",
+    "annotation_method",
+    "annotation_version",
+    "n_cells",
+]
+
+_LEGACY_GROUPING = {
+    "requested": "cell_type",
+    "applied": "cell_type",
+    "axes": ["cell_type"],
+    "annotation": None,
+    "fallback_reason": None,
+}
+
+
+def _cluster_annotation_lookup(raw) -> Dict[Tuple[str, str], Dict[str, Any]]:
+    """Index ``cluster_annotations`` by ``(sample_id, cluster_id)``.
+
+    Accepts the nested map from the search results and the metadata service's
+    list shape (``{"clusters": [...]}`` or a bare list of rows).
+    """
+    lookup: Dict[Tuple[str, str], Dict[str, Any]] = {}
+    if isinstance(raw, list):
+        rows = raw
+    elif isinstance(raw, dict) and isinstance(raw.get("clusters"), list):
+        rows = raw["clusters"]
+    elif isinstance(raw, dict):
+        rows = []
+        for sample_id, clusters in raw.items():
+            if not isinstance(clusters, dict):
+                continue
+            for cluster_id, annotation in clusters.items():
+                if isinstance(annotation, dict):
+                    row = dict(annotation)
+                    row.setdefault("sample_id", sample_id)
+                    row.setdefault("cluster_id", cluster_id)
+                    rows.append(row)
+    else:
+        return lookup
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        if row.get("sample_id") is None or row.get("cluster_id") is None:
+            continue
+        lookup[(str(row["sample_id"]), str(row["cluster_id"]))] = row
+    return lookup
+
+
+def _cluster_annotation_frame(raw) -> pd.DataFrame:
+    """The ``cluster_annotations`` table as a DataFrame (empty when absent)."""
+    if isinstance(raw, list):
+        rows = [dict(row) for row in raw if isinstance(row, dict)]
+    elif isinstance(raw, dict) and isinstance(raw.get("clusters"), list):
+        rows = [dict(row) for row in raw["clusters"] if isinstance(row, dict)]
+    elif isinstance(raw, dict):
+        rows = []
+        for sample_id, clusters in raw.items():
+            if not isinstance(clusters, dict):
+                continue
+            for cluster_id, annotation in clusters.items():
+                if isinstance(annotation, dict):
+                    row = dict(annotation)
+                    row.setdefault("sample_id", sample_id)
+                    row.setdefault("cluster_id", cluster_id)
+                    rows.append(row)
+    else:
+        rows = []
+    frame = pd.DataFrame(rows)
+    for column in _CLUSTER_ANNOTATION_COLUMNS:
+        if column not in frame.columns:
+            frame[column] = None
+    return frame[_CLUSTER_ANNOTATION_COLUMNS]
+
+
 class SearchResult(MalvaDataFrame):
     """Container for search results that extends MalvaDataFrame for direct analysis.
 
@@ -1000,6 +1078,7 @@ class SearchResult(MalvaDataFrame):
         if not results:
             return pd.DataFrame()
 
+        annotation_lookup = _cluster_annotation_lookup(self.raw_data.get("cluster_annotations"))
         all_data = []
         for gene_seq, result in results.items():
             if gene_seq.startswith("_") or not isinstance(result, dict):
@@ -1016,6 +1095,7 @@ class SearchResult(MalvaDataFrame):
                 columns = expression_data.get("columns", [])
                 samples = expression_data.get("samples", [])
                 cell_types = expression_data.get("cell_types", [])
+                clusters = expression_data.get("clusters", [])
 
                 if data and columns:
                     # Keep sample x cell-type aggregate rows and expose the same
@@ -1050,22 +1130,35 @@ class SearchResult(MalvaDataFrame):
                                 if cell_type_idx < len(cell_types)
                                 else f"celltype_{cell_type_idx}"
                             )
+                            cluster_id = None
+                            if clusters:
+                                cluster_id = (
+                                    clusters[cell_type_idx]
+                                    if cell_type_idx < len(clusters)
+                                    else f"cluster_{cell_type_idx}"
+                                )
+                                annotation = annotation_lookup.get(
+                                    (str(sample_id), str(cluster_id))
+                                )
+                                if annotation and annotation.get("cell_type"):
+                                    cell_type = annotation["cell_type"]
 
-                            sample_rows.append(
-                                {
-                                    "sample_idx": sample_idx,
-                                    "cell_type_idx": cell_type_idx,
-                                    "sample_id": sample_id,
-                                    "cell_type": cell_type,
-                                    "gene_sequence": gene_seq,
-                                    "rel": norm_expr,
-                                    "exp": kpt_expr,
-                                    "pct": fraction_positive * 100.0,
-                                    "raw_kmers": raw_kmer_mean,
-                                    "cell_count": cell_count,
-                                    "sample_celltype_id": f"{sample_id}_{cell_type}",
-                                }
-                            )
+                            row_entry = {
+                                "sample_idx": sample_idx,
+                                "cell_type_idx": cell_type_idx,
+                                "sample_id": sample_id,
+                                "cell_type": cell_type,
+                                "gene_sequence": gene_seq,
+                                "rel": norm_expr,
+                                "exp": kpt_expr,
+                                "pct": fraction_positive * 100.0,
+                                "raw_kmers": raw_kmer_mean,
+                                "cell_count": cell_count,
+                                "sample_celltype_id": f"{sample_id}_{cell_type}",
+                            }
+                            if cluster_id is not None:
+                                row_entry["cluster_id"] = cluster_id
+                            sample_rows.append(row_entry)
 
                     if sample_rows:
                         df = pd.DataFrame(sample_rows)
@@ -1105,10 +1198,27 @@ class SearchResult(MalvaDataFrame):
                 df["sample_id"] = df["sample_idx"].map(
                     lambda x: samples[x] if x < len(samples) else x
                 )
+            clusters = expression_data.get("clusters", [])
             if "cell_type_idx" in df.columns:
                 df["cell_type"] = df["cell_type_idx"].map(
                     lambda x: cell_types[x] if x < len(cell_types) else "Unknown"
                 )
+                if clusters:
+                    df["cluster_id"] = df["cell_type_idx"].map(
+                        lambda x: clusters[x] if x < len(clusters) else str(x)
+                    )
+                    if annotation_lookup and "sample_id" in df.columns:
+                        resolved = []
+                        for _, row in df.iterrows():
+                            annotation = annotation_lookup.get(
+                                (str(row["sample_id"]), str(row["cluster_id"]))
+                            )
+                            resolved.append(
+                                annotation.get("cell_type")
+                                if annotation and annotation.get("cell_type")
+                                else row["cell_type"]
+                            )
+                        df["cell_type"] = resolved
 
             df["gene_sequence"] = gene_seq
             all_data.append(df)
@@ -1156,6 +1266,45 @@ class SearchResult(MalvaDataFrame):
     def status(self) -> str:
         """Get the current status of the search"""
         return self.raw_data.get("status", "unknown")
+
+    @property
+    def grouping(self) -> Dict[str, Any]:
+        """Which dimension the result actually carries.
+
+        ``grouping["applied"]`` is the authoritative answer: ``"cell_type"``
+        (the legacy view, also returned by a server that could not provide the
+        axis) or ``"leiden"`` (cluster-keyed rows plus ``cluster_annotations``).
+        A legacy response without a ``grouping`` block is reported as
+        ``{"requested": "cell_type", "applied": "cell_type", ...}`` so callers
+        can always branch on ``applied``.
+        """
+        self._ensure_loaded()
+        raw = self.raw_data.get("grouping") if isinstance(self.raw_data, dict) else None
+        if not isinstance(raw, dict):
+            return dict(_LEGACY_GROUPING)
+        applied = "leiden" if str(raw.get("applied")) == "leiden" else "cell_type"
+        axes = raw.get("axes")
+        annotation = raw.get("annotation")
+        return {
+            "requested": "leiden" if str(raw.get("requested")) == "leiden" else "cell_type",
+            "applied": applied,
+            "axes": [str(axis) for axis in axes] if isinstance(axes, list) else ["cell_type"],
+            "annotation": annotation if isinstance(annotation, dict) else None,
+            "fallback_reason": raw.get("fallback_reason"),
+        }
+
+    @property
+    def cluster_annotations(self) -> pd.DataFrame:
+        """Per-``(sample_id, cluster_id)`` annotation table (empty when absent).
+
+        Columns: ``sample_id``, ``cluster_id``, ``cell_type``, ``cl_id``,
+        ``annotation_method``, ``annotation_version``, ``n_cells``. This is the
+        map needed to roll cluster rows up to cell types client-side; it is
+        empty for a legacy cell-type response.
+        """
+        self._ensure_loaded()
+        raw = self.raw_data.get("cluster_annotations") if isinstance(self.raw_data, dict) else None
+        return _cluster_annotation_frame(raw)
 
     @property
     def results(self) -> Dict[str, Any]:
