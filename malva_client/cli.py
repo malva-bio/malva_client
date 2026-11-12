@@ -215,7 +215,6 @@ def config_cmd(ctx, key, value, server, token, show, reset):
             console.print(f"  - {error}")
 
 
-
 @main.command()
 @click.argument("job_id")
 @click.pass_context
