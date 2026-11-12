@@ -28,23 +28,22 @@ transcriptomics data.
       :link-type: doc
       :class-card: sd-rounded-3 sd-shadow-sm
 
-      Step-by-step Jupyter notebooks for expression analysis, coverage,
-      and more.
+      Jupyter notebooks for setup, expression analysis, viral queries,
+      cell projection, and coexpression.
 
    .. grid-item-card:: Query Parameters
       :link: query_parameters
       :link-type: doc
       :class-card: sd-rounded-3 sd-shadow-sm
 
-      Tune window size, threshold, and strandedness for your specific
-      use case.
+      Choose k-mer presence limits and stranded search for your use case.
 
    .. grid-item-card:: API Reference
       :link: api/modules
       :link-type: doc
       :class-card: sd-rounded-3 sd-shadow-sm
 
-      Full reference for all classes, methods, and CLI commands.
+      Reference for the client, models, configuration, and exceptions.
 
    .. grid-item-card:: About Malva
       :link: about

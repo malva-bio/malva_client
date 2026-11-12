@@ -120,6 +120,7 @@ CoverageResult
 
    .. automethod:: __init__
    .. automethod:: to_dataframe
+   .. automethod:: to_long_dataframe
    .. automethod:: get_filter_options
    .. automethod:: download_wig
    .. automethod:: plot
@@ -153,3 +154,13 @@ UMAPCoordinates
    .. automethod:: __init__
    .. automethod:: to_dataframe
    .. automethod:: plot
+
+DifferentialExpressionResult
+----------------------------
+
+.. autoclass:: malva_client.models.DifferentialExpressionResult
+   :no-members:
+   :show-inheritance:
+
+   .. automethod:: to_dataframe
+   .. automethod:: significant

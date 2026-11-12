@@ -159,7 +159,7 @@ def login(ctx):
         sys.exit(1)
 
 
-@main.command()
+@main.command(name="config")
 @click.option("--key", help="Configuration key to set")
 @click.option("--value", help="Configuration value")
 @click.option("--server", help="Server URL")
@@ -214,8 +214,6 @@ def config_cmd(ctx, key, value, server, token, show, reset):
         for error in errors:
             console.print(f"  - {error}")
 
-
-main.add_command(config_cmd, name="config")
 
 
 @main.command()

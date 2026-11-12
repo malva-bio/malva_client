@@ -16,7 +16,7 @@ Key Features
       Large-Scale Data
       ^^^
       Access to over 7,000 single-cell samples across diverse tissues,
-      conditions, and species — all queryable through a single API.
+      conditions, and species, all queryable through a single API.
 
    .. grid-item-card::
       :class-card: sd-border-success sd-rounded-3
@@ -25,7 +25,7 @@ Key Features
       Real-time Search
       ^^^
       Instantaneous results powered by a k-mer index.  No reprocessing of raw
-      data — just query and get answers.
+      data. Just query and get answers.
 
    .. grid-item-card::
       :class-card: sd-border-info sd-rounded-3
@@ -43,7 +43,7 @@ Key Features
       Harmonized Metadata
       ^^^
       Standardized metadata across studies for consistent cross-dataset
-      analysis — cell types, organs, diseases, and more.
+      analysis: cell types, organs, diseases, and more.
 
 Use Cases
 ---------

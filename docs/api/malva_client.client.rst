@@ -14,6 +14,7 @@ Client
    .. automethod:: search_sequences
    .. automethod:: search_genes
    .. automethod:: search_federated
+   .. automethod:: stream_cell_expression
 
    .. rubric:: Job Management
 
@@ -40,6 +41,9 @@ Client
    .. automethod:: get_coexpression_genes
    .. automethod:: find_metacells
    .. automethod:: compare_clusters_to_metacells
+   .. automethod:: project_cells_to_metacells
+   .. automethod:: differential_expression
+   .. automethod:: differential_expression_from_cells
 
    .. rubric:: Samples & Datasets
 
@@ -61,10 +65,22 @@ Client
    .. automethod:: get_filter_values
    .. automethod:: get_overview_stats
 
+   .. rubric:: Cell Explorer
+
+   .. automethod:: list_cell_explorer_cohorts
+   .. automethod:: create_cell_explorer_cohort
+   .. automethod:: get_cell_explorer_cohort
+   .. automethod:: preview_cell_explorer_cohort
+   .. automethod:: delete_cell_explorer_cohort
+   .. automethod:: download_cell_explorer_cohort
+   .. automethod:: load_cell_explorer_cohort
+
    .. rubric:: Workspace
 
    .. automethod:: get_workspace
    .. automethod:: set_workspace
+   .. automethod:: reset_endpoint_style
+   .. autoattribute:: endpoint_style
 
    .. rubric:: Utilities
 
