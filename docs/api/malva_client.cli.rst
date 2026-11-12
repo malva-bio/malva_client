@@ -1,7 +1,6 @@
 malva\_client.cli module
 ========================
 
-.. automodule:: malva_client.cli
-   :members:
-   :show-inheritance:
-   :undoc-members:
+.. click:: malva_client.cli:main
+   :prog: malva_client
+   :nested: full

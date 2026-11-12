@@ -34,7 +34,8 @@ current public Malva API once authentication is configured.
    :maxdepth: 1
    :hidden:
 
-   ../installation
-   ../quickstart
-   ../query_parameters
-   ../api/malva_client.client
+   00_setup_malva_client
+   01_expression_analysis
+   02_querying_covid
+   03_projecting_to_cells
+   04_coexpression_analysis

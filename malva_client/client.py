@@ -721,6 +721,8 @@ class MalvaClient:
         stranded: Optional[bool],
         min_kmer_presence: int,
         max_kmer_presence: int,
+        window_size: Optional[int] = None,
+        threshold: Optional[float] = None,
     ) -> dict:
         """Build the POST /search payload with correctly mapped parameters.
 
@@ -743,6 +745,14 @@ class MalvaClient:
             payload["unstranded_mode"] = False
         elif stranded is False:
             payload["unstranded_mode"] = True
+        if window_size is not None:
+            if window_size < 1:
+                raise ValueError("window_size must be a positive integer")
+            payload["window_size"] = window_size
+        if threshold is not None:
+            if not 0.0 <= threshold <= 1.0:
+                raise ValueError("threshold must be between 0.0 and 1.0")
+            payload["threshold"] = threshold
         if self.dataset_id:
             payload["dataset_id"] = self.dataset_id
         return payload
@@ -804,6 +814,8 @@ class MalvaClient:
         stranded: Optional[bool] = None,
         min_kmer_presence: int = 0,
         max_kmer_presence: int = 100000,
+        window_size: Optional[int] = None,
+        threshold: Optional[float] = None,
     ) -> SearchResult:
         """
         Search by gene name, natural-language description, or DNA sequence.
@@ -836,6 +848,10 @@ class MalvaClient:
             max_kmer_presence: Exclude k-mers that appear in more than this
                 many cells.  Useful to remove highly repetitive/ubiquitous
                 k-mers.  Default ``100000``.
+            window_size: Sliding window size in k-mers. If omitted, the server
+                uses its default.
+            threshold: Match threshold between 0.0 and 1.0. If omitted, the
+                server uses its default.
 
         Returns:
             :class:`SearchResult` with per-(sample, cell-type) expression
@@ -860,6 +876,8 @@ class MalvaClient:
             stranded,
             min_kmer_presence,
             max_kmer_presence,
+            window_size,
+            threshold,
         )
         response = self._request("POST", self._endpoint("search"), json=payload)
 

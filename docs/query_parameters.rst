@@ -9,7 +9,7 @@ When you submit a query sequence, the engine:
 
 1. Extracts all k-mers from the query.
 2. Looks up each k-mer in the index and identifies which cells contain it.
-3. Aggregates per-cell hit counts and normalises them into expression scores.
+3. Aggregates per-cell hit counts and normalizes them into expression scores.
 
 The three user-facing parameters let you filter which k-mers participate in
 the search and whether both strands are considered.
@@ -29,9 +29,9 @@ Parameters
       Exclude k-mers that appear in **fewer** than this many cells across
       the entire database.
 
-      * ``0`` (default) — no lower filter; all k-mers used
-      * ``10`` – ``100`` — removes k-mers that are extremely rare
-        (likely sequencing errors or ultra-low-coverage regions)
+      * ``0`` (default). The search uses all k-mers.
+      * ``10`` to ``100``. Removes rare k-mers (likely sequencing errors or
+        low-coverage regions).
 
    .. grid-item-card::
       :class-card: sd-border-success sd-rounded-3
@@ -41,9 +41,9 @@ Parameters
       ^^^
       Exclude k-mers that appear in **more** than this many cells.
 
-      * ``100000`` (default) — retains nearly all k-mers
-      * ``10000`` – ``50000`` — removes highly repetitive / ubiquitous
-        k-mers that would inflate scores for unrelated cell types
+      * ``100000`` (default). Retains nearly all k-mers.
+      * ``10000`` to ``50000``. Removes highly repetitive or ubiquitous
+        k-mers that would inflate scores for unrelated cell types.
 
    .. grid-item-card::
       :class-card: sd-border-info sd-rounded-3
@@ -151,7 +151,7 @@ Probe Design Guidelines
 
 .. warning::
 
-   **3'-biased protocols** — Many scRNA-seq protocols (10x Chromium, Drop-seq)
+   **3'-biased protocols**: Many scRNA-seq protocols (10x Chromium, Drop-seq)
    capture only the 3' end of transcripts.  If your query targets a region far
    from the 3' UTR, you may observe lower signal or no hits even when the gene
    is expressed.  Consider designing probes against the 3' end of the transcript
@@ -170,7 +170,7 @@ Pass ``stranded=False`` when you want to include reverse-complement k-mers:
 
    probe = "ACGTACGT" * 6  # 48 nt query sequence
 
-   # Both strands — useful when orientation is ambiguous
+   # Both strands, useful when orientation is ambiguous
    results = client.search_sequences(probe, stranded=False)
 
    # Forward only (default)

@@ -15,7 +15,8 @@ Before querying Malva, create an API token at `malva.bio <https://malva.bio>`_
 
    malva_client config --server https://malva.mdc-berlin.de --token YOUR_API_TOKEN
 
-Alternatively, set ``MALVA_API_TOKEN`` in your shell before running Python.
+Alternatively, set both ``MALVA_API_URL`` and ``MALVA_API_TOKEN`` in your shell
+before running Python, or run ``malva_client login``.
 
 Connect
 -------
@@ -45,10 +46,13 @@ the environment variables once:
    # or later:
    client.set_workspace(workspace="atlas:human", dataset_id="human")
 
-The client sends these as ``X-Malva-Workspace`` / ``X-Malva-Dataset`` /
-``X-Malva-Provider`` headers and includes ``dataset_id`` in searches, so the
-Explorer resolves the same project/index the Console has selected. Per-call
-``dataset_id`` arguments still win over the configured default.
+The client sends these values in the ``X-Malva-Workspace``,
+``X-Malva-Dataset``, and ``X-Malva-Provider`` headers. It also includes
+``dataset_id`` in searches. A per-call ``dataset_id`` argument takes
+precedence over the configured default. Only ``search_federated``,
+``stream_cell_expression``, and ``find_metacells`` accept a per-call
+``dataset_id``; other searches use the constructor, ``set_workspace()``, or
+``MALVA_DATASET_ID``.
 
 Provider scoping
 ----------------
@@ -61,9 +65,10 @@ Metadata and sample methods accept a ``provider`` argument:
    studies = client.get_studies(provider="malva-public-index")
    values = client.get_filter_values("organ", provider="malva-public-index")
 
-The value is sent as the ``provider`` query parameter. An explicit argument
-wins over the client-level ``provider_id`` configured in the constructor, via
-``set_workspace(provider_id=...)`` or ``MALVA_PROVIDER_ID``.
+The client sends the value as the ``provider`` query parameter. A per-call
+argument takes precedence over the client-level ``provider_id``. Set the
+client-level value in the constructor, with ``set_workspace(provider_id=...)``,
+or with ``MALVA_PROVIDER_ID``.
 
 Run Searches
 ------------
@@ -121,8 +126,9 @@ cannot be read through the provider's sample route, the client raises a clear
 Sequence search
 ^^^^^^^^^^^^^^^
 
-Search a DNA sequence. The example sequence is at least 24 nt, matching the
-index k-mer size.
+Search a DNA sequence of at least 24 nucleotides (nt). A k-mer is a DNA
+subsequence of length k; the index uses k = 24. The example sequence is 24 nt
+long.
 
 .. code-block:: python
 
@@ -223,7 +229,7 @@ The main expression columns are:
 Per-cell retrieval is different: ``retrieve_cells()`` returns positive cells,
 and its ``value`` column contains raw per-cell expression/k-mer counts when the
 server has stored per-cell values for that search. Missing cell × feature
-entries are zero.
+entries are omitted rather than zero-filled.
 
 Retrieve Cells
 --------------
@@ -249,10 +255,11 @@ that were returned.
    print(cell_ids.head())
    print(cell_df.head())
 
-For aggregate searches, the ``value`` column is a positive-cell indicator:
-``1`` means the cell was positive for the query. To get the denominator cells
-for downstream fraction-expressing or mean-including-zero calculations, fetch
-the metadata-defined cell universe independently and reuse it across searches:
+Fallback retrieval endpoints report a positive-cell indicator in ``value``:
+``1`` means that the cell matched the query. Some calculations, such as the
+fraction of expressing cells or the mean expression including zeros, also need
+the cells that did not match. Call ``get_cells_by_metadata()`` to fetch all
+cells for the selected samples, and reuse that table across searches:
 
 .. code-block:: python
 
@@ -328,14 +335,14 @@ AnnData per server batch. Combine the parts with ``anndata.concat``:
 
 
 Get expression for specific cells
---------------------------------
+---------------------------------
 
 If you already have a list of cells, pass ``(sample_id, cell_id)`` pairs.
 Cells come back in the same order:
 
 .. code-block:: python
 
-    cells = sorted_cells  # list of (sample_id, cell_id) pairs
+    cells = [(sample_id, "cell-1"), (sample_id, "cell-2")]  # replace with your pairs
     for batch in client.stream_cell_expression(
         cells=cells,
         gene_ids=["CD3D", "CD3E"],
@@ -475,10 +482,10 @@ Assign one label per cluster
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 ``assign_labels()`` uses the server's per-cell-type top-k scores for the
-``hellinger``/``panel_lda`` spaces, and falls back to summing neighbour
-similarities for legacy ``cosine`` results. Pass ``weight="similarity"`` or
-``weight="rank"`` to force the old neighbour aggregation. It returns a small
-table with the label, confidence, and number of supporting metacells. Pass
+``hellinger`` and ``panel_lda`` methods. For ``cosine`` results, it sums
+neighbor similarities. Pass ``weight="similarity"`` or ``weight="rank"`` to use
+neighbor aggregation. The method returns a table with the label, confidence,
+and number of supporting metacells. Pass
 ``adata`` to also write the labels (and optionally the confidence) into
 ``obs``:
 

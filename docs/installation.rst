@@ -1,7 +1,7 @@
 Installation
 ============
 
-Requires **Python 3.8** or newer.
+Requires **Python 3.9** or newer.
 
 .. tab-set::
 
@@ -52,7 +52,7 @@ Run this one-liner to confirm everything is working:
 
    python -c "import malva_client; print(malva_client.__version__)"
 
-You should see the installed version number (e.g. ``0.2.0``).
+You should see the installed version number, for example ``0.7.0``.
 
 Next Steps
 ----------

@@ -6,6 +6,10 @@ name: build-wheels
 on:
   workflow_call:
   pull_request:
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
+      - '.readthedocs.yaml'
   workflow_dispatch:
 
 # least privilege: the build only reads the repository
