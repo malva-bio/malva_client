@@ -1,0 +1,1425 @@
+<!doctype html>
+<html class="no-js" lang="en" data-content_root="../">
+  <head><meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="color-scheme" content="light dark"><meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="author" title="About these documents" href="../about.html"><link rel="index" title="Index" href="../genindex.html"><link rel="search" title="Search" href="../search.html"><link rel="next" title="API Reference" href="../api/modules.html"><link rel="prev" title="Projecting requantified expression of arbitrary sequences to single cells" href="03_projecting_to_cells.html">
+
+    <!-- Generated with Sphinx 7.4.7 and Furo 2025.12.19 -->
+        <title>Server-Side Coexpression Analysis - Malva Client</title>
+      <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=d111a655" />
+    <link rel="stylesheet" type="text/css" href="../_static/styles/furo.css?v=7bdb33bb" />
+    <link rel="stylesheet" type="text/css" href="../_static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../_static/sphinx-design.min.css?v=95c83b7e" />
+    <link rel="stylesheet" type="text/css" href="../_static/nbsphinx-code-cells.css?v=2aa19091" />
+    <link rel="stylesheet" type="text/css" href="../_static/styles/furo-extensions.css?v=8dab3a3b" />
+    
+    
+
+
+<style>
+  body {
+    --color-code-background: #f2f2f2;
+  --color-code-foreground: #1e1e1e;
+  
+  }
+  @media not print {
+    body[data-theme="dark"] {
+      --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  
+    }
+    @media (prefers-color-scheme: dark) {
+      body:not([data-theme="light"]) {
+        --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  
+      }
+    }
+  }
+</style></head>
+  <body>
+    
+    <script>
+      document.body.dataset.theme = localStorage.getItem("theme") || "auto";
+    </script>
+    
+
+<svg xmlns="http://www.w3.org/2000/svg" style="display: none;">
+  <symbol id="svg-toc" viewBox="0 0 24 24">
+    <title>Contents</title>
+    <svg stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 1024 1024">
+      <path d="M408 442h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8zm-8 204c0 4.4 3.6 8 8 8h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56zm504-486H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zm0 632H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zM115.4 518.9L271.7 642c5.8 4.6 14.4.5 14.4-6.9V388.9c0-7.4-8.5-11.5-14.4-6.9L115.4 505.1a8.74 8.74 0 0 0 0 13.8z"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-menu" viewBox="0 0 24 24">
+    <title>Menu</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-menu">
+      <line x1="3" y1="12" x2="21" y2="12"></line>
+      <line x1="3" y1="6" x2="21" y2="6"></line>
+      <line x1="3" y1="18" x2="21" y2="18"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-arrow-right" viewBox="0 0 24 24">
+    <title>Expand</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-chevron-right">
+      <polyline points="9 18 15 12 9 6"></polyline>
+    </svg>
+  </symbol>
+  <symbol id="svg-sun" viewBox="0 0 24 24">
+    <title>Light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="feather-sun">
+      <circle cx="12" cy="12" r="5"></circle>
+      <line x1="12" y1="1" x2="12" y2="3"></line>
+      <line x1="12" y1="21" x2="12" y2="23"></line>
+      <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+      <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+      <line x1="1" y1="12" x2="3" y2="12"></line>
+      <line x1="21" y1="12" x2="23" y2="12"></line>
+      <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+      <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon" viewBox="0 0 24 24">
+    <title>Dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-moon">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454z" />
+    </svg>
+  </symbol>
+  <symbol id="svg-sun-with-moon" viewBox="0 0 24 24">
+    <title>Auto light/dark, in light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path style="opacity: 50%" d="M 5.411 14.504 C 5.471 14.504 5.532 14.504 5.591 14.504 C 3.639 16.319 4.383 19.569 6.931 20.352 C 7.693 20.586 8.512 20.551 9.25 20.252 C 8.023 23.207 4.056 23.725 2.11 21.184 C 0.166 18.642 1.702 14.949 4.874 14.536 C 5.051 14.512 5.231 14.5 5.411 14.5 L 5.411 14.504 Z"/>
+      <line x1="14.5" y1="3.25" x2="14.5" y2="1.25"/>
+      <line x1="14.5" y1="15.85" x2="14.5" y2="17.85"/>
+      <line x1="10.044" y1="5.094" x2="8.63" y2="3.68"/>
+      <line x1="19" y1="14.05" x2="20.414" y2="15.464"/>
+      <line x1="8.2" y1="9.55" x2="6.2" y2="9.55"/>
+      <line x1="20.8" y1="9.55" x2="22.8" y2="9.55"/>
+      <line x1="10.044" y1="14.006" x2="8.63" y2="15.42"/>
+      <line x1="19" y1="5.05" x2="20.414" y2="3.636"/>
+      <circle cx="14.5" cy="9.55" r="3.6"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon-with-sun" viewBox="0 0 24 24">
+    <title>Auto light/dark, in dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path d="M 8.282 7.007 C 8.385 7.007 8.494 7.007 8.595 7.007 C 5.18 10.184 6.481 15.869 10.942 17.24 C 12.275 17.648 13.706 17.589 15 17.066 C 12.851 22.236 5.91 23.143 2.505 18.696 C -0.897 14.249 1.791 7.786 7.342 7.063 C 7.652 7.021 7.965 7 8.282 7 L 8.282 7.007 Z"/>
+      <line style="opacity: 50%" x1="18" y1="3.705" x2="18" y2="2.5"/>
+      <line style="opacity: 50%" x1="18" y1="11.295" x2="18" y2="12.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="4.816" x2="14.464" y2="3.964"/>
+      <line style="opacity: 50%" x1="20.711" y1="10.212" x2="21.563" y2="11.063"/>
+      <line style="opacity: 50%" x1="14.205" y1="7.5" x2="13.001" y2="7.5"/>
+      <line style="opacity: 50%" x1="21.795" y1="7.5" x2="23" y2="7.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="10.184" x2="14.464" y2="11.036"/>
+      <line style="opacity: 50%" x1="20.711" y1="4.789" x2="21.563" y2="3.937"/>
+      <circle style="opacity: 50%" cx="18" cy="7.5" r="2.169"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-pencil" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-pencil-code">
+      <path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" />
+      <path d="M13.5 6.5l4 4" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+  <symbol id="svg-eye" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-eye-code">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M10 12a2 2 0 1 0 4 0a2 2 0 0 0 -4 0" />
+      <path
+        d="M11.11 17.958c-3.209 -.307 -5.91 -2.293 -8.11 -5.958c2.4 -4 5.4 -6 9 -6c3.6 0 6.6 2 9 6c-.21 .352 -.427 .688 -.647 1.008" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+</svg>
+
+<input type="checkbox" class="sidebar-toggle" name="__navigation" id="__navigation" aria-label="Toggle site navigation sidebar">
+<input type="checkbox" class="sidebar-toggle" name="__toc" id="__toc" aria-label="Toggle table of contents sidebar">
+<label class="overlay sidebar-overlay" for="__navigation"></label>
+<label class="overlay toc-overlay" for="__toc"></label>
+
+<a class="skip-to-content muted-link" href="#furo-main-content">Skip to content</a>
+
+
+
+<div class="page">
+  <header class="mobile-header">
+    <div class="header-left">
+      <label class="nav-overlay-icon" for="__navigation">
+        <span class="icon"><svg><use href="#svg-menu"></use></svg></span>
+      </label>
+    </div>
+    <div class="header-center">
+      <a href="../index.html"><div class="brand">Malva Client</div></a>
+    </div>
+    <div class="header-right">
+      <div class="theme-toggle-container theme-toggle-header">
+        <button class="theme-toggle" aria-label="Toggle Light / Dark / Auto color theme">
+          <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+          <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+          <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+          <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+        </button>
+      </div>
+      <label class="toc-overlay-icon toc-header-icon" for="__toc">
+        <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
+      </label>
+    </div>
+  </header>
+  <aside class="sidebar-drawer">
+    <div class="sidebar-container">
+      
+      <div class="sidebar-sticky"><a class="sidebar-brand" href="../index.html">
+  
+  <span class="sidebar-brand-text">Malva Client</span>
+  
+</a><form class="sidebar-search-container" method="get" action="../search.html" role="search">
+  <input class="sidebar-search" placeholder="Search" name="q" aria-label="Search">
+  <input type="hidden" name="check_keywords" value="yes">
+  <input type="hidden" name="area" value="default">
+</form>
+<div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
+  <p class="caption" role="heading"><span class="caption-text">Guides</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../about.html">About Malva</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../installation.html">Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../quickstart.html">Quick Start</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../query_parameters.html">Query Parameters</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Tutorials</span></p>
+<ul class="current">
+<li class="toctree-l1 current has-children"><a class="reference internal" href="index.html">Tutorials</a><input aria-label="Toggle navigation of Tutorials" checked="" class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" role="switch" type="checkbox"/><label for="toctree-checkbox-1"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul class="current">
+<li class="toctree-l2"><a class="reference internal" href="00_setup_malva_client.html">Setting up the Malva Client</a></li>
+<li class="toctree-l2"><a class="reference internal" href="01_expression_analysis.html">Sequence expression from the Malva Index</a></li>
+<li class="toctree-l2"><a class="reference internal" href="02_querying_covid.html">Querying viral sequences with the Malva Index</a></li>
+<li class="toctree-l2"><a class="reference internal" href="03_projecting_to_cells.html">Projecting requantified expression of arbitrary sequences to single cells</a></li>
+<li class="toctree-l2 current current-page"><a class="current reference internal" href="#">Server-Side Coexpression Analysis</a></li>
+</ul>
+</li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">API Reference</span></p>
+<ul>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../api/modules.html">API Reference</a><input aria-label="Toggle navigation of API Reference" class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" role="switch" type="checkbox"/><label for="toctree-checkbox-2"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="../api/malva_client.client.html">Client</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../api/malva_client.models.html">Models</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../api/malva_client.config.html">Configuration</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../api/malva_client.exceptions.html">Exceptions</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../api/malva_client.auth.html">malva_client.auth module</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../api/malva_client.storage.html">malva_client.storage module</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../api/malva_client.tools.html">malva_client.tools module</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../api/malva_client.cli.html">malva_client.cli module</a></li>
+</ul>
+</li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Links</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference external" href="https://malva.bio">Malva Platform</a></li>
+<li class="toctree-l1"><a class="reference external" href="https://github.com/malva-bio/malva_client">GitHub</a></li>
+<li class="toctree-l1"><a class="reference external" href="https://malva.readthedocs.io">Malva Tools</a></li>
+<li class="toctree-l1"><a class="reference external" href="https://github.com/malva-bio/malva_client/blob/main/CHANGELOG.md">Changelog</a></li>
+</ul>
+
+</div>
+</div>
+
+      </div>
+      
+    </div>
+  </aside>
+  <div class="main">
+    <div class="content">
+      <div class="article-container">
+        <a href="#" class="back-to-top muted-link">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+            <path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8v12z"></path>
+          </svg>
+          <span>Back to top</span>
+        </a>
+        <div class="content-icon-container">
+          <div class="view-this-page">
+  <a class="muted-link" href="https://github.com/malva-bio/malva_client/blob/main/docs/tutorials/04_coexpression_analysis.ipynb?plain=true" title="View this page">
+    <svg><use href="#svg-eye"></use></svg>
+    <span class="visually-hidden">View this page</span>
+  </a>
+</div><div class="edit-this-page">
+  <a class="muted-link" href="https://github.com/malva-bio/malva_client/edit/main/docs/tutorials/04_coexpression_analysis.ipynb" rel="edit" title="Edit this page">
+    <svg><use href="#svg-pencil"></use></svg>
+    <span class="visually-hidden">Edit this page</span>
+  </a>
+</div><div class="theme-toggle-container theme-toggle-content">
+            <button class="theme-toggle" aria-label="Toggle Light / Dark / Auto color theme">
+              <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+              <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+              <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+              <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+            </button>
+          </div>
+          <label class="toc-overlay-icon toc-content-icon" for="__toc">
+            <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
+          </label>
+        </div>
+        <article role="main" id="furo-main-content">
+          <section id="Server-Side-Coexpression-Analysis">
+<h1>Server-Side Coexpression Analysis<a class="headerlink" href="#Server-Side-Coexpression-Analysis" title="Link to this heading">¶</a></h1>
+<p>This notebook demonstrates how to use the Malva coexpression API to identify correlated genes, visualise metacell UMAP projections, and explore GO enrichment — all computed server-side without needing scanpy locally.</p>
+<section id="1.-Setup">
+<h2>1. Setup<a class="headerlink" href="#1.-Setup" title="Link to this heading">¶</a></h2>
+<p>Connect to the Malva API. If you have configured your token via <code class="docutils literal notranslate"><span class="pre">malva_client</span> <span class="pre">config</span></code>, no arguments are needed.</p>
+<div class="nbinput nblast docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[ ]:
+</pre></div>
+</div>
+<div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="n">API_TOKEN</span> <span class="o">=</span> <span class="s2">""</span> <span class="c1"># place your API token here</span>
+</pre></div>
+</div>
+</div>
+<div class="nbinput docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[2]:
+</pre></div>
+</div>
+<div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">malva_client</span><span class="w"> </span><span class="kn">import</span> <span class="n">MalvaClient</span>
+
+<span class="n">client</span> <span class="o">=</span> <span class="n">MalvaClient</span><span class="p">(</span><span class="s2">"https://malva.mdc-berlin.de"</span><span class="p">,</span> <span class="n">API_TOKEN</span><span class="p">)</span>
+</pre></div>
+</div>
+</div>
+<div class="nboutput nblast docutils container">
+<div class="prompt empty docutils container">
+</div>
+<div class="output_area stderr docutils container">
+<div class="highlight"><pre>
+INFO:malva_client.client:Connected to Malva API: operational
+INFO:malva_client.client:Authenticated successfully: free account
+</pre></div></div>
+</div>
+</section>
+<section id="2.-Load-UMAP-Coordinates">
+<h2>2. Load UMAP Coordinates<a class="headerlink" href="#2.-Load-UMAP-Coordinates" title="Link to this heading">¶</a></h2>
+<p>Fetch the base UMAP embedding for a dataset. Replace <code class="docutils literal notranslate"><span class="pre">&quot;DATASET_ID&quot;</span></code> with a dataset from the hierarchy above.</p>
+<div class="nbinput docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[3]:
+</pre></div>
+</div>
+<div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="n">DATASET_ID</span> <span class="o">=</span> <span class="s2">"Human_Cell_Atlas"</span>
+
+<span class="n">umap</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">get_umap_coordinates</span><span class="p">(</span><span class="n">DATASET_ID</span><span class="p">)</span>
+<span class="n">umap</span><span class="o">.</span><span class="n">to_dataframe</span><span class="p">()</span><span class="o">.</span><span class="n">head</span><span class="p">()</span>
+</pre></div>
+</div>
+</div>
+<div class="nboutput nblast docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[3]:
+</pre></div>
+</div>
+<div class="output_area rendered_html docutils container">
+<div>
+<style scoped>
+    .dataframe tbody tr th:only-of-type {
+        vertical-align: middle;
+    }
+
+    .dataframe tbody tr th {
+        vertical-align: top;
+    }
+
+    .dataframe thead th {
+        text-align: right;
+    }
+</style>
+<table border="1" class="dataframe">
+  <thead>
+    <tr style="text-align: right;">
+      <th></th>
+      <th>x</th>
+      <th>y</th>
+      <th>metacell_id</th>
+      <th>n_cells</th>
+      <th>sample</th>
+      <th>cluster</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <th>0</th>
+      <td>5.019366</td>
+      <td>5.303446</td>
+      <td>0</td>
+      <td>4</td>
+      <td>00238629-699e-404e-b59c-3cc998977dab</td>
+      <td>Muscle</td>
+    </tr>
+    <tr>
+      <th>1</th>
+      <td>4.458183</td>
+      <td>4.992155</td>
+      <td>1</td>
+      <td>3</td>
+      <td>00238629-699e-404e-b59c-3cc998977dab</td>
+      <td>Muscle</td>
+    </tr>
+    <tr>
+      <th>2</th>
+      <td>4.259455</td>
+      <td>6.150664</td>
+      <td>2</td>
+      <td>2</td>
+      <td>00238629-699e-404e-b59c-3cc998977dab</td>
+      <td>Muscle</td>
+    </tr>
+    <tr>
+      <th>3</th>
+      <td>3.423040</td>
+      <td>0.688364</td>
+      <td>3</td>
+      <td>56</td>
+      <td>00aa6c53-71b5-4c12-98c4-54eb8173ffa5</td>
+      <td>Endothelial</td>
+    </tr>
+    <tr>
+      <th>4</th>
+      <td>4.574430</td>
+      <td>0.048661</td>
+      <td>4</td>
+      <td>42</td>
+      <td>00aa6c53-71b5-4c12-98c4-54eb8173ffa5</td>
+      <td>Mesenchymal_Stromal (Fibroblast)</td>
+    </tr>
+  </tbody>
+</table>
+</div></div>
+</div>
+<div class="nbinput docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[4]:
+</pre></div>
+</div>
+<div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="n">umap</span><span class="o">.</span><span class="n">plot</span><span class="p">(</span><span class="n">color_by</span><span class="o">=</span><span class="s1">'cluster'</span><span class="p">)</span>
+</pre></div>
+</div>
+</div>
+<div class="nboutput docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[4]:
+</pre></div>
+</div>
+<div class="output_area docutils container">
+<img alt="../_images/tutorials_04_coexpression_analysis_6_0.png" src="../_images/tutorials_04_coexpression_analysis_6_0.png" />
+</div>
+</div>
+<div class="nboutput nblast docutils container">
+<div class="prompt empty docutils container">
+</div>
+<div class="output_area docutils container">
+<img alt="../_images/tutorials_04_coexpression_analysis_6_1.png" src="../_images/tutorials_04_coexpression_analysis_6_1.png" />
+</div>
+</div>
+</section>
+<section id="3.-Search-for-a-Gene">
+<h2>3. Search for a Gene<a class="headerlink" href="#3.-Search-for-a-Gene" title="Link to this heading">¶</a></h2>
+<p>Run a standard gene search and inspect the result.</p>
+<div class="nbinput docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[5]:
+</pre></div>
+</div>
+<div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="n">result</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="s2">"FOXP3"</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="p">)</span>
+</pre></div>
+</div>
+</div>
+<div class="nboutput docutils container">
+<div class="prompt empty docutils container">
+</div>
+<div class="output_area stderr docutils container">
+<div class="highlight"><pre>
+INFO:malva_client.client:Search submitted: job_id=bce55537-98fc-4058-ac1f-eb8c2c359601, status=pending
+INFO:malva_client.client:search status: pending
+INFO:malva_client.client:search status: completed
+INFO:malva_client.client:search completed: bce55537-98fc-4058-ac1f-eb8c2c359601
+INFO:malva_client.models:Fetching results for job bce55537-98fc-4058-ac1f-eb8c2c359601 ...
+INFO:malva_client.models:Results parsed in 0.3s: 1 genes
+</pre></div></div>
+</div>
+<div class="nboutput nblast docutils container">
+<div class="prompt empty docutils container">
+</div>
+<div class="output_area docutils container">
+<div class="highlight"><pre>
+🔬 Malva Search Results
+==================================================
+📊 Total cells: 60,738
+📊 Sample/cell_type combinations: 13772
+🧬 Genes/sequences: 1
+🧪 Samples: 4584
+🔬 Cell types: 284
+📈 Expression range: 0.001 - 13.017
+📊 Mean expression: 0.397
+
+ℹ️  Basic expression data only
+💡 Run .enrich_with_metadata() to add sample metadata for filtering by:
+   • Organ, disease, species
+   • Study, laboratory, protocol
+   • Age, sex, development stage
+
+🔍 Available methods:
+   • .filter_by(organ=&#39;brain&#39;, disease=&#39;normal&#39;)
+   • .aggregate_by(&#39;cell_type&#39;)
+   • .plot_expression_by(&#39;organ&#39;)
+   • .available_filter_fields()
+</pre></div></div>
+</div>
+</section>
+<section id="4.-Run-Coexpression-Analysis">
+<h2>4. Run Coexpression Analysis<a class="headerlink" href="#4.-Run-Coexpression-Analysis" title="Link to this heading">¶</a></h2>
+<p>Pass the search job ID and dataset to the coexpression API. This returns correlated genes, UMAP scores, GO enrichment, cell-type enrichment, and tissue breakdown — all computed on the server.</p>
+<div class="nbinput docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[6]:
+</pre></div>
+</div>
+<div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="n">coexpr</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">get_coexpression</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">job_id</span><span class="p">,</span> <span class="n">DATASET_ID</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">coexpr</span><span class="p">)</span>
+</pre></div>
+</div>
+</div>
+<div class="nboutput docutils container">
+<div class="prompt empty docutils container">
+</div>
+<div class="output_area stderr docutils container">
+<div class="highlight"><pre>
+INFO:malva_client.client:Coexpression task 43343074-6a28-40c8-afca-7046b9b853d2 status: pending
+INFO:malva_client.client:Coexpression task 43343074-6a28-40c8-afca-7046b9b853d2 status: running
+INFO:malva_client.client:Coexpression task 43343074-6a28-40c8-afca-7046b9b853d2 status: running
+</pre></div></div>
+</div>
+<div class="nboutput nblast docutils container">
+<div class="prompt empty docutils container">
+</div>
+<div class="output_area docutils container">
+<div class="highlight"><pre>
+CoexpressionResult(dataset=&#39;Human_Cell_Atlas&#39;, genes=100, query_cells=87749, metacells=13508, go_terms=141)
+</pre></div></div>
+</div>
+</section>
+<section id="5.-UMAP-with-Expression-Scores">
+<h2>5. UMAP with Expression Scores<a class="headerlink" href="#5.-UMAP-with-Expression-Scores" title="Link to this heading">¶</a></h2>
+<p>Colour the UMAP by the fraction of cells expressing the queried gene.</p>
+<div class="nbinput docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[7]:
+</pre></div>
+</div>
+<div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="n">coexpr</span><span class="o">.</span><span class="n">plot_umap</span><span class="p">(</span><span class="n">color_by</span><span class="o">=</span><span class="s1">'positive_fraction'</span><span class="p">)</span>
+</pre></div>
+</div>
+</div>
+<div class="nboutput docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[7]:
+</pre></div>
+</div>
+<div class="output_area docutils container">
+<img alt="../_images/tutorials_04_coexpression_analysis_12_0.png" src="../_images/tutorials_04_coexpression_analysis_12_0.png" />
+</div>
+</div>
+<div class="nboutput nblast docutils container">
+<div class="prompt empty docutils container">
+</div>
+<div class="output_area docutils container">
+<img alt="../_images/tutorials_04_coexpression_analysis_12_1.png" src="../_images/tutorials_04_coexpression_analysis_12_1.png" />
+</div>
+</div>
+</section>
+<section id="6.-Correlated-Genes">
+<h2>6. Correlated Genes<a class="headerlink" href="#6.-Correlated-Genes" title="Link to this heading">¶</a></h2>
+<p>Inspect the most strongly correlated genes.</p>
+<div class="nbinput docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[8]:
+</pre></div>
+</div>
+<div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="n">genes_df</span> <span class="o">=</span> <span class="n">coexpr</span><span class="o">.</span><span class="n">genes_to_dataframe</span><span class="p">()</span>
+<span class="n">genes_df</span><span class="o">.</span><span class="n">head</span><span class="p">(</span><span class="mi">20</span><span class="p">)</span>
+</pre></div>
+</div>
+</div>
+<div class="nboutput nblast docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[8]:
+</pre></div>
+</div>
+<div class="output_area rendered_html docutils container">
+<div>
+<style scoped>
+    .dataframe tbody tr th:only-of-type {
+        vertical-align: middle;
+    }
+
+    .dataframe tbody tr th {
+        vertical-align: top;
+    }
+
+    .dataframe thead th {
+        text-align: right;
+    }
+</style>
+<table border="1" class="dataframe">
+  <thead>
+    <tr style="text-align: right;">
+      <th></th>
+      <th>co_depletion</th>
+      <th>co_occurrence</th>
+      <th>conditional_prob</th>
+      <th>correlation</th>
+      <th>gene</th>
+      <th>jaccard</th>
+      <th>p_value</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <th>0</th>
+      <td>0.839909</td>
+      <td>0.109094</td>
+      <td>0.952102</td>
+      <td>0.871103</td>
+      <td>FOXP3</td>
+      <td>0.681450</td>
+      <td>0.0</td>
+    </tr>
+    <tr>
+      <th>1</th>
+      <td>0.763074</td>
+      <td>0.067597</td>
+      <td>0.589947</td>
+      <td>0.575930</td>
+      <td>CTLA4</td>
+      <td>0.285310</td>
+      <td>0.0</td>
+    </tr>
+    <tr>
+      <th>2</th>
+      <td>0.742139</td>
+      <td>0.066444</td>
+      <td>0.579879</td>
+      <td>0.467319</td>
+      <td>IL2RA</td>
+      <td>0.257673</td>
+      <td>0.0</td>
+    </tr>
+    <tr>
+      <th>3</th>
+      <td>0.748280</td>
+      <td>0.070507</td>
+      <td>0.615339</td>
+      <td>0.447486</td>
+      <td>ICOS</td>
+      <td>0.280101</td>
+      <td>0.0</td>
+    </tr>
+    <tr>
+      <th>4</th>
+      <td>0.762497</td>
+      <td>0.067165</td>
+      <td>0.586171</td>
+      <td>0.426439</td>
+      <td>TIGIT</td>
+      <td>0.282796</td>
+      <td>0.0</td>
+    </tr>
+    <tr>
+      <th>5</th>
+      <td>0.727031</td>
+      <td>0.074384</td>
+      <td>0.649171</td>
+      <td>0.367846</td>
+      <td>CD5</td>
+      <td>0.272498</td>
+      <td>0.0</td>
+    </tr>
+    <tr>
+      <th>6</th>
+      <td>0.721526</td>
+      <td>0.072865</td>
+      <td>0.635919</td>
+      <td>0.366559</td>
+      <td>CD28</td>
+      <td>0.261659</td>
+      <td>0.0</td>
+    </tr>
+    <tr>
+      <th>7</th>
+      <td>0.572759</td>
+      <td>0.088117</td>
+      <td>0.769026</td>
+      <td>0.358934</td>
+      <td>TNFRSF4</td>
+      <td>0.206246</td>
+      <td>0.0</td>
+    </tr>
+    <tr>
+      <th>8</th>
+      <td>0.731264</td>
+      <td>0.060311</td>
+      <td>0.526355</td>
+      <td>0.340039</td>
+      <td>TNFRSF9</td>
+      <td>0.224425</td>
+      <td>0.0</td>
+    </tr>
+    <tr>
+      <th>9</th>
+      <td>0.575491</td>
+      <td>0.085547</td>
+      <td>0.746595</td>
+      <td>0.335261</td>
+      <td>BATF</td>
+      <td>0.201519</td>
+      <td>0.0</td>
+    </tr>
+    <tr>
+      <th>10</th>
+      <td>0.756881</td>
+      <td>0.066054</td>
+      <td>0.576473</td>
+      <td>0.324177</td>
+      <td>PDCD1</td>
+      <td>0.271693</td>
+      <td>0.0</td>
+    </tr>
+    <tr>
+      <th>11</th>
+      <td>0.694399</td>
+      <td>0.076852</td>
+      <td>0.670714</td>
+      <td>0.312653</td>
+      <td>SIT1</td>
+      <td>0.251478</td>
+      <td>0.0</td>
+    </tr>
+    <tr>
+      <th>12</th>
+      <td>0.611406</td>
+      <td>0.083290</td>
+      <td>0.726903</td>
+      <td>0.312467</td>
+      <td>CD2</td>
+      <td>0.214337</td>
+      <td>0.0</td>
+    </tr>
+    <tr>
+      <th>13</th>
+      <td>0.491182</td>
+      <td>0.101188</td>
+      <td>0.883106</td>
+      <td>0.306086</td>
+      <td>TRAC</td>
+      <td>0.198870</td>
+      <td>0.0</td>
+    </tr>
+    <tr>
+      <th>14</th>
+      <td>0.628099</td>
+      <td>0.087582</td>
+      <td>0.764362</td>
+      <td>0.302596</td>
+      <td>CD6</td>
+      <td>0.235499</td>
+      <td>0.0</td>
+    </tr>
+    <tr>
+      <th>15</th>
+      <td>0.607614</td>
+      <td>0.093266</td>
+      <td>0.813962</td>
+      <td>0.292574</td>
+      <td>CD27</td>
+      <td>0.237689</td>
+      <td>0.0</td>
+    </tr>
+    <tr>
+      <th>16</th>
+      <td>0.612890</td>
+      <td>0.084300</td>
+      <td>0.735712</td>
+      <td>0.290312</td>
+      <td>CD3D</td>
+      <td>0.217767</td>
+      <td>0.0</td>
+    </tr>
+    <tr>
+      <th>17</th>
+      <td>0.641816</td>
+      <td>0.083409</td>
+      <td>0.727939</td>
+      <td>0.288134</td>
+      <td>LCK</td>
+      <td>0.232866</td>
+      <td>0.0</td>
+    </tr>
+    <tr>
+      <th>18</th>
+      <td>0.881923</td>
+      <td>0.009831</td>
+      <td>0.085801</td>
+      <td>0.288029</td>
+      <td>CCR8</td>
+      <td>0.083261</td>
+      <td>0.0</td>
+    </tr>
+    <tr>
+      <th>19</th>
+      <td>0.694238</td>
+      <td>0.074536</td>
+      <td>0.650503</td>
+      <td>0.286612</td>
+      <td>SLAMF1</td>
+      <td>0.243772</td>
+      <td>0.0</td>
+    </tr>
+  </tbody>
+</table>
+</div></div>
+</div>
+<div class="nbinput docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[17]:
+</pre></div>
+</div>
+<div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="n">coexpr</span><span class="o">.</span><span class="n">plot_top_genes</span><span class="p">(</span><span class="n">n</span><span class="o">=</span><span class="mi">20</span><span class="p">)</span>
+</pre></div>
+</div>
+</div>
+<div class="nboutput docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[17]:
+</pre></div>
+</div>
+<div class="output_area docutils container">
+<img alt="../_images/tutorials_04_coexpression_analysis_15_0.png" src="../_images/tutorials_04_coexpression_analysis_15_0.png" />
+</div>
+</div>
+<div class="nboutput nblast docutils container">
+<div class="prompt empty docutils container">
+</div>
+<div class="output_area docutils container">
+<img alt="../_images/tutorials_04_coexpression_analysis_15_1.png" src="../_images/tutorials_04_coexpression_analysis_15_1.png" />
+</div>
+</div>
+</section>
+<section id="7.-GO-Enrichment">
+<h2>7. GO Enrichment<a class="headerlink" href="#7.-GO-Enrichment" title="Link to this heading">¶</a></h2>
+<p>Explore Gene Ontology enrichment for the correlated gene set.</p>
+<div class="nbinput docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[18]:
+</pre></div>
+</div>
+<div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="n">go_df</span> <span class="o">=</span> <span class="n">coexpr</span><span class="o">.</span><span class="n">go_to_dataframe</span><span class="p">()</span>
+<span class="n">go_df</span><span class="o">.</span><span class="n">head</span><span class="p">(</span><span class="mi">10</span><span class="p">)</span>
+</pre></div>
+</div>
+</div>
+<div class="nboutput nblast docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[18]:
+</pre></div>
+</div>
+<div class="output_area rendered_html docutils container">
+<div>
+<style scoped>
+    .dataframe tbody tr th:only-of-type {
+        vertical-align: middle;
+    }
+
+    .dataframe tbody tr th {
+        vertical-align: top;
+    }
+
+    .dataframe thead th {
+        text-align: right;
+    }
+</style>
+<table border="1" class="dataframe">
+  <thead>
+    <tr style="text-align: right;">
+      <th></th>
+      <th>fdr</th>
+      <th>genes</th>
+      <th>go_id</th>
+      <th>n_genes_in_term</th>
+      <th>name</th>
+      <th>namespace</th>
+      <th>p_value</th>
+      <th>query_genes_in_term</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <th>0</th>
+      <td>1.258759e-15</td>
+      <td>[CCR4, CCR5, CCR6, CCR7, CCR8, CD2, CD7, CD96,...</td>
+      <td>GO:0006955</td>
+      <td>206</td>
+      <td>immune response</td>
+      <td>biological_process</td>
+      <td>4.325631e-18</td>
+      <td>29</td>
+    </tr>
+    <tr>
+      <th>1</th>
+      <td>3.266497e-14</td>
+      <td>[CCR4, CCR5, CCR6, CCR7, CCR8, CD2, CD27, CD28...</td>
+      <td>GO:0009897</td>
+      <td>182</td>
+      <td>external side of plasma membrane</td>
+      <td>cellular_component</td>
+      <td>2.245015e-16</td>
+      <td>26</td>
+    </tr>
+    <tr>
+      <th>2</th>
+      <td>6.759542e-14</td>
+      <td>[CD247, CD28, CD3D, CD3E, CD3G, CTLA4, FYB1, F...</td>
+      <td>GO:0050852</td>
+      <td>52</td>
+      <td>T cell receptor signaling pathway</td>
+      <td>biological_process</td>
+      <td>6.968600e-16</td>
+      <td>16</td>
+    </tr>
+    <tr>
+      <th>3</th>
+      <td>3.161380e-12</td>
+      <td>[CASP8, CD2, CD27, CD28, CD3E, CD3G, CD7, CD70...</td>
+      <td>GO:0042110</td>
+      <td>45</td>
+      <td>T cell activation</td>
+      <td>biological_process</td>
+      <td>4.345539e-14</td>
+      <td>14</td>
+    </tr>
+    <tr>
+      <th>4</th>
+      <td>1.072697e-11</td>
+      <td>[BIRC3, CCR5, CD2, CD247, CD27, CD28, CD3D, CD...</td>
+      <td>GO:0007166</td>
+      <td>128</td>
+      <td>cell surface receptor signaling pathway</td>
+      <td>biological_process</td>
+      <td>1.843121e-13</td>
+      <td>20</td>
+    </tr>
+    <tr>
+      <th>5</th>
+      <td>1.877205e-11</td>
+      <td>[BIRC3, BTLA, CCR4, CCR5, CCR6, CCR7, CCR8, CD...</td>
+      <td>GO:0005886</td>
+      <td>1643</td>
+      <td>plasma membrane</td>
+      <td>cellular_component</td>
+      <td>3.870525e-13</td>
+      <td>67</td>
+    </tr>
+    <tr>
+      <th>6</th>
+      <td>1.321559e-08</td>
+      <td>[CD247, CD3D, CD3E, CD3G, TRAC, TRBC2]</td>
+      <td>GO:0042105</td>
+      <td>7</td>
+      <td>alpha-beta T cell receptor complex</td>
+      <td>cellular_component</td>
+      <td>3.179008e-10</td>
+      <td>6</td>
+    </tr>
+    <tr>
+      <th>7</th>
+      <td>2.634120e-08</td>
+      <td>[CD247, CD27, CD28, CD3D, CD3E, CD3G, CD69, CD...</td>
+      <td>GO:0004888</td>
+      <td>87</td>
+      <td>transmembrane signaling receptor activity</td>
+      <td>molecular_function</td>
+      <td>7.241568e-10</td>
+      <td>14</td>
+    </tr>
+    <tr>
+      <th>8</th>
+      <td>3.899310e-08</td>
+      <td>[CD247, CD3D, CD3E, CD3G, GPR183, ITK, RTKN2, ...</td>
+      <td>GO:0002250</td>
+      <td>49</td>
+      <td>adaptive immune response</td>
+      <td>biological_process</td>
+      <td>1.339969e-09</td>
+      <td>11</td>
+    </tr>
+    <tr>
+      <th>9</th>
+      <td>3.899310e-08</td>
+      <td>[CD247, CD3D, CD3E, CD3G, TRAC, TRBC2]</td>
+      <td>GO:0046631</td>
+      <td>8</td>
+      <td>alpha-beta T cell activation</td>
+      <td>biological_process</td>
+      <td>1.251689e-09</td>
+      <td>6</td>
+    </tr>
+  </tbody>
+</table>
+</div></div>
+</div>
+<div class="nbinput docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[19]:
+</pre></div>
+</div>
+<div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="n">coexpr</span><span class="o">.</span><span class="n">plot_go_enrichment</span><span class="p">(</span><span class="n">n</span><span class="o">=</span><span class="mi">10</span><span class="p">)</span>
+</pre></div>
+</div>
+</div>
+<div class="nboutput docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[19]:
+</pre></div>
+</div>
+<div class="output_area docutils container">
+<img alt="../_images/tutorials_04_coexpression_analysis_18_0.png" src="../_images/tutorials_04_coexpression_analysis_18_0.png" />
+</div>
+</div>
+<div class="nboutput nblast docutils container">
+<div class="prompt empty docutils container">
+</div>
+<div class="output_area docutils container">
+<img alt="../_images/tutorials_04_coexpression_analysis_18_1.png" src="../_images/tutorials_04_coexpression_analysis_18_1.png" />
+</div>
+</div>
+</section>
+<section id="8.-Cell-Type-&amp;-Tissue-Breakdown">
+<h2>8. Cell Type &amp; Tissue Breakdown<a class="headerlink" href="#8.-Cell-Type-&-Tissue-Breakdown" title="Link to this heading">¶</a></h2>
+<p>See which cell types and tissues are enriched for the query.</p>
+<div class="nbinput docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[20]:
+</pre></div>
+</div>
+<div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="n">coexpr</span><span class="o">.</span><span class="n">cell_type_enrichment_to_dataframe</span><span class="p">()</span>
+</pre></div>
+</div>
+</div>
+<div class="nboutput nblast docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[20]:
+</pre></div>
+</div>
+<div class="output_area rendered_html docutils container">
+<div>
+<style scoped>
+    .dataframe tbody tr th:only-of-type {
+        vertical-align: middle;
+    }
+
+    .dataframe tbody tr th {
+        vertical-align: top;
+    }
+
+    .dataframe thead th {
+        text-align: right;
+    }
+</style>
+<table border="1" class="dataframe">
+  <thead>
+    <tr style="text-align: right;">
+      <th></th>
+      <th>cell_type</th>
+      <th>enrichment_score</th>
+      <th>mean_positive_fraction</th>
+      <th>n_positive_metacells</th>
+      <th>p_value</th>
+      <th>total_metacells</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <th>0</th>
+      <td>Hematopoietic_Lymphoid (T cell)</td>
+      <td>2.0439</td>
+      <td>0.024896</td>
+      <td>4670</td>
+      <td>0.000000e+00</td>
+      <td>9884</td>
+    </tr>
+    <tr>
+      <th>1</th>
+      <td>Hematopoietic_Lymphoid (B cell/APC-like)</td>
+      <td>0.6147</td>
+      <td>0.009218</td>
+      <td>812</td>
+      <td>7.319431e-36</td>
+      <td>4628</td>
+    </tr>
+    <tr>
+      <th>2</th>
+      <td>Hematopoietic_Myeloid (Myeloid/APC)</td>
+      <td>0.4236</td>
+      <td>0.008379</td>
+      <td>1496</td>
+      <td>3.321561e-34</td>
+      <td>9734</td>
+    </tr>
+    <tr>
+      <th>3</th>
+      <td>Neural_CNS (Proliferating/Progenitor-like)</td>
+      <td>0.3176</td>
+      <td>0.003579</td>
+      <td>1484</td>
+      <td>2.350244e-20</td>
+      <td>10392</td>
+    </tr>
+    <tr>
+      <th>4</th>
+      <td>Epithelial</td>
+      <td>0.1755</td>
+      <td>0.007426</td>
+      <td>1650</td>
+      <td>2.313736e-08</td>
+      <td>12751</td>
+    </tr>
+    <tr>
+      <th>5</th>
+      <td>Hematopoietic_Lymphoid (Plasma cell)</td>
+      <td>0.1550</td>
+      <td>0.015933</td>
+      <td>204</td>
+      <td>5.605361e-02</td>
+      <td>1599</td>
+    </tr>
+    <tr>
+      <th>6</th>
+      <td>Neural_CNS (Neuron)</td>
+      <td>0.0690</td>
+      <td>0.004103</td>
+      <td>613</td>
+      <td>1.036053e-01</td>
+      <td>5100</td>
+    </tr>
+    <tr>
+      <th>7</th>
+      <td>Hematopoietic_Myeloid (Erythroid)</td>
+      <td>-0.5098</td>
+      <td>0.005015</td>
+      <td>115</td>
+      <td>9.999918e-01</td>
+      <td>1429</td>
+    </tr>
+    <tr>
+      <th>8</th>
+      <td>Mesenchymal_Stromal (Fibroblast)</td>
+      <td>-0.1863</td>
+      <td>0.004996</td>
+      <td>1116</td>
+      <td>9.999995e-01</td>
+      <td>11082</td>
+    </tr>
+    <tr>
+      <th>9</th>
+      <td>Epithelial (Renal tubular-like)</td>
+      <td>-2.1224</td>
+      <td>0.002515</td>
+      <td>6</td>
+      <td>9.999998e-01</td>
+      <td>228</td>
+    </tr>
+    <tr>
+      <th>10</th>
+      <td>Hematopoietic_Myeloid (Mast cell)</td>
+      <td>-1.4318</td>
+      <td>0.021341</td>
+      <td>22</td>
+      <td>1.000000e+00</td>
+      <td>518</td>
+    </tr>
+    <tr>
+      <th>11</th>
+      <td>Hematopoietic_Myeloid (Megakaryocyte/Platelet)</td>
+      <td>-2.2359</td>
+      <td>0.017603</td>
+      <td>9</td>
+      <td>1.000000e+00</td>
+      <td>370</td>
+    </tr>
+    <tr>
+      <th>12</th>
+      <td>Neural_CNS (Oligodendrocyte)</td>
+      <td>-1.0598</td>
+      <td>0.013222</td>
+      <td>57</td>
+      <td>1.000000e+00</td>
+      <td>1037</td>
+    </tr>
+    <tr>
+      <th>13</th>
+      <td>Endothelial</td>
+      <td>-1.4369</td>
+      <td>0.009043</td>
+      <td>202</td>
+      <td>1.000000e+00</td>
+      <td>4773</td>
+    </tr>
+    <tr>
+      <th>14</th>
+      <td>Hematopoietic_Lymphoid (Innate-like/NK/T?)</td>
+      <td>-8.3436</td>
+      <td>0.007812</td>
+      <td>7</td>
+      <td>1.000000e+00</td>
+      <td>19845</td>
+    </tr>
+    <tr>
+      <th>15</th>
+      <td>Hematopoietic_Myeloid (Erythroid-like / mixed ...</td>
+      <td>-6.1295</td>
+      <td>0.004386</td>
+      <td>1</td>
+      <td>1.000000e+00</td>
+      <td>611</td>
+    </tr>
+    <tr>
+      <th>16</th>
+      <td>Mesenchymal_Stromal (Adipocyte)</td>
+      <td>-10.0000</td>
+      <td>0.000000</td>
+      <td>0</td>
+      <td>1.000000e+00</td>
+      <td>96</td>
+    </tr>
+    <tr>
+      <th>17</th>
+      <td>Muscle</td>
+      <td>-0.6178</td>
+      <td>0.005790</td>
+      <td>808</td>
+      <td>1.000000e+00</td>
+      <td>10821</td>
+    </tr>
+    <tr>
+      <th>18</th>
+      <td>Neural_CNS (Glial/Oligodendrocyte)</td>
+      <td>-2.6570</td>
+      <td>0.001221</td>
+      <td>236</td>
+      <td>1.000000e+00</td>
+      <td>12991</td>
+    </tr>
+  </tbody>
+</table>
+</div></div>
+</div>
+<div class="nbinput docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[21]:
+</pre></div>
+</div>
+<div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="n">coexpr</span><span class="o">.</span><span class="n">tissue_breakdown_to_dataframe</span><span class="p">()</span>
+</pre></div>
+</div>
+</div>
+<div class="nboutput nblast docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[21]:
+</pre></div>
+</div>
+<div class="output_area rendered_html docutils container">
+<div>
+<style scoped>
+    .dataframe tbody tr th:only-of-type {
+        vertical-align: middle;
+    }
+
+    .dataframe tbody tr th {
+        vertical-align: top;
+    }
+
+    .dataframe thead th {
+        text-align: right;
+    }
+</style>
+<table border="1" class="dataframe">
+  <thead>
+    <tr style="text-align: right;">
+      <th></th>
+      <th>mean_positive_fraction</th>
+      <th>n_positive_metacells</th>
+      <th>tissue</th>
+      <th>total_metacells</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <th>0</th>
+      <td>0.003054</td>
+      <td>1559</td>
+      <td>Single-cellRNA-seqrevealscelltype-specificmole...</td>
+      <td>3273</td>
+    </tr>
+    <tr>
+      <th>1</th>
+      <td>0.006071</td>
+      <td>1083</td>
+      <td>Aspatiallyresolvedsingle-cellgenomicatlasofthe...</td>
+      <td>8987</td>
+    </tr>
+    <tr>
+      <th>2</th>
+      <td>0.006666</td>
+      <td>945</td>
+      <td>HematopoieticImmuneCellAtlas</td>
+      <td>3439</td>
+    </tr>
+    <tr>
+      <th>3</th>
+      <td>0.002053</td>
+      <td>722</td>
+      <td>DopaminergicNeuronDifferentiation</td>
+      <td>6235</td>
+    </tr>
+    <tr>
+      <th>4</th>
+      <td>0.002387</td>
+      <td>423</td>
+      <td>earlyHumanEmbryogenesisAtlas</td>
+      <td>2926</td>
+    </tr>
+    <tr>
+      <th>...</th>
+      <td>...</td>
+      <td>...</td>
+      <td>...</td>
+      <td>...</td>
+    </tr>
+    <tr>
+      <th>222</th>
+      <td>0.000000</td>
+      <td>0</td>
+      <td>humanDentalPulpCells</td>
+      <td>10</td>
+    </tr>
+    <tr>
+      <th>223</th>
+      <td>0.000000</td>
+      <td>0</td>
+      <td>humanUrineCells</td>
+      <td>13</td>
+    </tr>
+    <tr>
+      <th>224</th>
+      <td>0.000000</td>
+      <td>0</td>
+      <td>landscapesOfHumanOvarianAgeing</td>
+      <td>3</td>
+    </tr>
+    <tr>
+      <th>225</th>
+      <td>0.000000</td>
+      <td>0</td>
+      <td>nktpbmcZhou</td>
+      <td>51</td>
+    </tr>
+    <tr>
+      <th>226</th>
+      <td>0.000000</td>
+      <td>0</td>
+      <td>photoreceptorMacularSubregions</td>
+      <td>129</td>
+    </tr>
+  </tbody>
+</table>
+<p>227 rows × 4 columns</p>
+</div></div>
+</div>
+</section>
+</section>
+
+        </article>
+      </div>
+      <footer>
+        
+        <div class="related-pages">
+          <a class="next-page" href="../api/modules.html">
+              <div class="page-info">
+                <div class="context">
+                  <span>Next</span>
+                </div>
+                <div class="title">API Reference</div>
+              </div>
+              <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
+            </a>
+          <a class="prev-page" href="03_projecting_to_cells.html">
+              <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
+              <div class="page-info">
+                <div class="context">
+                  <span>Previous</span>
+                </div>
+                
+                <div class="title">Projecting requantified expression of arbitrary sequences to single cells</div>
+                
+              </div>
+            </a>
+        </div>
+        <div class="bottom-of-page">
+          <div class="left-details">
+            <div class="copyright">
+                Copyright &#169; 2025-2026, Malva Team
+            </div>
+            Made with <a href="https://www.sphinx-doc.org/">Sphinx</a> and <a class="muted-link" href="https://pradyunsg.me">@pradyunsg</a>'s
+            
+            <a href="https://github.com/pradyunsg/furo">Furo</a>
+            
+          </div>
+          <div class="right-details">
+            
+          </div>
+        </div>
+        
+      </footer>
+    </div>
+    <aside class="toc-drawer">
+      
+      
+      <div class="toc-sticky toc-scroll">
+        <div class="toc-title-container">
+          <span class="toc-title">
+            On this page
+          </span>
+        </div>
+        <div class="toc-tree-container">
+          <div class="toc-tree">
+            <ul>
+<li><a class="reference internal" href="#">Server-Side Coexpression Analysis</a><ul>
+<li><a class="reference internal" href="#1.-Setup">1. Setup</a></li>
+<li><a class="reference internal" href="#2.-Load-UMAP-Coordinates">2. Load UMAP Coordinates</a></li>
+<li><a class="reference internal" href="#3.-Search-for-a-Gene">3. Search for a Gene</a></li>
+<li><a class="reference internal" href="#4.-Run-Coexpression-Analysis">4. Run Coexpression Analysis</a></li>
+<li><a class="reference internal" href="#5.-UMAP-with-Expression-Scores">5. UMAP with Expression Scores</a></li>
+<li><a class="reference internal" href="#6.-Correlated-Genes">6. Correlated Genes</a></li>
+<li><a class="reference internal" href="#7.-GO-Enrichment">7. GO Enrichment</a></li>
+<li><a class="reference internal" href="#8.-Cell-Type-&amp;-Tissue-Breakdown">8. Cell Type &amp; Tissue Breakdown</a></li>
+</ul>
+</li>
+</ul>
+
+          </div>
+        </div>
+      </div>
+      
+      
+    </aside>
+  </div>
+</div><script src="../_static/documentation_options.js?v=b9678aa1"></script>
+    <script src="../_static/doctools.js?v=9a2dae69"></script>
+    <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../_static/scripts/furo.js?v=46bd48cc"></script>
+    <script src="../_static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../_static/copybutton.js?v=f281be69"></script>
+    <script src="../_static/design-tabs.js?v=f930bc37"></script>
+    <script crossorigin="anonymous" integrity="sha256-Ae2Vz/4ePdIu6ZyI/5ZGsYnb+m0JlOmKPjt6XZ9JJkA=" src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.4/require.min.js"></script>
+    <script>window.MathJax = {"tex": {"inlineMath": [["$", "$"], ["\\(", "\\)"]], "processEscapes": true}, "options": {"ignoreHtmlClass": "tex2jax_ignore|mathjax_ignore|document", "processHtmlClass": "tex2jax_process|mathjax_process|math|output_area"}}</script>
+    <script defer="defer" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    </body>
+</html>

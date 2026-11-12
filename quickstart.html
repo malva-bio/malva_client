@@ -1,0 +1,843 @@
+<!doctype html>
+<html class="no-js" lang="en" data-content_root="./">
+  <head><meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="color-scheme" content="light dark"><meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="author" title="About these documents" href="about.html"><link rel="index" title="Index" href="genindex.html"><link rel="search" title="Search" href="search.html"><link rel="next" title="Query Parameters" href="query_parameters.html"><link rel="prev" title="Installation" href="installation.html">
+
+    <!-- Generated with Sphinx 7.4.7 and Furo 2025.12.19 -->
+        <title>Quick Start - Malva Client</title>
+      <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=d111a655" />
+    <link rel="stylesheet" type="text/css" href="_static/styles/furo.css?v=7bdb33bb" />
+    <link rel="stylesheet" type="text/css" href="_static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="_static/sphinx-design.min.css?v=95c83b7e" />
+    <link rel="stylesheet" type="text/css" href="_static/styles/furo-extensions.css?v=8dab3a3b" />
+    
+    
+
+
+<style>
+  body {
+    --color-code-background: #f2f2f2;
+  --color-code-foreground: #1e1e1e;
+  
+  }
+  @media not print {
+    body[data-theme="dark"] {
+      --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  
+    }
+    @media (prefers-color-scheme: dark) {
+      body:not([data-theme="light"]) {
+        --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  
+      }
+    }
+  }
+</style></head>
+  <body>
+    
+    <script>
+      document.body.dataset.theme = localStorage.getItem("theme") || "auto";
+    </script>
+    
+
+<svg xmlns="http://www.w3.org/2000/svg" style="display: none;">
+  <symbol id="svg-toc" viewBox="0 0 24 24">
+    <title>Contents</title>
+    <svg stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 1024 1024">
+      <path d="M408 442h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8zm-8 204c0 4.4 3.6 8 8 8h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56zm504-486H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zm0 632H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zM115.4 518.9L271.7 642c5.8 4.6 14.4.5 14.4-6.9V388.9c0-7.4-8.5-11.5-14.4-6.9L115.4 505.1a8.74 8.74 0 0 0 0 13.8z"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-menu" viewBox="0 0 24 24">
+    <title>Menu</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-menu">
+      <line x1="3" y1="12" x2="21" y2="12"></line>
+      <line x1="3" y1="6" x2="21" y2="6"></line>
+      <line x1="3" y1="18" x2="21" y2="18"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-arrow-right" viewBox="0 0 24 24">
+    <title>Expand</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-chevron-right">
+      <polyline points="9 18 15 12 9 6"></polyline>
+    </svg>
+  </symbol>
+  <symbol id="svg-sun" viewBox="0 0 24 24">
+    <title>Light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="feather-sun">
+      <circle cx="12" cy="12" r="5"></circle>
+      <line x1="12" y1="1" x2="12" y2="3"></line>
+      <line x1="12" y1="21" x2="12" y2="23"></line>
+      <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+      <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+      <line x1="1" y1="12" x2="3" y2="12"></line>
+      <line x1="21" y1="12" x2="23" y2="12"></line>
+      <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+      <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon" viewBox="0 0 24 24">
+    <title>Dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-moon">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454z" />
+    </svg>
+  </symbol>
+  <symbol id="svg-sun-with-moon" viewBox="0 0 24 24">
+    <title>Auto light/dark, in light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path style="opacity: 50%" d="M 5.411 14.504 C 5.471 14.504 5.532 14.504 5.591 14.504 C 3.639 16.319 4.383 19.569 6.931 20.352 C 7.693 20.586 8.512 20.551 9.25 20.252 C 8.023 23.207 4.056 23.725 2.11 21.184 C 0.166 18.642 1.702 14.949 4.874 14.536 C 5.051 14.512 5.231 14.5 5.411 14.5 L 5.411 14.504 Z"/>
+      <line x1="14.5" y1="3.25" x2="14.5" y2="1.25"/>
+      <line x1="14.5" y1="15.85" x2="14.5" y2="17.85"/>
+      <line x1="10.044" y1="5.094" x2="8.63" y2="3.68"/>
+      <line x1="19" y1="14.05" x2="20.414" y2="15.464"/>
+      <line x1="8.2" y1="9.55" x2="6.2" y2="9.55"/>
+      <line x1="20.8" y1="9.55" x2="22.8" y2="9.55"/>
+      <line x1="10.044" y1="14.006" x2="8.63" y2="15.42"/>
+      <line x1="19" y1="5.05" x2="20.414" y2="3.636"/>
+      <circle cx="14.5" cy="9.55" r="3.6"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon-with-sun" viewBox="0 0 24 24">
+    <title>Auto light/dark, in dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path d="M 8.282 7.007 C 8.385 7.007 8.494 7.007 8.595 7.007 C 5.18 10.184 6.481 15.869 10.942 17.24 C 12.275 17.648 13.706 17.589 15 17.066 C 12.851 22.236 5.91 23.143 2.505 18.696 C -0.897 14.249 1.791 7.786 7.342 7.063 C 7.652 7.021 7.965 7 8.282 7 L 8.282 7.007 Z"/>
+      <line style="opacity: 50%" x1="18" y1="3.705" x2="18" y2="2.5"/>
+      <line style="opacity: 50%" x1="18" y1="11.295" x2="18" y2="12.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="4.816" x2="14.464" y2="3.964"/>
+      <line style="opacity: 50%" x1="20.711" y1="10.212" x2="21.563" y2="11.063"/>
+      <line style="opacity: 50%" x1="14.205" y1="7.5" x2="13.001" y2="7.5"/>
+      <line style="opacity: 50%" x1="21.795" y1="7.5" x2="23" y2="7.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="10.184" x2="14.464" y2="11.036"/>
+      <line style="opacity: 50%" x1="20.711" y1="4.789" x2="21.563" y2="3.937"/>
+      <circle style="opacity: 50%" cx="18" cy="7.5" r="2.169"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-pencil" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-pencil-code">
+      <path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" />
+      <path d="M13.5 6.5l4 4" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+  <symbol id="svg-eye" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-eye-code">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M10 12a2 2 0 1 0 4 0a2 2 0 0 0 -4 0" />
+      <path
+        d="M11.11 17.958c-3.209 -.307 -5.91 -2.293 -8.11 -5.958c2.4 -4 5.4 -6 9 -6c3.6 0 6.6 2 9 6c-.21 .352 -.427 .688 -.647 1.008" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+</svg>
+
+<input type="checkbox" class="sidebar-toggle" name="__navigation" id="__navigation" aria-label="Toggle site navigation sidebar">
+<input type="checkbox" class="sidebar-toggle" name="__toc" id="__toc" aria-label="Toggle table of contents sidebar">
+<label class="overlay sidebar-overlay" for="__navigation"></label>
+<label class="overlay toc-overlay" for="__toc"></label>
+
+<a class="skip-to-content muted-link" href="#furo-main-content">Skip to content</a>
+
+
+
+<div class="page">
+  <header class="mobile-header">
+    <div class="header-left">
+      <label class="nav-overlay-icon" for="__navigation">
+        <span class="icon"><svg><use href="#svg-menu"></use></svg></span>
+      </label>
+    </div>
+    <div class="header-center">
+      <a href="index.html"><div class="brand">Malva Client</div></a>
+    </div>
+    <div class="header-right">
+      <div class="theme-toggle-container theme-toggle-header">
+        <button class="theme-toggle" aria-label="Toggle Light / Dark / Auto color theme">
+          <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+          <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+          <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+          <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+        </button>
+      </div>
+      <label class="toc-overlay-icon toc-header-icon" for="__toc">
+        <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
+      </label>
+    </div>
+  </header>
+  <aside class="sidebar-drawer">
+    <div class="sidebar-container">
+      
+      <div class="sidebar-sticky"><a class="sidebar-brand" href="index.html">
+  
+  <span class="sidebar-brand-text">Malva Client</span>
+  
+</a><form class="sidebar-search-container" method="get" action="search.html" role="search">
+  <input class="sidebar-search" placeholder="Search" name="q" aria-label="Search">
+  <input type="hidden" name="check_keywords" value="yes">
+  <input type="hidden" name="area" value="default">
+</form>
+<div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
+  <p class="caption" role="heading"><span class="caption-text">Guides</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="about.html">About Malva</a></li>
+<li class="toctree-l1"><a class="reference internal" href="installation.html">Installation</a></li>
+<li class="toctree-l1 current current-page"><a class="current reference internal" href="#">Quick Start</a></li>
+<li class="toctree-l1"><a class="reference internal" href="query_parameters.html">Query Parameters</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Tutorials</span></p>
+<ul>
+<li class="toctree-l1 has-children"><a class="reference internal" href="tutorials/index.html">Tutorials</a><input aria-label="Toggle navigation of Tutorials" class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" role="switch" type="checkbox"/><label for="toctree-checkbox-1"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/00_setup_malva_client.html">Setting up the Malva Client</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/01_expression_analysis.html">Sequence expression from the Malva Index</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/02_querying_covid.html">Querying viral sequences with the Malva Index</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/03_projecting_to_cells.html">Projecting requantified expression of arbitrary sequences to single cells</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/04_coexpression_analysis.html">Server-Side Coexpression Analysis</a></li>
+</ul>
+</li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">API Reference</span></p>
+<ul>
+<li class="toctree-l1 has-children"><a class="reference internal" href="api/modules.html">API Reference</a><input aria-label="Toggle navigation of API Reference" class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" role="switch" type="checkbox"/><label for="toctree-checkbox-2"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="api/malva_client.client.html">Client</a></li>
+<li class="toctree-l2"><a class="reference internal" href="api/malva_client.models.html">Models</a></li>
+<li class="toctree-l2"><a class="reference internal" href="api/malva_client.config.html">Configuration</a></li>
+<li class="toctree-l2"><a class="reference internal" href="api/malva_client.exceptions.html">Exceptions</a></li>
+<li class="toctree-l2"><a class="reference internal" href="api/malva_client.auth.html">malva_client.auth module</a></li>
+<li class="toctree-l2"><a class="reference internal" href="api/malva_client.storage.html">malva_client.storage module</a></li>
+<li class="toctree-l2"><a class="reference internal" href="api/malva_client.tools.html">malva_client.tools module</a></li>
+<li class="toctree-l2"><a class="reference internal" href="api/malva_client.cli.html">malva_client.cli module</a></li>
+</ul>
+</li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Links</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference external" href="https://malva.bio">Malva Platform</a></li>
+<li class="toctree-l1"><a class="reference external" href="https://github.com/malva-bio/malva_client">GitHub</a></li>
+<li class="toctree-l1"><a class="reference external" href="https://malva.readthedocs.io">Malva Tools</a></li>
+<li class="toctree-l1"><a class="reference external" href="https://github.com/malva-bio/malva_client/blob/main/CHANGELOG.md">Changelog</a></li>
+</ul>
+
+</div>
+</div>
+
+      </div>
+      
+    </div>
+  </aside>
+  <div class="main">
+    <div class="content">
+      <div class="article-container">
+        <a href="#" class="back-to-top muted-link">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+            <path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8v12z"></path>
+          </svg>
+          <span>Back to top</span>
+        </a>
+        <div class="content-icon-container">
+          <div class="view-this-page">
+  <a class="muted-link" href="https://github.com/malva-bio/malva_client/blob/main/docs/quickstart.rst?plain=true" title="View this page">
+    <svg><use href="#svg-eye"></use></svg>
+    <span class="visually-hidden">View this page</span>
+  </a>
+</div><div class="edit-this-page">
+  <a class="muted-link" href="https://github.com/malva-bio/malva_client/edit/main/docs/quickstart.rst" rel="edit" title="Edit this page">
+    <svg><use href="#svg-pencil"></use></svg>
+    <span class="visually-hidden">Edit this page</span>
+  </a>
+</div><div class="theme-toggle-container theme-toggle-content">
+            <button class="theme-toggle" aria-label="Toggle Light / Dark / Auto color theme">
+              <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+              <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+              <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+              <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+            </button>
+          </div>
+          <label class="toc-overlay-icon toc-content-icon" for="__toc">
+            <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
+          </label>
+        </div>
+        <article role="main" id="furo-main-content">
+          <section id="quick-start">
+<h1>Quick Start<a class="headerlink" href="#quick-start" title="Link to this heading">¶</a></h1>
+<p>This guide shows a minimal Malva client workflow that can be run from top to
+bottom once your API credentials are configured. For installation instructions
+see <a class="reference internal" href="installation.html"><span class="doc">Installation</span></a>.</p>
+<section id="authentication">
+<h2>Authentication<a class="headerlink" href="#authentication" title="Link to this heading">¶</a></h2>
+<p>Before querying Malva, create an API token at <a class="reference external" href="https://malva.bio">malva.bio</a>
+(<strong>Profile &gt; Generate API Token</strong>) and store it with the CLI:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>malva_client<span class="w"> </span>config<span class="w"> </span>--server<span class="w"> </span>https://malva.mdc-berlin.de<span class="w"> </span>--token<span class="w"> </span>YOUR_API_TOKEN
+</pre></div>
+</div>
+<p>Alternatively, set both <code class="docutils literal notranslate"><span class="pre">MALVA_API_URL</span></code> and <code class="docutils literal notranslate"><span class="pre">MALVA_API_TOKEN</span></code> in your shell
+before running Python, or run <code class="docutils literal notranslate"><span class="pre">malva_client</span> <span class="pre">login</span></code>.</p>
+</section>
+<section id="connect">
+<h2>Connect<a class="headerlink" href="#connect" title="Link to this heading">¶</a></h2>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">malva_client</span><span class="w"> </span><span class="kn">import</span> <span class="n">MalvaClient</span>
+
+<span class="n">client</span> <span class="o">=</span> <span class="n">MalvaClient</span><span class="p">()</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">client</span><span class="o">.</span><span class="n">is_authenticated</span><span class="p">())</span>
+</pre></div>
+</div>
+</section>
+<section id="select-a-workspace">
+<h2>Select a workspace<a class="headerlink" href="#select-a-workspace" title="Link to this heading">¶</a></h2>
+<p>A workspace identifies one project index (dataset). Pass it explicitly or set
+the environment variables once:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nb">export</span><span class="w"> </span><span class="nv">MALVA_WORKSPACE</span><span class="o">=</span><span class="s2">"atlas:human"</span>
+<span class="nb">export</span><span class="w"> </span><span class="nv">MALVA_DATASET_ID</span><span class="o">=</span><span class="s2">"human"</span>
+<span class="nb">export</span><span class="w"> </span><span class="nv">MALVA_PROVIDER_ID</span><span class="o">=</span><span class="s2">"malva-public-index"</span>
+</pre></div>
+</div>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">client</span> <span class="o">=</span> <span class="n">MalvaClient</span><span class="p">(</span><span class="n">workspace</span><span class="o">=</span><span class="s2">"atlas:human"</span><span class="p">,</span> <span class="n">dataset_id</span><span class="o">=</span><span class="s2">"human"</span><span class="p">)</span>
+<span class="c1"># or later:</span>
+<span class="n">client</span><span class="o">.</span><span class="n">set_workspace</span><span class="p">(</span><span class="n">workspace</span><span class="o">=</span><span class="s2">"atlas:human"</span><span class="p">,</span> <span class="n">dataset_id</span><span class="o">=</span><span class="s2">"human"</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>The client sends these values in the <code class="docutils literal notranslate"><span class="pre">X-Malva-Workspace</span></code>,
+<code class="docutils literal notranslate"><span class="pre">X-Malva-Dataset</span></code>, and <code class="docutils literal notranslate"><span class="pre">X-Malva-Provider</span></code> headers. It also includes
+<code class="docutils literal notranslate"><span class="pre">dataset_id</span></code> in searches. A per-call <code class="docutils literal notranslate"><span class="pre">dataset_id</span></code> argument takes
+precedence over the configured default. Only <code class="docutils literal notranslate"><span class="pre">search_federated</span></code>,
+<code class="docutils literal notranslate"><span class="pre">stream_cell_expression</span></code>, and <code class="docutils literal notranslate"><span class="pre">find_metacells</span></code> accept a per-call
+<code class="docutils literal notranslate"><span class="pre">dataset_id</span></code>; other searches use the constructor, <code class="docutils literal notranslate"><span class="pre">set_workspace()</span></code>, or
+<code class="docutils literal notranslate"><span class="pre">MALVA_DATASET_ID</span></code>.</p>
+</section>
+<section id="provider-scoping">
+<h2>Provider scoping<a class="headerlink" href="#provider-scoping" title="Link to this heading">¶</a></h2>
+<p>Metadata and sample methods accept a <code class="docutils literal notranslate"><span class="pre">provider</span></code> argument:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">samples</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">get_samples</span><span class="p">(</span><span class="n">provider</span><span class="o">=</span><span class="s2">"malva-public-index"</span><span class="p">)</span>
+<span class="n">studies</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">get_studies</span><span class="p">(</span><span class="n">provider</span><span class="o">=</span><span class="s2">"malva-public-index"</span><span class="p">)</span>
+<span class="n">values</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">get_filter_values</span><span class="p">(</span><span class="s2">"organ"</span><span class="p">,</span> <span class="n">provider</span><span class="o">=</span><span class="s2">"malva-public-index"</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>The client sends the value as the <code class="docutils literal notranslate"><span class="pre">provider</span></code> query parameter. A per-call
+argument takes precedence over the client-level <code class="docutils literal notranslate"><span class="pre">provider_id</span></code>. Set the
+client-level value in the constructor, with <code class="docutils literal notranslate"><span class="pre">set_workspace(provider_id=...)</span></code>,
+or with <code class="docutils literal notranslate"><span class="pre">MALVA_PROVIDER_ID</span></code>.</p>
+</section>
+<section id="run-searches">
+<h2>Run Searches<a class="headerlink" href="#run-searches" title="Link to this heading">¶</a></h2>
+<section id="gene-search">
+<h3>Gene search<a class="headerlink" href="#gene-search" title="Link to this heading">¶</a></h3>
+<p>Search by gene symbol and inspect the aggregate expression table:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">result</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="s2">"BRCA1"</span><span class="p">)</span>
+<span class="n">df</span> <span class="o">=</span> <span class="n">result</span><span class="o">.</span><span class="n">df</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">df</span><span class="o">.</span><span class="n">head</span><span class="p">())</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">df</span><span class="o">.</span><span class="n">columns</span><span class="o">.</span><span class="n">tolist</span><span class="p">())</span>
+</pre></div>
+</div>
+<p>The default search result is aggregated by sample and cell type. Common columns
+include <code class="docutils literal notranslate"><span class="pre">sample_id</span></code>, <code class="docutils literal notranslate"><span class="pre">cell_type</span></code>, <code class="docutils literal notranslate"><span class="pre">gene_sequence</span></code>, <code class="docutils literal notranslate"><span class="pre">rel</span></code>, <code class="docutils literal notranslate"><span class="pre">exp</span></code>,
+<code class="docutils literal notranslate"><span class="pre">pct</span></code>, <code class="docutils literal notranslate"><span class="pre">raw_kmers</span></code>, and <code class="docutils literal notranslate"><span class="pre">cell_count</span></code>. These expression columns match
+the Expression Explorer display modes.</p>
+</section>
+<section id="federated-search">
+<h3>Federated search<a class="headerlink" href="#federated-search" title="Link to this heading">¶</a></h3>
+<p>When the Explorer has several providers configured, <code class="docutils literal notranslate"><span class="pre">search_federated</span></code>
+submits the query to every shard and returns one table with the provider
+origin as the first columns:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">df</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">search_federated</span><span class="p">(</span><span class="s2">"FOXP3"</span><span class="p">,</span> <span class="n">dataset_id</span><span class="o">=</span><span class="s2">"main"</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">df</span><span class="p">[[</span><span class="s2">"provider"</span><span class="p">,</span> <span class="s2">"provider_id"</span><span class="p">,</span> <span class="s2">"sample_id"</span><span class="p">,</span> <span class="s2">"cell_type"</span><span class="p">,</span> <span class="s2">"rel"</span><span class="p">]])</span>
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">provider</span></code> is the human-readable provider name; <code class="docutils literal notranslate"><span class="pre">provider_id</span></code> is the
+stable id used to address that shard. Pass <code class="docutils literal notranslate"><span class="pre">provider_ids=[...]</span></code> to restrict
+the search; requested ids are validated against <code class="docutils literal notranslate"><span class="pre">get_workspace()</span></code> before the
+job is submitted.</p>
+<p>Every result, including an empty successful search, exposes provenance in
+<code class="docutils literal notranslate"><span class="pre">df.attrs</span></code>: <code class="docutils literal notranslate"><span class="pre">job_id</span></code>, <code class="docutils literal notranslate"><span class="pre">status</span></code>, <code class="docutils literal notranslate"><span class="pre">shards</span></code>, <code class="docutils literal notranslate"><span class="pre">providers</span></code>, <code class="docutils literal notranslate"><span class="pre">errors</span></code>
+and <code class="docutils literal notranslate"><span class="pre">shard_errors</span></code>. Failed shards emit a warning and are listed in
+<code class="docutils literal notranslate"><span class="pre">attrs[&quot;errors&quot;]</span></code> instead of being silently dropped. Pass <code class="docutils literal notranslate"><span class="pre">strict=True</span></code> to
+raise <code class="docutils literal notranslate"><span class="pre">MalvaAPIError</span></code> when any shard fails.</p>
+</section>
+<section id="study-discovery">
+<h3>Study discovery<a class="headerlink" href="#study-discovery" title="Link to this heading">¶</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">get_studies</span></code> and <code class="docutils literal notranslate"><span class="pre">get_dataset_studies</span></code> fall back to the dataset hierarchy
+when a provider’s study endpoint returns no rows. In that case <code class="docutils literal notranslate"><span class="pre">get_studies</span></code>
+adds a <code class="docutils literal notranslate"><span class="pre">dataset_id</span></code> column so the study can be passed directly to
+<code class="docutils literal notranslate"><span class="pre">get_study_samples(dataset_id,</span> <span class="pre">study_name)</span></code>. If a hierarchy-derived study
+cannot be read through the provider’s sample route, the client raises a clear
+<code class="docutils literal notranslate"><span class="pre">MalvaAPIError</span></code> rather than returning a misleading empty list.</p>
+</section>
+<section id="sequence-search">
+<h3>Sequence search<a class="headerlink" href="#sequence-search" title="Link to this heading">¶</a></h3>
+<p>Search a DNA sequence of at least 24 nucleotides (nt). A k-mer is a DNA
+subsequence of length k; the index uses k = 24. The example sequence is 24 nt
+long.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">sequence</span> <span class="o">=</span> <span class="s2">"ATCGATCGATCGATCGATCGATCG"</span>
+<span class="n">sequence_result</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">search_sequences</span><span class="p">(</span><span class="n">sequence</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">sequence_result</span><span class="o">.</span><span class="n">df</span><span class="o">.</span><span class="n">head</span><span class="p">())</span>
+</pre></div>
+</div>
+</section>
+<section id="batch-search">
+<h3>Batch search<a class="headerlink" href="#batch-search" title="Link to this heading">¶</a></h3>
+<p>Submit multiple genes in one request and compare the returned rows by query:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">batch</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">search_genes</span><span class="p">([</span><span class="s2">"BRCA1"</span><span class="p">,</span> <span class="s2">"TP53"</span><span class="p">])</span>
+<span class="n">batch_df</span> <span class="o">=</span> <span class="n">batch</span><span class="o">.</span><span class="n">df</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">batch_df</span><span class="p">[[</span><span class="s2">"gene_sequence"</span><span class="p">,</span> <span class="s2">"sample_id"</span><span class="p">,</span> <span class="s2">"cell_type"</span><span class="p">,</span> <span class="s2">"rel"</span><span class="p">]]</span><span class="o">.</span><span class="n">head</span><span class="p">())</span>
+</pre></div>
+</div>
+</section>
+</section>
+<section id="tune-k-mer-filters">
+<h2>Tune K-mer Filters<a class="headerlink" href="#tune-k-mer-filters" title="Link to this heading">¶</a></h2>
+<p>Use <code class="docutils literal notranslate"><span class="pre">min_kmer_presence</span></code>, <code class="docutils literal notranslate"><span class="pre">max_kmer_presence</span></code>, and <code class="docutils literal notranslate"><span class="pre">stranded</span></code> to control
+which k-mers participate in sequence matching:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">filtered</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">search_sequences</span><span class="p">(</span>
+    <span class="n">sequence</span><span class="p">,</span>
+    <span class="n">max_kmer_presence</span><span class="o">=</span><span class="mi">10000</span><span class="p">,</span>
+    <span class="n">stranded</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">filtered</span><span class="o">.</span><span class="n">df</span><span class="o">.</span><span class="n">head</span><span class="p">())</span>
+</pre></div>
+</div>
+<p>See <a class="reference internal" href="query_parameters.html"><span class="doc">Query Parameters</span></a> for guidance on choosing these values.</p>
+</section>
+<section id="work-with-results">
+<h2>Work with Results<a class="headerlink" href="#work-with-results" title="Link to this heading">¶</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">enrich()</span></code> attaches sample metadata and returns the same result object, so it
+chains naturally. Only sample IDs that are not already available locally are
+requested from Malva:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">result</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="s2">"SPP1"</span><span class="p">)</span>
+<span class="n">result</span><span class="o">.</span><span class="n">enrich</span><span class="p">()</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">available_filter_fields</span><span class="p">())</span>
+
+<span class="c1"># This may be empty if no matching rows exist in the current index.</span>
+<span class="n">brain</span> <span class="o">=</span> <span class="n">result</span><span class="o">.</span><span class="n">filter_by</span><span class="p">(</span><span class="n">organ</span><span class="o">=</span><span class="s2">"brain"</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">brain</span><span class="o">.</span><span class="n">to_dataframe</span><span class="p">()</span><span class="o">.</span><span class="n">head</span><span class="p">())</span>
+
+<span class="n">by_cell_type</span> <span class="o">=</span> <span class="n">result</span><span class="o">.</span><span class="n">aggregate_by</span><span class="p">(</span><span class="s2">"cell_type"</span><span class="p">,</span> <span class="n">agg_func</span><span class="o">=</span><span class="s2">"mean"</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">by_cell_type</span><span class="o">.</span><span class="n">head</span><span class="p">())</span>
+</pre></div>
+</div>
+<p>The older <code class="docutils literal notranslate"><span class="pre">enrich_with_metadata()</span></code> name still works and is an alias.</p>
+</section>
+<section id="convert-search-results-to-anndata">
+<h2>Convert search results to AnnData<a class="headerlink" href="#convert-search-results-to-anndata" title="Link to this heading">¶</a></h2>
+<p>Use <code class="docutils literal notranslate"><span class="pre">to_anndata()</span></code> to get a standard in-memory AnnData object. The layout is
+fixed and easy to remember: observations are unique <code class="docutils literal notranslate"><span class="pre">sample_id</span></code> ×
+<code class="docutils literal notranslate"><span class="pre">cell_type</span></code> pairs, variables are genes, and <code class="docutils literal notranslate"><span class="pre">X</span></code> is a sparse float32 matrix
+of relative expression. Sample and cell-type metadata are in <code class="docutils literal notranslate"><span class="pre">obs</span></code> and
+provenance is in <code class="docutils literal notranslate"><span class="pre">uns[&quot;malva&quot;]</span></code>:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">adata</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="s2">"SPP1, CD3D"</span><span class="p">)</span><span class="o">.</span><span class="n">enrich</span><span class="p">()</span><span class="o">.</span><span class="n">to_anndata</span><span class="p">()</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">adata</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">adata</span><span class="o">.</span><span class="n">obs</span><span class="o">.</span><span class="n">head</span><span class="p">())</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">adata</span><span class="o">.</span><span class="n">var_names</span><span class="p">[:</span><span class="mi">10</span><span class="p">])</span>
+</pre></div>
+</div>
+</section>
+<section id="expression-columns">
+<h2>Expression Columns<a class="headerlink" href="#expression-columns" title="Link to this heading">¶</a></h2>
+<p>Aggregate search results use one row per <code class="docutils literal notranslate"><span class="pre">sample_id</span></code> × <code class="docutils literal notranslate"><span class="pre">cell_type</span></code> × query.
+The main expression columns are:</p>
+<dl class="simple">
+<dt><code class="docutils literal notranslate"><span class="pre">rel</span></code></dt><dd><p>Relative normalized expression used by the default Explorer view.</p>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">exp</span></code></dt><dd><p>Raw aggregate expression value from the search result payload.</p>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">pct</span></code></dt><dd><p>Percent of cells positive for the query in that sample × cell-type group.
+Divide by 100 to obtain fraction expressing.</p>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">raw_kmers</span></code></dt><dd><p>Mean raw k-mer hit count per expressing cell, without normalization.</p>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">cell_count</span></code></dt><dd><p>Number of positive cells in that sample × cell-type group.</p>
+</dd>
+</dl>
+<p>Per-cell retrieval is different: <code class="docutils literal notranslate"><span class="pre">retrieve_cells()</span></code> returns positive cells,
+and its <code class="docutils literal notranslate"><span class="pre">value</span></code> column contains raw per-cell expression/k-mer counts when the
+server has stored per-cell values for that search. Missing cell × feature
+entries are omitted rather than zero-filled.</p>
+</section>
+<section id="retrieve-cells">
+<h2>Retrieve Cells<a class="headerlink" href="#retrieve-cells" title="Link to this heading">¶</a></h2>
+<p>Use <code class="docutils literal notranslate"><span class="pre">retrieve_cells()</span></code> when you need cell IDs for downstream analysis. Start
+with a normal aggregate search, then choose an encoded sample ID from the cells
+that were returned.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">result</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="s2">"SPP1"</span><span class="p">)</span>
+<span class="n">cells</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">retrieve_cells</span><span class="p">(</span><span class="n">result</span><span class="p">,</span> <span class="n">include_sample_metadata</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+
+<span class="n">sample_id</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">cells</span><span class="o">.</span><span class="n">cells</span><span class="o">.</span><span class="n">iloc</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="s2">"sample_id"</span><span class="p">])</span>
+<span class="n">sample_cells</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">retrieve_cells</span><span class="p">(</span>
+    <span class="n">result</span><span class="p">,</span>
+    <span class="n">sample_ids</span><span class="o">=</span><span class="p">[</span><span class="n">sample_id</span><span class="p">],</span>
+    <span class="n">include_sample_metadata</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="n">cell_ids</span> <span class="o">=</span> <span class="n">sample_cells</span><span class="o">.</span><span class="n">get_cell_ids</span><span class="p">()</span>
+<span class="n">cell_df</span> <span class="o">=</span> <span class="n">sample_cells</span><span class="o">.</span><span class="n">to_dataframe</span><span class="p">(</span><span class="n">include_sample_metadata</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">cell_ids</span><span class="o">.</span><span class="n">head</span><span class="p">())</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">cell_df</span><span class="o">.</span><span class="n">head</span><span class="p">())</span>
+</pre></div>
+</div>
+<p>Fallback retrieval endpoints report a positive-cell indicator in <code class="docutils literal notranslate"><span class="pre">value</span></code>:
+<code class="docutils literal notranslate"><span class="pre">1</span></code> means that the cell matched the query. Some calculations, such as the
+fraction of expressing cells or the mean expression including zeros, also need
+the cells that did not match. Call <code class="docutils literal notranslate"><span class="pre">get_cells_by_metadata()</span></code> to fetch all
+cells for the selected samples, and reuse that table across searches:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">all_cells</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">get_cells_by_metadata</span><span class="p">(</span><span class="n">sample_ids</span><span class="o">=</span><span class="p">[</span><span class="n">sample_id</span><span class="p">])</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">all_cells</span><span class="p">[[</span><span class="s2">"sample_id"</span><span class="p">,</span> <span class="s2">"cell_id"</span><span class="p">,</span> <span class="s2">"cell_type"</span><span class="p">,</span> <span class="s2">"total_counts"</span><span class="p">]]</span><span class="o">.</span><span class="n">head</span><span class="p">())</span>
+</pre></div>
+</div>
+<p>Fetching every cell in the database is also supported through
+<code class="docutils literal notranslate"><span class="pre">get_cells_by_metadata(include_all_database_cells=True)</span></code>, but it is a large
+operation and is intentionally not part of the quick-start workflow.</p>
+</section>
+<section id="stream-per-cell-expression">
+<h2>Stream per-cell expression<a class="headerlink" href="#stream-per-cell-expression" title="Link to this heading">¶</a></h2>
+<p>For selected samples, <code class="docutils literal notranslate"><span class="pre">stream_cell_expression()</span></code> streams sparse non-zero
+per-cell values in batches instead of building one large matrix in memory.
+Pass a gene panel whenever possible; without one the server has to scan the
+full expression store.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">for</span> <span class="n">batch</span> <span class="ow">in</span> <span class="n">client</span><span class="o">.</span><span class="n">stream_cell_expression</span><span class="p">(</span>
+    <span class="n">sample_ids</span><span class="o">=</span><span class="p">[</span><span class="n">sample_id</span><span class="p">],</span>
+    <span class="n">gene_ids</span><span class="o">=</span><span class="p">[</span><span class="s2">"SPP1"</span><span class="p">,</span> <span class="s2">"CD3D"</span><span class="p">],</span>
+<span class="p">):</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">batch</span><span class="o">.</span><span class="n">head</span><span class="p">())</span>
+</pre></div>
+</div>
+<p>Each batch is a pandas <code class="docutils literal notranslate"><span class="pre">DataFrame</span></code> with <code class="docutils literal notranslate"><span class="pre">sample_id</span></code>, <code class="docutils literal notranslate"><span class="pre">cell_id</span></code>,
+<code class="docutils literal notranslate"><span class="pre">store_index</span></code>, <code class="docutils literal notranslate"><span class="pre">gene</span></code>, and <code class="docutils literal notranslate"><span class="pre">value</span></code> columns. Only non-zero entries are
+returned. Iterate over the batches rather than wrapping large streams in
+<code class="docutils literal notranslate"><span class="pre">list()</span></code>.</p>
+<p>The returned object is a small <code class="docutils literal notranslate"><span class="pre">CellExpressionStream</span></code> wrapper. You can still
+loop over it exactly as above, or convert it to AnnData. <code class="docutils literal notranslate"><span class="pre">to_anndata()</span></code> reads
+the whole stream and builds a cells × genes sparse float32 matrix; observation
+names are <code class="docutils literal notranslate"><span class="pre">sample_id:cell_id</span></code> and variables are genes:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">stream</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">stream_cell_expression</span><span class="p">(</span>
+    <span class="n">sample_ids</span><span class="o">=</span><span class="p">[</span><span class="n">sample_id</span><span class="p">],</span>
+    <span class="n">gene_ids</span><span class="o">=</span><span class="p">[</span><span class="s2">"SPP1"</span><span class="p">,</span> <span class="s2">"CD3D"</span><span class="p">],</span>
+<span class="p">)</span>
+<span class="n">adata</span> <span class="o">=</span> <span class="n">stream</span><span class="o">.</span><span class="n">to_anndata</span><span class="p">()</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">adata</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>For large selections, use <code class="docutils literal notranslate"><span class="pre">write_h5ad()</span></code>. It writes the stream to disk with
+bounded memory and can be read lazily afterwards:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">client</span><span class="o">.</span><span class="n">stream_cell_expression</span><span class="p">(</span>
+    <span class="n">sample_ids</span><span class="o">=</span><span class="p">[</span><span class="n">sample_id</span><span class="p">],</span>
+    <span class="n">gene_ids</span><span class="o">=</span><span class="p">[</span><span class="s2">"SPP1"</span><span class="p">,</span> <span class="s2">"CD3D"</span><span class="p">],</span>
+<span class="p">)</span><span class="o">.</span><span class="n">write_h5ad</span><span class="p">(</span><span class="s2">"cells.h5ad"</span><span class="p">)</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">anndata</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">ad</span>
+<span class="n">backed</span> <span class="o">=</span> <span class="n">ad</span><span class="o">.</span><span class="n">read_h5ad</span><span class="p">(</span><span class="s2">"cells.h5ad"</span><span class="p">,</span> <span class="n">backed</span><span class="o">=</span><span class="s2">"r"</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">backed</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>If you prefer to build the matrix yourself, <code class="docutils literal notranslate"><span class="pre">iter_anndata()</span></code> yields one
+AnnData per server batch. Combine the parts with <code class="docutils literal notranslate"><span class="pre">anndata.concat</span></code>:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">anndata</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">ad</span>
+
+<span class="n">parts</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">stream_cell_expression</span><span class="p">(</span>
+    <span class="n">sample_ids</span><span class="o">=</span><span class="p">[</span><span class="n">sample_id</span><span class="p">],</span>
+    <span class="n">gene_ids</span><span class="o">=</span><span class="p">[</span><span class="s2">"SPP1"</span><span class="p">,</span> <span class="s2">"CD3D"</span><span class="p">],</span>
+<span class="p">)</span><span class="o">.</span><span class="n">iter_anndata</span><span class="p">()</span>
+<span class="n">combined</span> <span class="o">=</span> <span class="n">ad</span><span class="o">.</span><span class="n">concat</span><span class="p">(</span><span class="n">parts</span><span class="p">,</span> <span class="n">join</span><span class="o">=</span><span class="s2">"outer"</span><span class="p">,</span> <span class="n">fill_value</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">combined</span><span class="p">)</span>
+</pre></div>
+</div>
+</section>
+<section id="get-expression-for-specific-cells">
+<h2>Get expression for specific cells<a class="headerlink" href="#get-expression-for-specific-cells" title="Link to this heading">¶</a></h2>
+<p>If you already have a list of cells, pass <code class="docutils literal notranslate"><span class="pre">(sample_id,</span> <span class="pre">cell_id)</span></code> pairs.
+Cells come back in the same order:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">cells</span> <span class="o">=</span> <span class="p">[(</span><span class="n">sample_id</span><span class="p">,</span> <span class="s2">"cell-1"</span><span class="p">),</span> <span class="p">(</span><span class="n">sample_id</span><span class="p">,</span> <span class="s2">"cell-2"</span><span class="p">)]</span>  <span class="c1"># replace with your pairs</span>
+<span class="k">for</span> <span class="n">batch</span> <span class="ow">in</span> <span class="n">client</span><span class="o">.</span><span class="n">stream_cell_expression</span><span class="p">(</span>
+    <span class="n">cells</span><span class="o">=</span><span class="n">cells</span><span class="p">,</span>
+    <span class="n">gene_ids</span><span class="o">=</span><span class="p">[</span><span class="s2">"CD3D"</span><span class="p">,</span> <span class="s2">"CD3E"</span><span class="p">],</span>
+<span class="p">):</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">batch</span><span class="o">.</span><span class="n">head</span><span class="p">())</span>
+</pre></div>
+</div>
+<p>This is useful when you have sorted a cell table by expression and want to
+fetch the cells in high-to-low order. Leave out <code class="docutils literal notranslate"><span class="pre">gene_ids</span></code> to get all
+features for each cell.</p>
+<p>The server needs a cell-major CSR index in the expression store. If the store
+does not have one, the call fails with a clear “not available yet” error
+instead of scanning the whole store.</p>
+</section>
+<section id="coverage-results">
+<h2>Coverage Results<a class="headerlink" href="#coverage-results" title="Link to this heading">¶</a></h2>
+<p>Coverage queries return aggregate tracks, not single-cell coverage. Use
+<code class="docutils literal notranslate"><span class="pre">to_dataframe()</span></code> for the cell-type × position display matrix and
+<code class="docutils literal notranslate"><span class="pre">to_long_dataframe()</span></code> when you need sample-aware downstream filtering:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">coverage</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">get_coverage</span><span class="p">(</span><span class="s2">"chr11"</span><span class="p">,</span> <span class="mi">67435510</span><span class="p">,</span> <span class="mi">67439682</span><span class="p">)</span>
+
+<span class="n">matrix</span> <span class="o">=</span> <span class="n">coverage</span><span class="o">.</span><span class="n">to_dataframe</span><span class="p">()</span>
+<span class="n">per_sample</span> <span class="o">=</span> <span class="n">coverage</span><span class="o">.</span><span class="n">to_long_dataframe</span><span class="p">()</span>
+
+<span class="n">sample_rows</span> <span class="o">=</span> <span class="n">per_sample</span><span class="p">[</span><span class="n">per_sample</span><span class="p">[</span><span class="s2">"sample_id"</span><span class="p">]</span> <span class="o">==</span> <span class="n">per_sample</span><span class="o">.</span><span class="n">iloc</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="s2">"sample_id"</span><span class="p">]]</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">matrix</span><span class="o">.</span><span class="n">head</span><span class="p">())</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">sample_rows</span><span class="o">.</span><span class="n">head</span><span class="p">())</span>
+</pre></div>
+</div>
+<p>The long table has one row per genomic position × sample × cell type and
+includes <code class="docutils literal notranslate"><span class="pre">raw_signal</span></code>, <code class="docutils literal notranslate"><span class="pre">cell_count</span></code>, and <code class="docutils literal notranslate"><span class="pre">mean_signal</span></code>.</p>
+<section id="coverage-like-cell-retrieval">
+<h3>Coverage-like Cell Retrieval<a class="headerlink" href="#coverage-like-cell-retrieval" title="Link to this heading">¶</a></h3>
+<p>The coverage API currently returns aggregate coverage tracks and does not yet
+provide a dedicated endpoint for retrieving every per-cell hit behind a coverage
+region. When you need a cell-level approximation for a sequence or genomic
+segment, one practical workaround is to submit the sequence as overlapping
+search probes in a normal search job, then call <code class="docutils literal notranslate"><span class="pre">retrieve_cells()</span></code> on that
+job. This returns cells positive for one or more sliding-window probes.</p>
+<p>The following is example code and may need to be adjusted for your sequence,
+window size, step size, strandedness, and downstream filtering:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">def</span><span class="w"> </span><span class="nf">sliding_windows</span><span class="p">(</span><span class="n">sequence</span><span class="p">,</span> <span class="n">window</span><span class="o">=</span><span class="mi">48</span><span class="p">,</span> <span class="n">step</span><span class="o">=</span><span class="mi">24</span><span class="p">):</span>
+    <span class="n">sequence</span> <span class="o">=</span> <span class="n">sequence</span><span class="o">.</span><span class="n">upper</span><span class="p">()</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="s2">" "</span><span class="p">,</span> <span class="s2">""</span><span class="p">)</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="s2">"</span><span class="se">\n</span><span class="s2">"</span><span class="p">,</span> <span class="s2">""</span><span class="p">)</span>
+    <span class="k">return</span> <span class="p">[</span>
+        <span class="n">sequence</span><span class="p">[</span><span class="n">i</span><span class="p">:</span><span class="n">i</span> <span class="o">+</span> <span class="n">window</span><span class="p">]</span>
+        <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="nb">max</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">sequence</span><span class="p">)</span> <span class="o">-</span> <span class="n">window</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">),</span> <span class="n">step</span><span class="p">)</span>
+        <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">sequence</span><span class="p">[</span><span class="n">i</span><span class="p">:</span><span class="n">i</span> <span class="o">+</span> <span class="n">window</span><span class="p">])</span> <span class="o">==</span> <span class="n">window</span>
+    <span class="p">]</span>
+
+<span class="c1"># Example sequence; replace with your region/sequence of interest.</span>
+<span class="n">sequence</span> <span class="o">=</span> <span class="p">(</span>
+    <span class="s2">"ACAGGCTGAAGGAGTTTTATTTCAAATGGTTGCCTGATGCCTGTGGTT"</span>
+    <span class="s2">"AACCACAGGCATCAGGCAACCATTTGAAATAAAACTCCTTCAGCCTGT"</span>
+<span class="p">)</span>
+
+<span class="n">probes</span> <span class="o">=</span> <span class="n">sliding_windows</span><span class="p">(</span><span class="n">sequence</span><span class="p">,</span> <span class="n">window</span><span class="o">=</span><span class="mi">48</span><span class="p">,</span> <span class="n">step</span><span class="o">=</span><span class="mi">24</span><span class="p">)</span>
+<span class="n">result</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">search_sequences</span><span class="p">(</span><span class="n">probes</span><span class="p">,</span> <span class="n">stranded</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+
+<span class="n">positive_cells</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">retrieve_cells</span><span class="p">(</span>
+    <span class="n">result</span><span class="p">,</span>
+    <span class="n">include_sample_metadata</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+<span class="p">)</span><span class="o">.</span><span class="n">to_dataframe</span><span class="p">(</span><span class="n">include_sample_metadata</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="n">positive_cells</span><span class="o">.</span><span class="n">head</span><span class="p">())</span>
+</pre></div>
+</div>
+<p>If you need denominator cells for fraction-expressing or mean-including-zero
+calculations, fetch the metadata-defined cell universe for the samples observed
+in <code class="docutils literal notranslate"><span class="pre">positive_cells</span></code>:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">sample_ids</span> <span class="o">=</span> <span class="n">positive_cells</span><span class="p">[</span><span class="s2">"sample_id"</span><span class="p">]</span><span class="o">.</span><span class="n">dropna</span><span class="p">()</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="nb">int</span><span class="p">)</span><span class="o">.</span><span class="n">unique</span><span class="p">()</span><span class="o">.</span><span class="n">tolist</span><span class="p">()</span>
+<span class="n">denominator_cells</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">get_cells_by_metadata</span><span class="p">(</span><span class="n">sample_ids</span><span class="o">=</span><span class="n">sample_ids</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">denominator_cells</span><span class="o">.</span><span class="n">head</span><span class="p">())</span>
+</pre></div>
+</div>
+</section>
+</section>
+<section id="compare-your-clusters-to-malva-metacells">
+<h2>Compare Your Clusters to Malva Metacells<a class="headerlink" href="#compare-your-clusters-to-malva-metacells" title="Link to this heading">¶</a></h2>
+<p>If you have your own AnnData object, you can ask which Malva cells look most
+like each of your clusters. The data stays local: the client averages cells
+inside each cluster and sends only the small cluster × gene matrix, not every
+cell.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">scanpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">sc</span>
+
+<span class="c1"># Normalise and log-transform first (the client warns if X still looks</span>
+<span class="c1"># like raw integer counts). Your object is never modified by the client.</span>
+<span class="n">sc</span><span class="o">.</span><span class="n">pp</span><span class="o">.</span><span class="n">normalize_total</span><span class="p">(</span><span class="n">adata</span><span class="p">,</span> <span class="n">target_sum</span><span class="o">=</span><span class="mf">1e4</span><span class="p">)</span>
+<span class="n">sc</span><span class="o">.</span><span class="n">pp</span><span class="o">.</span><span class="n">log1p</span><span class="p">(</span><span class="n">adata</span><span class="p">)</span>
+
+<span class="n">matches</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">find_metacells</span><span class="p">(</span>
+    <span class="n">adata</span><span class="p">,</span>
+    <span class="n">groupby</span><span class="o">=</span><span class="s2">"leiden"</span><span class="p">,</span>          <span class="c1"># any categorical obs column</span>
+    <span class="n">dataset_id</span><span class="o">=</span><span class="s2">"Human_Cell_Atlas"</span><span class="p">,</span>
+    <span class="n">top_n</span><span class="o">=</span><span class="mi">50</span><span class="p">,</span>
+    <span class="n">method</span><span class="o">=</span><span class="s2">"cosine"</span><span class="p">,</span>           <span class="c1"># exact legacy default</span>
+    <span class="c1"># method="hellinger"      # optional composition space</span>
+    <span class="c1"># method="panel_lda"      # optional weighted-panel space</span>
+<span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">matches</span><span class="o">.</span><span class="n">to_dataframe</span><span class="p">()</span><span class="o">.</span><span class="n">head</span><span class="p">())</span>
+</pre></div>
+</div>
+<p>The result is a small <code class="docutils literal notranslate"><span class="pre">MetacellMatchResult</span></code> object with one row per cluster
+and ranked metacell. Use <code class="docutils literal notranslate"><span class="pre">to_dataframe()</span></code> whenever you want a plain pandas
+table. Columns are <code class="docutils literal notranslate"><span class="pre">cluster</span></code>, <code class="docutils literal notranslate"><span class="pre">rank</span></code>, <code class="docutils literal notranslate"><span class="pre">metacell_id</span></code>, <code class="docutils literal notranslate"><span class="pre">sample_id</span></code>,
+<code class="docutils literal notranslate"><span class="pre">cell_type</span></code>, <code class="docutils literal notranslate"><span class="pre">n_cells</span></code>, <code class="docutils literal notranslate"><span class="pre">similarity</span></code> (cosine), <code class="docutils literal notranslate"><span class="pre">distance</span></code>
+(<code class="docutils literal notranslate"><span class="pre">1</span> <span class="pre">-</span> <span class="pre">similarity</span></code>), and <code class="docutils literal notranslate"><span class="pre">enrichment_score</span></code> (a per-cluster z-score of
+similarity across all metacells).</p>
+<p>Sample metadata is merged locally when you already have it, so no extra
+metadata request is made:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">sample_meta</span> <span class="o">=</span> <span class="n">my_sample_table</span><span class="o">.</span><span class="n">set_index</span><span class="p">(</span><span class="s2">"sample_id"</span><span class="p">)</span>  <span class="c1"># your own table</span>
+<span class="n">matches</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">find_metacells</span><span class="p">(</span>
+    <span class="n">adata</span><span class="p">,</span>
+    <span class="n">groupby</span><span class="o">=</span><span class="s2">"leiden"</span><span class="p">,</span>
+    <span class="n">dataset_id</span><span class="o">=</span><span class="s2">"Human_Cell_Atlas"</span><span class="p">,</span>
+    <span class="n">sample_metadata</span><span class="o">=</span><span class="n">sample_meta</span><span class="p">,</span>
+<span class="p">)</span><span class="o">.</span><span class="n">enrich</span><span class="p">()</span>
+</pre></div>
+</div>
+<p>Genes that are not present in the Malva dataset are ignored, and the client
+warns which ones were missing.</p>
+<section id="assign-one-label-per-cluster">
+<h3>Assign one label per cluster<a class="headerlink" href="#assign-one-label-per-cluster" title="Link to this heading">¶</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">assign_labels()</span></code> uses the server’s per-cell-type top-k scores for the
+<code class="docutils literal notranslate"><span class="pre">hellinger</span></code> and <code class="docutils literal notranslate"><span class="pre">panel_lda</span></code> methods. For <code class="docutils literal notranslate"><span class="pre">cosine</span></code> results, it sums
+neighbor similarities. Pass <code class="docutils literal notranslate"><span class="pre">weight=&quot;similarity&quot;</span></code> or <code class="docutils literal notranslate"><span class="pre">weight=&quot;rank&quot;</span></code> to use
+neighbor aggregation. The method returns a table with the label, confidence,
+and number of supporting metacells. Pass
+<code class="docutils literal notranslate"><span class="pre">adata</span></code> to also write the labels (and optionally the confidence) into
+<code class="docutils literal notranslate"><span class="pre">obs</span></code>:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">labels</span> <span class="o">=</span> <span class="n">matches</span><span class="o">.</span><span class="n">assign_labels</span><span class="p">(</span>
+    <span class="n">adata</span><span class="p">,</span>
+    <span class="n">column</span><span class="o">=</span><span class="s2">"malva_cell_type"</span><span class="p">,</span>
+    <span class="n">confidence_column</span><span class="o">=</span><span class="s2">"malva_confidence"</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">labels</span><span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="n">adata</span><span class="o">.</span><span class="n">obs</span><span class="p">[[</span><span class="s2">"leiden"</span><span class="p">,</span> <span class="s2">"malva_cell_type"</span><span class="p">,</span> <span class="s2">"malva_confidence"</span><span class="p">]]</span><span class="o">.</span><span class="n">head</span><span class="p">())</span>
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">compare_clusters_to_metacells()</span></code> remains available as a deprecated alias for
+<code class="docutils literal notranslate"><span class="pre">find_metacells()</span></code>.</p>
+</section>
+</section>
+<section id="asynchronous-jobs">
+<h2>Asynchronous Jobs<a class="headerlink" href="#asynchronous-jobs" title="Link to this heading">¶</a></h2>
+<p>Submit without waiting, poll status, and then fetch results:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">pending</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="s2">"FOXP3"</span><span class="p">,</span> <span class="n">wait_for_completion</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+<span class="n">job_id</span> <span class="o">=</span> <span class="n">pending</span><span class="o">.</span><span class="n">job_id</span>
+
+<span class="n">status</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">get_job_status</span><span class="p">(</span><span class="n">job_id</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">status</span><span class="p">[</span><span class="s2">"status"</span><span class="p">])</span>
+
+<span class="n">completed</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">wait_for_job</span><span class="p">(</span><span class="n">job_id</span><span class="p">,</span> <span class="n">max_wait</span><span class="o">=</span><span class="mi">600</span><span class="p">)</span>
+<span class="n">completed_df</span> <span class="o">=</span> <span class="n">completed</span><span class="o">.</span><span class="n">df</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">completed_df</span><span class="o">.</span><span class="n">head</span><span class="p">())</span>
+</pre></div>
+</div>
+</section>
+<section id="command-line-interface">
+<h2>Command-Line Interface<a class="headerlink" href="#command-line-interface" title="Link to this heading">¶</a></h2>
+<p>The same basic search workflow is available from the terminal:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>malva_client<span class="w"> </span>search<span class="w"> </span><span class="s2">"BRCA1"</span><span class="w"> </span>--output<span class="w"> </span>results.csv<span class="w"> </span>--format<span class="w"> </span>csv
+malva_client<span class="w"> </span>search<span class="w"> </span><span class="s2">"ATCGATCGATCGATCGATCGATCG"</span><span class="w"> </span>--output<span class="w"> </span>sequence_results.json<span class="w"> </span>--format<span class="w"> </span>json
+malva_client<span class="w"> </span>quota
+</pre></div>
+</div>
+</section>
+<section id="next-steps">
+<h2>Next Steps<a class="headerlink" href="#next-steps" title="Link to this heading">¶</a></h2>
+<p>Coverage, coexpression, dataset discovery, and sample download workflows depend
+on the datasets and samples you want to analyze. See the dedicated tutorials and
+API reference for those workflows.</p>
+</section>
+</section>
+
+        </article>
+      </div>
+      <footer>
+        
+        <div class="related-pages">
+          <a class="next-page" href="query_parameters.html">
+              <div class="page-info">
+                <div class="context">
+                  <span>Next</span>
+                </div>
+                <div class="title">Query Parameters</div>
+              </div>
+              <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
+            </a>
+          <a class="prev-page" href="installation.html">
+              <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
+              <div class="page-info">
+                <div class="context">
+                  <span>Previous</span>
+                </div>
+                
+                <div class="title">Installation</div>
+                
+              </div>
+            </a>
+        </div>
+        <div class="bottom-of-page">
+          <div class="left-details">
+            <div class="copyright">
+                Copyright &#169; 2025-2026, Malva Team
+            </div>
+            Made with <a href="https://www.sphinx-doc.org/">Sphinx</a> and <a class="muted-link" href="https://pradyunsg.me">@pradyunsg</a>'s
+            
+            <a href="https://github.com/pradyunsg/furo">Furo</a>
+            
+          </div>
+          <div class="right-details">
+            
+          </div>
+        </div>
+        
+      </footer>
+    </div>
+    <aside class="toc-drawer">
+      
+      
+      <div class="toc-sticky toc-scroll">
+        <div class="toc-title-container">
+          <span class="toc-title">
+            On this page
+          </span>
+        </div>
+        <div class="toc-tree-container">
+          <div class="toc-tree">
+            <ul>
+<li><a class="reference internal" href="#">Quick Start</a><ul>
+<li><a class="reference internal" href="#authentication">Authentication</a></li>
+<li><a class="reference internal" href="#connect">Connect</a></li>
+<li><a class="reference internal" href="#select-a-workspace">Select a workspace</a></li>
+<li><a class="reference internal" href="#provider-scoping">Provider scoping</a></li>
+<li><a class="reference internal" href="#run-searches">Run Searches</a><ul>
+<li><a class="reference internal" href="#gene-search">Gene search</a></li>
+<li><a class="reference internal" href="#federated-search">Federated search</a></li>
+<li><a class="reference internal" href="#study-discovery">Study discovery</a></li>
+<li><a class="reference internal" href="#sequence-search">Sequence search</a></li>
+<li><a class="reference internal" href="#batch-search">Batch search</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#tune-k-mer-filters">Tune K-mer Filters</a></li>
+<li><a class="reference internal" href="#work-with-results">Work with Results</a></li>
+<li><a class="reference internal" href="#convert-search-results-to-anndata">Convert search results to AnnData</a></li>
+<li><a class="reference internal" href="#expression-columns">Expression Columns</a></li>
+<li><a class="reference internal" href="#retrieve-cells">Retrieve Cells</a></li>
+<li><a class="reference internal" href="#stream-per-cell-expression">Stream per-cell expression</a></li>
+<li><a class="reference internal" href="#get-expression-for-specific-cells">Get expression for specific cells</a></li>
+<li><a class="reference internal" href="#coverage-results">Coverage Results</a><ul>
+<li><a class="reference internal" href="#coverage-like-cell-retrieval">Coverage-like Cell Retrieval</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#compare-your-clusters-to-malva-metacells">Compare Your Clusters to Malva Metacells</a><ul>
+<li><a class="reference internal" href="#assign-one-label-per-cluster">Assign one label per cluster</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#asynchronous-jobs">Asynchronous Jobs</a></li>
+<li><a class="reference internal" href="#command-line-interface">Command-Line Interface</a></li>
+<li><a class="reference internal" href="#next-steps">Next Steps</a></li>
+</ul>
+</li>
+</ul>
+
+          </div>
+        </div>
+      </div>
+      
+      
+    </aside>
+  </div>
+</div><script src="_static/documentation_options.js?v=b9678aa1"></script>
+    <script src="_static/doctools.js?v=9a2dae69"></script>
+    <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="_static/scripts/furo.js?v=46bd48cc"></script>
+    <script src="_static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="_static/copybutton.js?v=f281be69"></script>
+    <script src="_static/design-tabs.js?v=f930bc37"></script>
+    <script crossorigin="anonymous" integrity="sha256-Ae2Vz/4ePdIu6ZyI/5ZGsYnb+m0JlOmKPjt6XZ9JJkA=" src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.4/require.min.js"></script>
+    </body>
+</html>
