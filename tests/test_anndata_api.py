@@ -85,6 +85,7 @@ def _metacell_response():
                     {
                         "metacell_id": "m1",
                         "sample_id": 1,
+                        "sample_uuid": "uuid-1",
                         "cell_type": "T",
                         "n_cells": 10,
                         "similarity": 0.9,
@@ -95,6 +96,7 @@ def _metacell_response():
                     {
                         "metacell_id": "m2",
                         "sample_id": 2,
+                        "sample_uuid": "uuid-2",
                         "cell_type": "T",
                         "n_cells": 12,
                         "similarity": 0.4,
@@ -110,6 +112,7 @@ def _metacell_response():
                     {
                         "metacell_id": "m3",
                         "sample_id": 1,
+                        "sample_uuid": "uuid-1",
                         "cell_type": "B",
                         "n_cells": 8,
                         "similarity": 0.8,
@@ -120,6 +123,7 @@ def _metacell_response():
                     {
                         "metacell_id": "m4",
                         "sample_id": 3,
+                        "sample_uuid": "uuid-3",
                         "cell_type": "T",
                         "n_cells": 7,
                         "similarity": 0.2,
@@ -398,6 +402,7 @@ class TestMetacellMatchResult:
             "rank",
             "metacell_id",
             "sample_id",
+            "sample_uuid",
             "cell_type",
             "n_cells",
             "similarity",
@@ -444,6 +449,57 @@ class TestMetacellMatchResult:
         assert labels.set_index("cluster").loc["b", "confidence"] == pytest.approx(0.8)
         assert adata.obs["malva_cell_type"].tolist() == ["T", "B"]
         np.testing.assert_allclose(adata.obs["malva_confidence"].tolist(), [1.0, 0.8])
+
+    def test_assign_labels_projects_arbitrary_metadata_column(self, mock_client, monkeypatch):
+        response = _metacell_response()
+        # Make the sample-3 hit the strongest neighbour of cluster b so the
+        # projected disease labels differ between clusters.
+        response["clusters"][1]["neighbors"][0]["similarity"] = 0.2
+        response["clusters"][1]["neighbors"][0]["distance"] = 0.8
+        response["clusters"][1]["neighbors"][1]["similarity"] = 0.8
+        response["clusters"][1]["neighbors"][1]["distance"] = 0.2
+        _capture_response(monkeypatch, mock_client, response)
+        adata = ad.AnnData(
+            X=np.ones((2, 2)),
+            obs=pd.DataFrame({"cluster": pd.Categorical(["a", "b"])}, index=pd.Index(["c1", "c2"])),
+            var=pd.DataFrame(index=pd.Index(["G1", "G2"])),
+        )
+        metadata = pd.DataFrame(
+            {"disease": ["normal", "normal", "cancer"]},
+            index=pd.Index([1, 2, 3], name="sample_id"),
+        )
+
+        result = mock_client.find_metacells(
+            adata, groupby="cluster", dataset_id="ds1", sample_metadata=metadata
+        )
+        labels = result.assign_labels(adata, column="malva_disease", label_column="disease")
+
+        assert labels.columns.tolist() == [
+            "cluster",
+            "disease",
+            "confidence",
+            "n_metacells",
+            "weight",
+        ]
+        by_cluster = labels.set_index("cluster")
+        assert by_cluster.loc["a", "disease"] == "normal"
+        assert by_cluster.loc["a", "confidence"] == pytest.approx(1.0)
+        assert by_cluster.loc["b", "disease"] == "cancer"
+        assert by_cluster.loc["b", "confidence"] == pytest.approx(0.8)
+        assert result.labels_ is labels
+        assert adata.obs["malva_disease"].tolist() == ["normal", "cancer"]
+
+    def test_assign_labels_rejects_missing_label_column(self, mock_client, monkeypatch):
+        _capture_response(monkeypatch, mock_client, _metacell_response())
+        adata = ad.AnnData(
+            X=np.ones((2, 2)),
+            obs=pd.DataFrame({"cluster": pd.Categorical(["a", "b"])}, index=pd.Index(["c1", "c2"])),
+            var=pd.DataFrame(index=pd.Index(["G1", "G2"])),
+        )
+        result = mock_client.find_metacells(adata, groupby="cluster", dataset_id="ds1")
+
+        with pytest.raises(ValueError, match="no 'batch' column"):
+            result.assign_labels(label_column="batch", write_to_obs=False)
 
     def test_assign_labels_without_adata(self, mock_client, monkeypatch):
         _capture_response(monkeypatch, mock_client, _metacell_response())

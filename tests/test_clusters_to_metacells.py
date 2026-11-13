@@ -39,6 +39,7 @@ def _response(clusters=None, missing=0, missing_genes=None, scores=None):
                     {
                         "metacell_id": f"1__{name}",
                         "sample_id": 1,
+                        "sample_uuid": f"uuid-{name}",
                         "cell_type": name,
                         "n_cells": 10,
                         "similarity": 0.9,
@@ -96,6 +97,7 @@ class TestAggregation:
             "rank",
             "metacell_id",
             "sample_id",
+            "sample_uuid",
             "cell_type",
             "n_cells",
             "similarity",
@@ -104,6 +106,20 @@ class TestAggregation:
         ]
         assert frame["cluster"].tolist() == ["a", "b"]
         assert frame["rank"].tolist() == [1, 1]
+        assert frame["sample_uuid"].tolist() == ["uuid-a", "uuid-b"]
+
+    def test_find_metacells_prefers_canonical_endpoint(self, mock_client, monkeypatch):
+        adata = _adata(sparse.csr_matrix(np.eye(3)), pd.Categorical(["a", "b", "c"]))
+        captured = _capture(monkeypatch, mock_client, _response(["a", "b", "c"]))
+
+        mock_client.find_metacells(adata, "cluster", dataset_id="ds1")
+
+        assert captured["endpoints"] == [
+            "/api/coexpression/metacells/nearest",
+            "/query/metacells/nearest",
+            "/api/coexpression/clusters-to-metacells",
+            "/query/clusters-to-metacells",
+        ]
 
     def test_dense_input_is_supported(self, mock_client, monkeypatch):
         adata = _adata(np.array([[1.5, 0.0, 2.25], [1.5, 0.0, 0.0]]), pd.Categorical(["a", "a"]))
