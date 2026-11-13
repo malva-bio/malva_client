@@ -1003,7 +1003,7 @@ class TestCoexpressionMethods:
 
         responses.add_callback(
             responses.POST,
-            f"{BASE}/api/coexpression/query-by-job",
+            f"{BASE}/api/coexpression/by-job",
             callback=check_body,
         )
         result = mock_client.get_coexpression("j1", "human_cortex")
@@ -1036,7 +1036,7 @@ class TestCoexpressionMethods:
 
         responses.add_callback(
             responses.POST,
-            f"{BASE}/api/coexpression/query-by-job",
+            f"{BASE}/api/coexpression/by-job",
             callback=check_body,
         )
         result = mock_client.get_coexpression_genes("j1", "human_cortex")

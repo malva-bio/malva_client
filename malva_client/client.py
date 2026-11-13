@@ -4383,9 +4383,9 @@ class MalvaClient:
         """
         Run a full coexpression analysis for a search job on a dataset.
 
-        Calls ``POST /api/coexpression/query-by-job`` with all enrichment
-        options enabled (GO enrichment, UMAP scores, cell-type enrichment,
-        tissue breakdown).
+        Calls ``POST /api/coexpression/by-job`` (falling back to the legacy
+        ``/api/coexpression/query-by-job``) with all enrichment options enabled
+        (GO enrichment, UMAP scores, cell-type enrichment, tissue breakdown).
 
         Args:
             job_id: Job ID from a previous search
@@ -4410,7 +4410,12 @@ class MalvaClient:
         data.update(kwargs)
         response, endpoint = self._request_first_available(
             "POST",
-            ["/api/coexpression/query-by-job", "/query-by-job"],
+            [
+                "/api/coexpression/by-job",
+                "/query/by-job",
+                "/api/coexpression/query-by-job",
+                "/query-by-job",
+            ],
             json=data,
         )
         return self._coexpression_from_response(
@@ -4462,7 +4467,12 @@ class MalvaClient:
         data.update(kwargs)
         response, endpoint = self._request_first_available(
             "POST",
-            ["/api/coexpression/query-by-job", "/query-by-job"],
+            [
+                "/api/coexpression/by-job",
+                "/query/by-job",
+                "/api/coexpression/query-by-job",
+                "/query-by-job",
+            ],
             json=data,
         )
         return self._coexpression_from_response(
@@ -4511,8 +4521,11 @@ class MalvaClient:
             :class:`~malva_client.models.MetacellMatchResult`, a DataFrame-like
             object with ``to_dataframe()``, ``enrich()`` and ``assign_labels()``.
             Its columns are ``cluster``, ``rank``, ``metacell_id``, ``sample_id``,
-            ``cell_type``, ``n_cells``, ``similarity``, ``distance``, and
-            ``enrichment_score`` (plus any local sample metadata columns).
+            ``sample_uuid``, ``cell_type``, ``n_cells``, ``similarity``,
+            ``distance``, and ``enrichment_score`` (plus any local sample
+            metadata columns). ``sample_uuid`` is the catalog UUID accepted by
+            ``get_sample_details()`` and the sample-download APIs, while the
+            integer ``sample_id`` is kept for backward compatibility.
         """
         method = str(method or "cosine").strip().lower()
         if method not in {"cosine", "hellinger", "panel_lda"}:
@@ -4607,7 +4620,12 @@ class MalvaClient:
             payload["space"] = method
         response, _endpoint = self._request_first_available(
             "POST",
-            ["/api/coexpression/clusters-to-metacells", "/query/clusters-to-metacells"],
+            [
+                "/api/coexpression/metacells/nearest",
+                "/query/metacells/nearest",
+                "/api/coexpression/clusters-to-metacells",
+                "/query/clusters-to-metacells",
+            ],
             json=payload,
         )
 
@@ -4632,6 +4650,7 @@ class MalvaClient:
             "rank",
             "metacell_id",
             "sample_id",
+            "sample_uuid",
             "cell_type",
             "n_cells",
             "similarity",
@@ -4647,6 +4666,7 @@ class MalvaClient:
                         "rank": neighbor.get("rank"),
                         "metacell_id": neighbor.get("metacell_id"),
                         "sample_id": neighbor.get("sample_id"),
+                        "sample_uuid": neighbor.get("sample_uuid"),
                         "cell_type": neighbor.get("cell_type"),
                         "n_cells": neighbor.get("n_cells"),
                         "similarity": neighbor.get("similarity"),

@@ -1887,41 +1887,53 @@ class MetacellMatchResult:
         confidence_column: Optional[str] = None,
         weight: str = "auto",
         write_to_obs: bool = True,
+        label_column: str = "cell_type",
     ) -> pd.DataFrame:
-        """Assign one Malva cell-type label per local cluster.
+        """Assign one Malva label per local cluster.
+
+        By default the label is the metacell ``cell_type``. Any categorical
+        sample-metadata column present on the matches can be projected instead
+        by passing ``label_column`` — e.g. ``label_column="disease"`` or
+        ``label_column="patient"`` after :meth:`enrich`. Labels are chosen by
+        summing the neighbour weights per value of ``label_column`` for each
+        cluster. Confidence is the winning share of the total weight.
 
         With the new ``method="hellinger"`` / ``"panel_lda"`` spaces the server
         returns per-cell-type top-k scores. ``weight="auto"`` (the default) uses
         those scores when present and falls back to the legacy similarity sum
         for raw-cosine results. Pass ``weight="similarity"`` or ``weight="rank"``
-        to force the legacy neighbour aggregation. Confidence is the winning
-        share of the positive scores/weights.
+        to force the legacy neighbour aggregation. Server scores are specific to
+        metacell ``cell_type``, so any other ``label_column`` always uses the
+        neighbour aggregation.
 
         When ``adata`` is supplied (and ``write_to_obs`` is true), the labels
         are written to ``adata.obs[column]``.
         """
         if self._matches.empty:
             labels = pd.DataFrame(
-                columns=["cluster", "cell_type", "confidence", "n_metacells", "weight"]
+                columns=["cluster", label_column, "confidence", "n_metacells", "weight"]
             )
             self.labels_ = labels
             return labels
 
         frame = self._matches.copy()
-        if "cell_type" not in frame.columns:
-            raise ValueError("Metacell matches have no 'cell_type' column")
+        if label_column not in frame.columns:
+            raise ValueError(f"Metacell matches have no '{label_column}' column")
         if "cluster" not in frame.columns:
             raise ValueError("Metacell matches have no 'cluster' column")
         if weight == "auto":
             weight = "server" if not self._cell_type_scores.empty else "similarity"
         if weight == "server":
-            if self._cell_type_scores.empty:
+            if self._cell_type_scores.empty or label_column != "cell_type":
+                # Per-cell-type scores cannot be projected onto another column.
                 weight = "similarity"
             else:
                 labels = self._labels_from_scores()
                 self.labels_ = labels
                 if adata is not None and write_to_obs:
-                    self._write_labels(adata, groupby, column, confidence_column, labels)
+                    self._write_labels(
+                        adata, groupby, column, confidence_column, labels, label_column
+                    )
                 return labels
         if weight not in frame.columns:
             weight = "similarity" if "similarity" in frame.columns else None
@@ -1931,7 +1943,7 @@ class MetacellMatchResult:
         frame["_weight"] = pd.to_numeric(frame[weight], errors="coerce").fillna(0.0)
 
         grouped = (
-            frame.groupby(["cluster", "cell_type"], observed=True)
+            frame.groupby(["cluster", label_column], observed=True)
             .agg(weight=("_weight", "sum"), n_metacells=("metacell_id", "nunique"))
             .reset_index()
         )
@@ -1942,7 +1954,7 @@ class MetacellMatchResult:
             .drop_duplicates("cluster")
             .set_index("cluster")
         )
-        labels = best[["cell_type", "confidence", "n_metacells", "weight"]].copy()
+        labels = best[[label_column, "confidence", "n_metacells", "weight"]].copy()
         labels.index.name = "cluster"
         if self.cluster_order:
             order = [cluster for cluster in self.cluster_order if cluster in labels.index]
@@ -1952,7 +1964,7 @@ class MetacellMatchResult:
         self.labels_ = labels
 
         if adata is not None and write_to_obs:
-            self._write_labels(adata, groupby, column, confidence_column, labels)
+            self._write_labels(adata, groupby, column, confidence_column, labels, label_column)
         return labels
 
     def _labels_from_scores(self) -> pd.DataFrame:
@@ -1981,13 +1993,15 @@ class MetacellMatchResult:
             labels = labels.loc[order]
         return labels.reset_index()
 
-    def _write_labels(self, adata, groupby, column, confidence_column, labels) -> None:
+    def _write_labels(
+        self, adata, groupby, column, confidence_column, labels, label_column="cell_type"
+    ) -> None:
         groupby = groupby or self.groupby
         if groupby is None:
             raise ValueError("groupby is required when writing labels to adata.obs")
         if groupby not in adata.obs.columns:
             raise KeyError(f"'{groupby}' is not a column in adata.obs")
-        mapping = dict(zip(labels["cluster"].astype(str), labels["cell_type"]))
+        mapping = dict(zip(labels["cluster"].astype(str), labels[label_column]))
         values = adata.obs[groupby].astype(str)
         adata.obs[column] = values.map(mapping).astype("category")
         if confidence_column:

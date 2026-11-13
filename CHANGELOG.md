@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.1] - 2026-11-13
+### Added
+- `find_metacells()` results include a `sample_uuid` column: the catalog UUID
+  accepted by `get_sample_details()` and the sample-download APIs. The existing
+  integer `sample_id` column is retained for backward compatibility.
+- `MetacellMatchResult.assign_labels()` accepts `label_column=` to project any
+  categorical sample-metadata column present after `enrich()` (for example
+  `disease` or `patient`) instead of the default metacell `cell_type`.
+- `find_metacells()` prefers the canonical endpoint
+  `/api/coexpression/metacells/nearest` (then `/query/metacells/nearest`) and
+  falls back to the legacy `/api/coexpression/clusters-to-metacells` and
+  `/query/clusters-to-metacells` paths.
+- `get_coexpression()` and `get_coexpression_genes()` prefer the canonical
+  `/api/coexpression/by-job` (then `/query/by-job`) and fall back to the legacy
+  `/api/coexpression/query-by-job` and `/query-by-job` paths.
+
 ## [0.7.0] - 2026-11-11
 ### Added
 - `find_metacells(method=...)` supports the optional `"hellinger"` and

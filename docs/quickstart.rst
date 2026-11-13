@@ -458,9 +458,11 @@ cell.
 The result is a small ``MetacellMatchResult`` object with one row per cluster
 and ranked metacell. Use ``to_dataframe()`` whenever you want a plain pandas
 table. Columns are ``cluster``, ``rank``, ``metacell_id``, ``sample_id``,
-``cell_type``, ``n_cells``, ``similarity`` (cosine), ``distance``
-(``1 - similarity``), and ``enrichment_score`` (a per-cluster z-score of
-similarity across all metacells).
+``sample_uuid``, ``cell_type``, ``n_cells``, ``similarity`` (cosine),
+``distance`` (``1 - similarity``), and ``enrichment_score`` (a per-cluster
+z-score of similarity across all metacells). ``sample_uuid`` is the catalog UUID
+accepted by ``get_sample_details()`` and the sample-download APIs;
+``sample_id`` remains the internal integer id for backward compatibility.
 
 Sample metadata is merged locally when you already have it, so no extra
 metadata request is made:
@@ -499,6 +501,23 @@ and number of supporting metacells. Pass
    print(labels)
 
    print(adata.obs[["leiden", "malva_cell_type", "malva_confidence"]].head())
+
+By default the assigned label is the atlas metacell ``cell_type``. Any
+categorical sample-metadata column merged through ``find_metacells(...,
+sample_metadata=...)`` / ``enrich()`` can be projected instead with
+``label_column`` — for example ``disease`` or ``patient``:
+
+.. code-block:: python
+
+   labels = matches.assign_labels(
+       adata,
+       column="malva_disease",
+       label_column="disease",
+   )
+   print(adata.obs[["leiden", "malva_disease"]].head())
+
+Server per-cell-type scores only describe ``cell_type``, so other
+``label_column`` values are projected by aggregating the neighbour weights.
 
 ``compare_clusters_to_metacells()`` remains available as a deprecated alias for
 ``find_metacells()``.
