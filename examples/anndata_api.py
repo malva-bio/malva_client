@@ -81,14 +81,14 @@ def main() -> None:
     print(backed)
     backed.file.close()
 
-    # 4. Build the matrix yourself from per-batch parts.
-    parts = client.stream_cell_expression(
+    # 4. Build the matrix yourself from chunks with a shared growing var axis.
+    chunks = client.stream_cell_expression(
         sample_ids=args.sample_id,
         gene_ids=args.gene or None,
         dataset_id=args.dataset,
-    ).iter_anndata()
-    combined = ad.concat(parts, join="outer", fill_value=0)
-    print("Concatenated batches:")
+    ).iter_anndata(chunk_obs=5_000)
+    combined = ad.concat(chunks, join="outer", fill_value=0)
+    print("Concatenated chunks:")
     print(combined)
 
 

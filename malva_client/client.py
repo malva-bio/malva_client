@@ -34,6 +34,7 @@ from malva_client.models import (
     MetacellMatchResult,
     SearchResult,
     UMAPCoordinates,
+    _normalise_cell_pairs,
 )
 
 # Stable empty-result schema for federated searches. Kept next to the client so
@@ -1918,6 +1919,8 @@ class MalvaClient:
         max_batch_bytes: int = 4 * 1024 * 1024,
         chunk_size: int = 64 * 1024,
         cells: Optional[Iterable[Any]] = None,
+        cell_metadata: Optional[Any] = None,
+        include_cell_metadata: bool = True,
     ) -> CellExpressionStream:
         """Stream sparse per-cell expression batches for selected samples.
 
@@ -1939,7 +1942,10 @@ class MalvaClient:
         every non-zero entry in the selected petal stores.
 
         The wrapper also provides ``to_anndata()``, ``write_h5ad(path)`` and
-        ``iter_anndata()`` for standard AnnData workflows.
+        ``iter_anndata()`` for standard AnnData workflows. Pass ``cell_metadata``
+        to add per-cell ``obs`` columns, or call ``enrich()`` on a stream built
+        from ``cells`` to fetch them once from the metadata service. Set
+        ``include_cell_metadata=False`` to skip both.
         """
         dataset_id = self._default_dataset_id(dataset_id)
         gene_list = None
@@ -1948,21 +1954,12 @@ class MalvaClient:
                 gene_list = [gene_ids]
             else:
                 gene_list = [str(gene).strip() for gene in gene_ids if str(gene).strip()]
+        known_cells: Optional[List[Tuple[Any, Any]]] = None
         if cells is not None:
             if sample_ids is not None:
                 raise ValueError("Pass either sample_ids or cells, not both")
-            known_samples = None
-            if isinstance(cells, (list, tuple)):
-                known_samples = sorted(
-                    {
-                        int(cell.get("sample_id"))
-                        if isinstance(cell, dict)
-                        else int(cell[0])
-                        if isinstance(cell, (tuple, list)) and len(cell) == 2
-                        else int(getattr(cell, "sample_id"))
-                        for cell in cells
-                    }
-                )
+            known_cells = _normalise_cell_pairs(cells)
+            known_samples = sorted({int(sample_id) for sample_id, _ in known_cells})
         else:
             if sample_ids is None:
                 raise ValueError("Pass sample_ids or cells")
@@ -1974,17 +1971,20 @@ class MalvaClient:
 
         return CellExpressionStream(
             lambda: self._iter_cell_expression_batches(
-                sample_ids=None if cells is not None else sample_ids,
+                sample_ids=None if known_cells is not None else sample_ids,
                 gene_ids=gene_list,
                 dataset_id=dataset_id,
                 max_batch_bytes=max_batch_bytes,
                 chunk_size=chunk_size,
-                cells=cells,
+                cells=known_cells,
             ),
             client=self,
             dataset_id=dataset_id,
             sample_ids=known_samples,
             gene_ids=gene_list,
+            cells=known_cells,
+            cell_metadata=cell_metadata,
+            include_cell_metadata=include_cell_metadata,
         )
 
     def _iter_cell_expression_batches(
@@ -2000,23 +2000,10 @@ class MalvaClient:
         if cells is not None:
             if sample_ids is not None:
                 raise ValueError("Pass either sample_ids or cells, not both")
-            cell_payload: List[Dict[str, int]] = []
-            for cell in cells:
-                if isinstance(cell, dict):
-                    sample_id = cell.get("sample_id")
-                    cell_id = cell.get("cell_id")
-                elif isinstance(cell, (tuple, list)) and len(cell) == 2:
-                    sample_id, cell_id = cell
-                else:
-                    sample_id = getattr(cell, "sample_id", None)
-                    cell_id = getattr(cell, "cell_id", None)
-                if sample_id is None or cell_id is None:
-                    raise ValueError(
-                        "Each cell must be (sample_id, cell_id), a dict, or an object with those fields"
-                    )
-                cell_payload.append({"sample_id": int(sample_id), "cell_id": int(cell_id)})
-            if not cell_payload:
-                raise ValueError("cells must contain at least one cell")
+            cell_payload: List[Dict[str, int]] = [
+                {"sample_id": int(sample_id), "cell_id": int(cell_id)}
+                for sample_id, cell_id in _normalise_cell_pairs(cells)
+            ]
             payload: Dict[str, Any] = {
                 "cells": cell_payload,
                 "max_batch_bytes": int(max_batch_bytes),

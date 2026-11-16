@@ -4,6 +4,7 @@ import logging
 import sqlite3
 import tempfile
 import zipfile
+from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional, Tuple, Union
 
@@ -94,6 +95,124 @@ def _merge_sample_metadata(frame: pd.DataFrame, metadata: Any) -> pd.DataFrame:
     if meta.shape[1] <= 1:
         return frame
     return frame.merge(meta, on="sample_id", how="left", suffixes=("", "_metadata"))
+
+
+def _attach_cell_metadata(adata: ad.AnnData, metadata: Any) -> ad.AnnData:
+    """Left-join per-cell metadata onto ``adata.obs`` without reordering rows.
+
+    ``metadata`` is a DataFrame with ``sample_id`` and ``cell_id`` columns (or
+    an equivalent two-level index) or a dict keyed by ``(sample_id, cell_id)``.
+    Every other column is added to ``obs`` under its own name. Cells without a
+    metadata row get ``NaN``; extra metadata rows are ignored; existing obs
+    columns are never replaced.
+    """
+    meta = _cell_metadata_frame(metadata)
+    if meta.empty or adata.n_obs == 0:
+        return adata
+    if "sample_id" not in adata.obs.columns or "cell_id" not in adata.obs.columns:
+        return adata
+    extra = [
+        column
+        for column in meta.columns
+        if column not in ("sample_id", "cell_id") and column not in adata.obs.columns
+    ]
+    if not extra:
+        return adata
+
+    payload = _coerce_cell_keys(meta)
+    payload = pd.concat([payload, meta[extra].reset_index(drop=True)], axis=1)
+    payload = payload.drop_duplicates(["sample_id", "cell_id"], keep="last")
+
+    obs = adata.obs.copy()
+    obs["_malva_sample_key"] = _coerce_obs_id(obs["sample_id"])
+    obs["_malva_cell_key"] = _coerce_obs_id(obs["cell_id"])
+    merged = obs.merge(
+        payload.rename(columns={"sample_id": "_malva_sample_key", "cell_id": "_malva_cell_key"}),
+        on=["_malva_sample_key", "_malva_cell_key"],
+        how="left",
+        sort=False,
+    )
+    merged.index = adata.obs.index
+    adata.obs = merged.drop(columns=["_malva_sample_key", "_malva_cell_key"])
+    return adata
+
+
+def _cell_metadata_frame(metadata: Any) -> pd.DataFrame:
+    """Normalise per-cell metadata to a frame with ``sample_id`` and ``cell_id``."""
+    if metadata is None:
+        return pd.DataFrame()
+    if isinstance(metadata, pd.DataFrame):
+        frame = metadata.copy()
+        if frame.empty:
+            return pd.DataFrame()
+    elif isinstance(metadata, Mapping):
+        if not metadata:
+            return pd.DataFrame()
+        if not all(isinstance(key, tuple) and len(key) == 2 for key in metadata):
+            raise ValueError("cell_metadata dict keys must be (sample_id, cell_id) pairs")
+        rows = []
+        for (sample_id, cell_id), value in metadata.items():
+            row = dict(value) if isinstance(value, Mapping) else {"value": value}
+            row["sample_id"] = sample_id
+            row["cell_id"] = cell_id
+            rows.append(row)
+        frame = pd.DataFrame(rows)
+    else:
+        raise TypeError("cell_metadata must be a DataFrame or a dict keyed by (sample_id, cell_id)")
+
+    if "sample_id" in frame.columns and "cell_id" in frame.columns:
+        return frame
+    if isinstance(frame.index, pd.MultiIndex) and frame.index.nlevels >= 2:
+        frame = frame.reset_index()
+        if "sample_id" not in frame.columns or "cell_id" not in frame.columns:
+            frame = frame.rename(
+                columns={frame.columns[0]: "sample_id", frame.columns[1]: "cell_id"}
+            )
+        return frame
+    raise ValueError("cell_metadata needs sample_id and cell_id columns or a two-level index")
+
+
+def _coerce_cell_keys(frame: pd.DataFrame) -> pd.DataFrame:
+    """Return sample/cell key columns with the same dtype rules as ``obs``."""
+    return pd.DataFrame(
+        {
+            "sample_id": _coerce_obs_id(frame["sample_id"]),
+            "cell_id": _coerce_obs_id(frame["cell_id"]),
+        }
+    )
+
+
+def _normalise_cell_pairs(cells: Iterable[Any]) -> List[Tuple[Any, Any]]:
+    """Turn cell selectors into ``(sample_id, cell_id)`` pairs."""
+    pairs: List[Tuple[Any, Any]] = []
+    for cell in cells:
+        if isinstance(cell, dict):
+            sample_id = cell.get("sample_id")
+            cell_id = cell.get("cell_id")
+        elif isinstance(cell, (tuple, list)) and len(cell) == 2:
+            sample_id, cell_id = cell
+        else:
+            sample_id = getattr(cell, "sample_id", None)
+            cell_id = getattr(cell, "cell_id", None)
+        if sample_id is None or cell_id is None:
+            raise ValueError(
+                "Each cell must be (sample_id, cell_id), a dict, or an object with those fields"
+            )
+        pairs.append((sample_id, cell_id))
+    if not pairs:
+        raise ValueError("cells must contain at least one cell")
+    return pairs
+
+
+def _restrict_cell_metadata(metadata: Any, cells: Iterable[Tuple[Any, Any]]) -> pd.DataFrame:
+    """Keep only metadata rows for the requested ``(sample_id, cell_id)`` pairs."""
+    frame = _cell_metadata_frame(metadata)
+    if frame.empty:
+        return frame
+    wanted = pd.DataFrame(_normalise_cell_pairs(cells), columns=["sample_id", "cell_id"])
+    wanted = _coerce_cell_keys(wanted).drop_duplicates()
+    keep = pd.MultiIndex.from_frame(_coerce_cell_keys(frame)).isin(pd.MultiIndex.from_frame(wanted))
+    return frame.loc[np.asarray(keep)].reset_index(drop=True)
 
 
 def _empty_anndata() -> ad.AnnData:
@@ -1537,6 +1656,194 @@ def _arrays_to_anndata(
     return result
 
 
+class _AnnDataAccumulator:
+    """Fold long-format expression batches into one cells × genes CSR matrix.
+
+    The accumulator is the single implementation behind
+    :meth:`CellExpressionStream.to_anndata` and the chunked mode of
+    :meth:`CellExpressionStream.iter_anndata`. It keeps
+
+    * the observation axis in first-seen order, named ``sample_id:cell_id``;
+    * the variable axis in first-seen order, so the column of a gene that has
+      already been seen never moves;
+    * one CSR block per ingested batch with ``cells_in_batch`` rows and every
+      gene discovered so far as columns.
+
+    Blocks are widened by metadata only when a batch introduces new genes and
+    stacked with a single :func:`scipy.sparse.vstack` in :meth:`finish`, so the
+    stream never materialises a concatenated copy of all batches. Cells split
+    across server batches are folded into one observation row at that point.
+    """
+
+    def __init__(
+        self,
+        *,
+        sample_metadata: Any = None,
+        uns: Optional[Dict[str, Any]] = None,
+    ):
+        self._sample_metadata = sample_metadata
+        self._uns = uns
+        self._obs_keys = pd.Index([], dtype=object)
+        self._obs_samples: List[np.ndarray] = []
+        self._obs_cells: List[np.ndarray] = []
+        self._var_names = pd.Index([], dtype=object)
+        self._blocks: List[sparse.csr_matrix] = []
+        self._block_rows: List[np.ndarray] = []
+
+    @property
+    def n_obs(self) -> int:
+        """Number of distinct observations ingested so far."""
+        return int(self._obs_keys.size)
+
+    @property
+    def n_vars(self) -> int:
+        """Number of distinct genes discovered so far."""
+        return int(self._var_names.size)
+
+    @property
+    def bytes_estimate(self) -> int:
+        """Approximate memory held by the blocks and the label indexes.
+
+        Counts the sparse arrays exactly and adds a rough per-label overhead,
+        which is enough to drive a progress bar without scanning every string.
+        """
+        sparse_bytes = sum(
+            block.data.nbytes + block.indices.nbytes + block.indptr.nbytes for block in self._blocks
+        )
+        return int(sparse_bytes + 64 * self.n_obs + 64 * self.n_vars)
+
+    def add(self, batch: Optional[pd.DataFrame]) -> "_AnnDataAccumulator":
+        """Ingest one long-format batch without iterating its rows in Python."""
+        if batch is None or batch.empty:
+            return self
+        required = {"sample_id", "cell_id", "gene", "value"}
+        missing = required.difference(batch.columns)
+        if missing:
+            raise ValueError(
+                "Expression batches must contain sample_id, cell_id, gene, and value "
+                f"columns (missing: {', '.join(sorted(missing))})"
+            )
+
+        obs_keys = batch["sample_id"].astype(str) + ":" + batch["cell_id"].astype(str)
+        local_obs, unique_obs = pd.factorize(obs_keys, sort=False)
+        obs_codes = self._obs_keys.get_indexer(unique_obs)
+        new_obs = obs_codes < 0
+        if new_obs.any():
+            # ``unique_obs`` and the first occurrence of each key follow the same
+            # row order, so the raw identifiers can be selected with one mask.
+            first = batch.loc[~obs_keys.duplicated(), ["sample_id", "cell_id"]]
+            obs_codes[new_obs] = np.arange(self.n_obs, self.n_obs + int(new_obs.sum()))
+            self._obs_keys = self._obs_keys.append(pd.Index(unique_obs[new_obs], dtype=object))
+            self._obs_samples.append(first["sample_id"].to_numpy()[new_obs])
+            self._obs_cells.append(first["cell_id"].to_numpy()[new_obs])
+
+        genes = batch["gene"].astype(str)
+        local_var, unique_genes = pd.factorize(genes, sort=False)
+        var_codes = self._var_names.get_indexer(unique_genes)
+        new_var = var_codes < 0
+        if new_var.any():
+            var_codes[new_var] = np.arange(self.n_vars, self.n_vars + int(new_var.sum()))
+            self._var_names = self._var_names.append(pd.Index(unique_genes[new_var], dtype=object))
+            self._widen_blocks(self.n_vars)
+
+        values = pd.to_numeric(batch["value"], errors="coerce").fillna(0.0)
+        block = sparse.coo_matrix(
+            (
+                values.to_numpy(dtype=np.float32),
+                (local_obs, var_codes[local_var]),
+            ),
+            shape=(len(unique_obs), self.n_vars),
+            dtype=np.float32,
+        ).tocsr()
+        self._blocks.append(block)
+        self._block_rows.append(np.asarray(obs_codes, dtype=np.int64))
+        return self
+
+    def _widen_blocks(self, n_vars: int) -> None:
+        """Extend existing blocks to ``n_vars`` columns without copying data.
+
+        New genes are appended to the variable axis, so a block keeps its data,
+        indices and row pointers; only the declared shape changes.
+        """
+        self._blocks = [
+            block
+            if block.shape[1] == n_vars
+            else sparse.csr_matrix(
+                (block.data, block.indices, block.indptr),
+                shape=(block.shape[0], n_vars),
+                copy=False,
+            )
+            for block in self._blocks
+        ]
+
+    def _stack(self) -> sparse.csr_matrix:
+        matrix = sparse.vstack(self._blocks, format="csr", dtype=np.float32)
+        if matrix.shape[0] == self.n_obs:
+            return matrix
+        # A cell whose entries arrived in more than one batch owns one row per
+        # block. Sum those rows back into the single observation row.
+        rows = np.concatenate(self._block_rows)
+        selector = sparse.csr_matrix(
+            (np.ones(rows.size, dtype=np.float32), (rows, np.arange(rows.size))),
+            shape=(self.n_obs, rows.size),
+            dtype=np.float32,
+        )
+        return (selector @ matrix).tocsr()
+
+    def finish(self, *, sort: bool = False) -> ad.AnnData:
+        """Return the AnnData for everything ingested so far.
+
+        With ``sort=False`` observations and variables keep first-seen order.
+        With ``sort=True`` both axes are sorted by name, which is the order
+        :meth:`CellExpressionStream.to_anndata` has always returned.
+        """
+        if self.n_obs == 0 or self.n_vars == 0:
+            return _empty_anndata()
+        obs_keys = self._obs_keys.to_numpy()
+        obs_order = np.arange(self.n_obs)
+        var_order = np.arange(self.n_vars)
+        if sort:
+            obs_order = np.argsort(obs_keys, kind="stable")
+            var_order = np.argsort(self._var_names.to_numpy(), kind="stable")
+
+        matrix = self._stack()
+        if sort:
+            matrix = matrix[obs_order][:, var_order]
+
+        sample_values = np.concatenate(self._obs_samples)[obs_order]
+        cell_values = np.concatenate(self._obs_cells)[obs_order]
+        obs = pd.DataFrame(
+            {"sample_id": sample_values, "cell_id": cell_values},
+            index=pd.Index(_make_unique_names(obs_keys[obs_order]), name="obs_names"),
+        )
+        if self._sample_metadata is not None:
+            obs = _merge_sample_metadata(obs.reset_index(), self._sample_metadata)
+            obs = obs.set_index("obs_names")
+        obs["sample_id"] = _coerce_obs_id(obs["sample_id"])
+        obs["cell_id"] = _coerce_obs_id(obs["cell_id"])
+
+        var = pd.DataFrame(index=pd.Index(self._var_names.to_numpy()[var_order], name="gene"))
+        result = ad.AnnData(X=matrix, obs=obs, var=var)
+        if self._uns:
+            result.uns["malva"] = _json_safe(self._uns)
+        return result
+
+    def flush(self) -> ad.AnnData:
+        """Return the current chunk and start a new one on the same var axis.
+
+        Observations and blocks are cleared; the genes discovered so far stay,
+        so the next chunk keeps their column positions and appends new genes at
+        the end.
+        """
+        chunk = self.finish()
+        self._obs_keys = pd.Index([], dtype=object)
+        self._obs_samples = []
+        self._obs_cells = []
+        self._blocks = []
+        self._block_rows = []
+        return chunk
+
+
 class CellExpressionStream:
     """Iterable wrapper around a server cell-expression stream.
 
@@ -1544,6 +1851,13 @@ class CellExpressionStream:
     per server batch with ``sample_id``, ``cell_id``, ``store_index``, ``gene``
     and ``value`` columns. The convenience methods materialise those batches as
     standard AnnData objects.
+
+    Per-cell metadata supplied as ``cell_metadata`` (a DataFrame or a dict keyed
+    by ``(sample_id, cell_id)``) is joined into ``obs`` by every conversion
+    method. When the stream was built from an explicit ``cells`` list and no
+    metadata was supplied, the first conversion fetches it once with
+    ``MalvaClient.get_cells_by_metadata``; :meth:`enrich` shares that state.
+    Pass ``include_cell_metadata=False`` to skip both the fetch and the join.
     """
 
     def __init__(
@@ -1555,6 +1869,9 @@ class CellExpressionStream:
         sample_ids: Optional[List[Any]] = None,
         gene_ids: Optional[List[str]] = None,
         sample_metadata: Optional[Any] = None,
+        cells: Optional[Iterable[Any]] = None,
+        cell_metadata: Optional[Any] = None,
+        include_cell_metadata: bool = True,
     ):
         self._batches = batches
         self.client = client
@@ -1562,6 +1879,10 @@ class CellExpressionStream:
         self.sample_ids = list(sample_ids) if sample_ids is not None else None
         self.gene_ids = list(gene_ids) if gene_ids is not None else None
         self._sample_metadata = _metadata_to_frame(sample_metadata)
+        self._cells = _normalise_cell_pairs(cells) if cells is not None else None
+        self._cell_metadata = _cell_metadata_frame(cell_metadata)
+        self.include_cell_metadata = bool(include_cell_metadata)
+        self._cell_metadata_fetched = False
         self._enriched = False
 
     def __iter__(self):
@@ -1571,8 +1892,27 @@ class CellExpressionStream:
     def __repr__(self) -> str:
         return f"CellExpressionStream(dataset_id={self.dataset_id!r})"
 
-    def enrich(self, sample_metadata: Optional[Union[pd.DataFrame, Dict[Any, Any]]] = None):
-        """Attach local sample metadata used by the AnnData conversion methods."""
+    @property
+    def cell_metadata(self) -> pd.DataFrame:
+        """Resolved per-cell metadata, empty when none was supplied or fetched."""
+        return self._cell_metadata.copy()
+
+    def enrich(
+        self,
+        sample_metadata: Optional[Union[pd.DataFrame, Dict[Any, Any]]] = None,
+        cell_metadata: Optional[Any] = None,
+    ):
+        """Attach metadata used by the AnnData conversion methods.
+
+        ``sample_metadata`` is keyed by ``sample_id``. ``cell_metadata`` is a
+        DataFrame or dict keyed by ``(sample_id, cell_id)`` and is joined into
+        ``obs``. When the stream was created from an explicit ``cells`` list and
+        no cell metadata is available yet, the client fetches it once for those
+        cells with ``get_cells_by_metadata(..., include_cell_metadata=True)``.
+        The conversion methods do this automatically; calling ``enrich`` is only
+        needed to supply metadata or fetch it ahead of time.
+        ``include_cell_metadata=False`` skips that fetch.
+        """
         if sample_metadata is not None:
             meta = _metadata_to_frame(sample_metadata)
             if self._sample_metadata.empty:
@@ -1581,6 +1921,17 @@ class CellExpressionStream:
                 self._sample_metadata = pd.concat(
                     [self._sample_metadata, meta], ignore_index=True
                 ).drop_duplicates("sample_id", keep="last")
+
+        if cell_metadata is not None:
+            incoming = _cell_metadata_frame(cell_metadata)
+            if self._cell_metadata.empty:
+                self._cell_metadata = incoming
+            elif not incoming.empty:
+                self._cell_metadata = pd.concat(
+                    [self._cell_metadata, incoming], ignore_index=True
+                ).drop_duplicates(["sample_id", "cell_id"], keep="last")
+
+        self._ensure_enriched()
 
         if (
             (self._sample_metadata.empty or not self._enriched)
@@ -1608,48 +1959,43 @@ class CellExpressionStream:
         self._enriched = True
         return self
 
-    def _collect_parts(self, aggregate: bool):
-        sample_parts = []
-        cell_parts = []
-        gene_parts = []
-        value_parts = []
-        for batch in self:
-            if batch is None or batch.empty:
-                continue
-            required = {"sample_id", "cell_id", "gene", "value"}
-            missing = required.difference(batch.columns)
-            if missing:
-                raise ValueError(
-                    "Expression batches must contain sample_id, cell_id, gene, and value "
-                    f"columns (missing: {', '.join(sorted(missing))})"
-                )
-            if aggregate:
-                sample_parts.append(batch["sample_id"].to_numpy(copy=True))
-                cell_parts.append(batch["cell_id"].to_numpy(copy=True))
-                gene_parts.append(batch["gene"].astype(str).to_numpy(copy=True))
-                value_parts.append(
-                    pd.to_numeric(batch["value"], errors="coerce")
-                    .fillna(0.0)
-                    .to_numpy(dtype=np.float32)
-                )
-            else:
-                yield batch
-        if aggregate:
-            if not sample_parts:
-                yield _empty_anndata()
-                return
-            sample_ids = np.concatenate(sample_parts)
-            cell_ids = np.concatenate(cell_parts)
-            genes = np.concatenate(gene_parts)
-            values = np.concatenate(value_parts)
-            yield _arrays_to_anndata(
-                sample_ids,
-                cell_ids,
-                genes,
-                values,
-                sample_metadata=self._sample_metadata,
-                uns=self._uns(),
+    def _ensure_enriched(self) -> "CellExpressionStream":
+        """Fetch per-cell metadata once, before any AnnData conversion.
+
+        The conversion methods call this so a stream built from an explicit
+        ``cells`` list gets ``cell_type``, ``total_counts`` and the other
+        metadata fields without an explicit :meth:`enrich`. ``enrich`` shares
+        this state, so mixing conversions never repeats the request.
+        """
+        if self._cell_metadata_fetched:
+            return self
+        self._cell_metadata_fetched = True
+        if (
+            not self.include_cell_metadata
+            or not self._cell_metadata.empty
+            or not self._cells
+            or self.client is None
+        ):
+            return self
+
+        sample_ids = sorted({int(sample_id) for sample_id, _ in self._cells})
+        try:
+            fetched = self.client.get_cells_by_metadata(
+                sample_ids=sample_ids,
+                include_cell_metadata=True,
             )
+        except Exception as exc:  # pragma: no cover - network failure path
+            logger.warning("Could not fetch cell metadata: %s", exc)
+            return self
+        if fetched is not None and not fetched.empty:
+            self._cell_metadata = _restrict_cell_metadata(fetched, self._cells)
+        return self
+
+    def _with_cell_metadata(self, adata: ad.AnnData) -> ad.AnnData:
+        """Join the resolved per-cell metadata unless the caller opted out."""
+        if not self.include_cell_metadata:
+            return adata
+        return _attach_cell_metadata(adata, self._cell_metadata)
 
     def _uns(self) -> Dict[str, Any]:
         return {
@@ -1663,40 +2009,94 @@ class CellExpressionStream:
     def to_anndata(self) -> ad.AnnData:
         """Materialise the full stream as a cells × genes sparse AnnData.
 
-        Observation names are ``sample_id:cell_id`` and variables are genes.
-        This is a terminal operation: the whole stream is consumed.
+        Observation names are ``sample_id:cell_id`` and variables are genes,
+        both in sorted order. The stream is folded into per-batch CSR blocks as
+        it arrives, so peak memory stays close to one copy of the expression
+        data instead of holding every batch plus a concatenated copy. This is a
+        terminal operation: the whole stream is consumed and cannot be
+        re-converted. Per-cell metadata resolved on the stream becomes ``obs``
+        columns unless ``include_cell_metadata=False``.
         """
-        parts = list(self._collect_parts(aggregate=True))
-        return parts[0] if parts else _empty_anndata()
-
-    def iter_anndata(self):
-        """Yield one sparse AnnData per server batch.
-
-        Parts can be combined with :func:`anndata.concat`, for example
-        ``ad.concat(stream.iter_anndata(), join="outer", fill_value=0)``.
-        """
+        self._ensure_enriched()
+        accumulator = _AnnDataAccumulator(
+            sample_metadata=self._sample_metadata,
+            uns=self._uns(),
+        )
         for batch in self:
-            if batch is None or batch.empty:
-                continue
-            uns = self._uns()
-            uns["batch"] = True
-            yield _frame_to_anndata(
-                batch,
-                sample_metadata=self._sample_metadata,
-                uns=uns,
-            )
+            accumulator.add(batch)
+        return self._with_cell_metadata(accumulator.finish(sort=True))
+
+    def iter_anndata(self, chunk_obs: Optional[int] = None):
+        """Yield sparse AnnData parts while the stream is consumed.
+
+        ``chunk_obs=None`` (the default) yields one AnnData per server batch,
+        each with its own sorted variable axis. Combine the parts with
+        ``anndata.concat(parts, join="outer", fill_value=0)``.
+
+        ``chunk_obs=N`` groups consecutive batches until a chunk holds at least
+        ``N`` cells, yields that chunk, and starts the next one. Chunks share a
+        growing variable axis: genes keep the position where they first
+        appeared and genes discovered later are appended, so an emitted chunk
+        never contains a gene first seen afterwards. To build one matrix from
+        several chunks, use ``anndata.concat(chunks, join="outer",
+        fill_value=0)`` or zero-pad the shorter chunks yourself; concatenation
+        is only needed to add the columns discovered later, not to align the
+        genes already present. The last chunk may hold fewer than ``N`` cells.
+
+        Chunks are cut at batch boundaries. A cell whose entries are spread over
+        two batches inside one chunk becomes a single observation; if the
+        server splits it across a chunk boundary, the cell appears in both
+        chunks and the caller decides how to merge it.
+
+        Each part carries ``uns["malva"]`` with ``batch`` or ``chunk`` set and
+        the same per-cell metadata columns in ``obs``, unless
+        ``include_cell_metadata=False``. Either mode is terminal: the stream is
+        consumed once.
+        """
+        self._ensure_enriched()
+        if chunk_obs is None:
+            for batch in self:
+                if batch is None or batch.empty:
+                    continue
+                uns = self._uns()
+                uns["batch"] = True
+                yield self._with_cell_metadata(
+                    _frame_to_anndata(
+                        batch,
+                        sample_metadata=self._sample_metadata,
+                        uns=uns,
+                    )
+                )
+            return
+
+        if isinstance(chunk_obs, bool) or not isinstance(chunk_obs, int) or chunk_obs < 1:
+            raise ValueError("chunk_obs must be a positive integer or None")
+        uns = self._uns()
+        uns["chunk"] = True
+        accumulator = _AnnDataAccumulator(
+            sample_metadata=self._sample_metadata,
+            uns=uns,
+        )
+        for batch in self:
+            accumulator.add(batch)
+            if accumulator.n_obs >= chunk_obs:
+                yield self._with_cell_metadata(accumulator.flush())
+        if accumulator.n_obs:
+            yield self._with_cell_metadata(accumulator.flush())
 
     def write_h5ad(self, path: Union[str, Path]):
         """Write the stream to ``path`` with bounded memory.
 
         The stream is spooled to a temporary SQLite database, then assembled in
         cell chunks of at most ``cell_chunk_size`` observations. Only one chunk
-        is held in memory at a time. Read the result lazily with
-        ``anndata.read_h5ad(path, backed="r")``.
+        is held in memory at a time. Per-cell metadata is joined into ``obs``
+        for every chunk unless ``include_cell_metadata=False``. Read the result
+        lazily with ``anndata.read_h5ad(path, backed="r")``.
         """
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         cell_chunk_size = 10_000
+        self._ensure_enriched()
         part_paths: List[str] = []
         with tempfile.TemporaryDirectory(prefix="malva_stream_") as tmpdir:
             db_path = str(Path(tmpdir) / "entries.sqlite")
@@ -1771,14 +2171,16 @@ class CellExpressionStream:
                         seen_cells.add((sample_id, cell_id))
                     if not chunk_sample:
                         break
-                    part = _arrays_to_anndata(
-                        chunk_sample,
-                        chunk_cell,
-                        chunk_gene,
-                        chunk_value,
-                        sample_metadata=self._sample_metadata,
-                        uns=self._uns(),
-                        var_names=var_names,
+                    part = self._with_cell_metadata(
+                        _arrays_to_anndata(
+                            chunk_sample,
+                            chunk_cell,
+                            chunk_gene,
+                            chunk_value,
+                            sample_metadata=self._sample_metadata,
+                            uns=self._uns(),
+                            var_names=var_names,
+                        )
                     )
                     part_path = str(Path(tmpdir) / f"part_{part_index:05d}.h5ad")
                     part.write_h5ad(part_path, compression="gzip")
