@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import struct
 import tarfile
 import tempfile
 import time
@@ -347,6 +348,24 @@ def _reconstruct_compact_v2(data: dict) -> dict:
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+def _map_stream_gene_names(
+    positions: List[int], features: List[str], requested_genes: List[str]
+) -> List[str]:
+    """Map streamed feature indices to gene names.
+
+    Current servers send positions within the requested panel; older servers
+    send store ordinals. Resolve the former directly, and the latter by
+    matching the distinct ordinals, in panel order, to the requested genes.
+    """
+    unique = list(dict.fromkeys(positions))
+    names: Dict[int, str] = {}
+    if unique and all(0 <= index < len(features) for index in unique):
+        names = {index: features[index] for index in unique}
+    elif requested_genes and len(unique) == len(requested_genes):
+        names = {index: requested_genes[k] for k, index in enumerate(unique)}
+    return [names.get(index, f"feature_{index}") for index in positions]
 
 
 class MalvaClient:
@@ -2041,6 +2060,7 @@ class MalvaClient:
                     f"Cell expression stream failed ({response.status_code}): {detail}"
                 )
 
+            requested_genes = [gene_ids] if isinstance(gene_ids, str) else list(gene_ids or [])
             features_by_store: Dict[int, List[str]] = {}
             buffer = bytearray()
             for chunk in response.iter_content(chunk_size=chunk_size):
@@ -2067,12 +2087,8 @@ class MalvaClient:
                     store_index = int(frame.get("store_index", 0))
                     feature_index = np.frombuffer(frame["feature_index"], dtype="<i4")
                     features = features_by_store.get(store_index, [])
-                    gene_names = [
-                        features[int(index)]
-                        if 0 <= int(index) < len(features)
-                        else f"feature_{int(index)}"
-                        for index in feature_index
-                    ]
+                    positions = [int(index) for index in feature_index]
+                    gene_names = _map_stream_gene_names(positions, features, requested_genes)
                     yield pd.DataFrame(
                         {
                             "sample_id": np.frombuffer(frame["sample_ids"], dtype="<i8"),

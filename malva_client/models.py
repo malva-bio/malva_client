@@ -754,6 +754,9 @@ class MalvaDataFrame:
 
     def to_dataframe(self) -> pd.DataFrame:
         """Convert to a regular pandas DataFrame (copy)."""
+        loader = getattr(self, "_ensure_loaded", None)
+        if callable(loader):
+            loader()
         return self._df.copy()
 
     def to_pandas(self) -> pd.DataFrame:
@@ -3110,11 +3113,11 @@ class CoexpressionResult:
         self.client = client
 
         self.dataset_id = raw_data.get("dataset_id", "")
-        self.correlated_genes = raw_data.get("correlated_genes", [])
-        self.umap_scores = raw_data.get("umap_scores", {})
-        self.go_enrichment = raw_data.get("go_enrichment", [])
-        self.cell_type_enrichment = raw_data.get("cell_type_enrichment", [])
-        self.tissue_breakdown = raw_data.get("tissue_breakdown", [])
+        self.correlated_genes = raw_data.get("correlated_genes") or []
+        self.umap_scores = raw_data.get("umap_scores") or {}
+        self.go_enrichment = raw_data.get("go_enrichment") or []
+        self.cell_type_enrichment = raw_data.get("cell_type_enrichment") or []
+        self.tissue_breakdown = raw_data.get("tissue_breakdown") or []
         self.n_query_cells = raw_data.get("n_query_cells", 0)
         self.n_mapped_metacells = raw_data.get("n_mapped_metacells", 0)
 
