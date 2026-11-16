@@ -91,6 +91,44 @@ print(by_cell_type.head())
 
 See the [tutorials](https://malva-client.readthedocs.io/en/latest/tutorials.html) for coverage analysis, dataset discovery, cell-level searches, and more.
 
+### Streaming expression to AnnData
+
+```python
+import anndata as ad
+from malva_client import MalvaClient
+
+client = MalvaClient()
+sample_id = 30064771072  # replace with a sample id from client.search_samples()
+
+# Terminal conversion: obs names are "sample:cell", var names are genes,
+# X is CSR float32. Each server batch is folded into a sparse block as it
+# arrives, so peak memory stays close to one copy of the expression data.
+adata = client.stream_cell_expression(
+    sample_ids=[sample_id],
+    gene_ids=["SPP1", "CD3D"],
+).to_anndata()
+print(adata)
+
+# Chunked streaming: yield a chunk once the accumulated batches hold at
+# least 5,000 cells. A chunk carries every gene discovered so far, and a
+# gene keeps its column once it appears.
+chunks = client.stream_cell_expression(
+    sample_ids=[sample_id],
+).iter_anndata(chunk_obs=5_000)
+for chunk in chunks:
+    print(chunk.shape)  # e.g. (5000, 812), (5000, 830), (1200, 830)
+
+# A gene first seen after a chunk was emitted is missing from that chunk.
+# Combine chunks with an outer join when you need one rectangular matrix.
+combined = ad.concat(
+    client.stream_cell_expression(sample_ids=[sample_id]).iter_anndata(chunk_obs=5_000),
+    join="outer",
+    fill_value=0,
+)
+print(combined)
+```
+
+
 ## Indexing Your Own Data
 
 For local indexing and quantification, see [Malva Tools](https://github.com/malva-bio/malva) (`malva` CLI).

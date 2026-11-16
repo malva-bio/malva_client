@@ -1537,6 +1537,194 @@ def _arrays_to_anndata(
     return result
 
 
+class _AnnDataAccumulator:
+    """Fold long-format expression batches into one cells × genes CSR matrix.
+
+    The accumulator is the single implementation behind
+    :meth:`CellExpressionStream.to_anndata` and the chunked mode of
+    :meth:`CellExpressionStream.iter_anndata`. It keeps
+
+    * the observation axis in first-seen order, named ``sample_id:cell_id``;
+    * the variable axis in first-seen order, so the column of a gene that has
+      already been seen never moves;
+    * one CSR block per ingested batch with ``cells_in_batch`` rows and every
+      gene discovered so far as columns.
+
+    Blocks are widened by metadata only when a batch introduces new genes and
+    stacked with a single :func:`scipy.sparse.vstack` in :meth:`finish`, so the
+    stream never materialises a concatenated copy of all batches. Cells split
+    across server batches are folded into one observation row at that point.
+    """
+
+    def __init__(
+        self,
+        *,
+        sample_metadata: Any = None,
+        uns: Optional[Dict[str, Any]] = None,
+    ):
+        self._sample_metadata = sample_metadata
+        self._uns = uns
+        self._obs_keys = pd.Index([], dtype=object)
+        self._obs_samples: List[np.ndarray] = []
+        self._obs_cells: List[np.ndarray] = []
+        self._var_names = pd.Index([], dtype=object)
+        self._blocks: List[sparse.csr_matrix] = []
+        self._block_rows: List[np.ndarray] = []
+
+    @property
+    def n_obs(self) -> int:
+        """Number of distinct observations ingested so far."""
+        return int(self._obs_keys.size)
+
+    @property
+    def n_vars(self) -> int:
+        """Number of distinct genes discovered so far."""
+        return int(self._var_names.size)
+
+    @property
+    def bytes_estimate(self) -> int:
+        """Approximate memory held by the blocks and the label indexes.
+
+        Counts the sparse arrays exactly and adds a rough per-label overhead,
+        which is enough to drive a progress bar without scanning every string.
+        """
+        sparse_bytes = sum(
+            block.data.nbytes + block.indices.nbytes + block.indptr.nbytes for block in self._blocks
+        )
+        return int(sparse_bytes + 64 * self.n_obs + 64 * self.n_vars)
+
+    def add(self, batch: Optional[pd.DataFrame]) -> "_AnnDataAccumulator":
+        """Ingest one long-format batch without iterating its rows in Python."""
+        if batch is None or batch.empty:
+            return self
+        required = {"sample_id", "cell_id", "gene", "value"}
+        missing = required.difference(batch.columns)
+        if missing:
+            raise ValueError(
+                "Expression batches must contain sample_id, cell_id, gene, and value "
+                f"columns (missing: {', '.join(sorted(missing))})"
+            )
+
+        obs_keys = batch["sample_id"].astype(str) + ":" + batch["cell_id"].astype(str)
+        local_obs, unique_obs = pd.factorize(obs_keys, sort=False)
+        obs_codes = self._obs_keys.get_indexer(unique_obs)
+        new_obs = obs_codes < 0
+        if new_obs.any():
+            # ``unique_obs`` and the first occurrence of each key follow the same
+            # row order, so the raw identifiers can be selected with one mask.
+            first = batch.loc[~obs_keys.duplicated(), ["sample_id", "cell_id"]]
+            obs_codes[new_obs] = np.arange(self.n_obs, self.n_obs + int(new_obs.sum()))
+            self._obs_keys = self._obs_keys.append(pd.Index(unique_obs[new_obs], dtype=object))
+            self._obs_samples.append(first["sample_id"].to_numpy()[new_obs])
+            self._obs_cells.append(first["cell_id"].to_numpy()[new_obs])
+
+        genes = batch["gene"].astype(str)
+        local_var, unique_genes = pd.factorize(genes, sort=False)
+        var_codes = self._var_names.get_indexer(unique_genes)
+        new_var = var_codes < 0
+        if new_var.any():
+            var_codes[new_var] = np.arange(self.n_vars, self.n_vars + int(new_var.sum()))
+            self._var_names = self._var_names.append(pd.Index(unique_genes[new_var], dtype=object))
+            self._widen_blocks(self.n_vars)
+
+        values = pd.to_numeric(batch["value"], errors="coerce").fillna(0.0)
+        block = sparse.coo_matrix(
+            (
+                values.to_numpy(dtype=np.float32),
+                (local_obs, var_codes[local_var]),
+            ),
+            shape=(len(unique_obs), self.n_vars),
+            dtype=np.float32,
+        ).tocsr()
+        self._blocks.append(block)
+        self._block_rows.append(np.asarray(obs_codes, dtype=np.int64))
+        return self
+
+    def _widen_blocks(self, n_vars: int) -> None:
+        """Extend existing blocks to ``n_vars`` columns without copying data.
+
+        New genes are appended to the variable axis, so a block keeps its data,
+        indices and row pointers; only the declared shape changes.
+        """
+        self._blocks = [
+            block
+            if block.shape[1] == n_vars
+            else sparse.csr_matrix(
+                (block.data, block.indices, block.indptr),
+                shape=(block.shape[0], n_vars),
+                copy=False,
+            )
+            for block in self._blocks
+        ]
+
+    def _stack(self) -> sparse.csr_matrix:
+        matrix = sparse.vstack(self._blocks, format="csr", dtype=np.float32)
+        if matrix.shape[0] == self.n_obs:
+            return matrix
+        # A cell whose entries arrived in more than one batch owns one row per
+        # block. Sum those rows back into the single observation row.
+        rows = np.concatenate(self._block_rows)
+        selector = sparse.csr_matrix(
+            (np.ones(rows.size, dtype=np.float32), (rows, np.arange(rows.size))),
+            shape=(self.n_obs, rows.size),
+            dtype=np.float32,
+        )
+        return (selector @ matrix).tocsr()
+
+    def finish(self, *, sort: bool = False) -> ad.AnnData:
+        """Return the AnnData for everything ingested so far.
+
+        With ``sort=False`` observations and variables keep first-seen order.
+        With ``sort=True`` both axes are sorted by name, which is the order
+        :meth:`CellExpressionStream.to_anndata` has always returned.
+        """
+        if self.n_obs == 0 or self.n_vars == 0:
+            return _empty_anndata()
+        obs_keys = self._obs_keys.to_numpy()
+        obs_order = np.arange(self.n_obs)
+        var_order = np.arange(self.n_vars)
+        if sort:
+            obs_order = np.argsort(obs_keys, kind="stable")
+            var_order = np.argsort(self._var_names.to_numpy(), kind="stable")
+
+        matrix = self._stack()
+        if sort:
+            matrix = matrix[obs_order][:, var_order]
+
+        sample_values = np.concatenate(self._obs_samples)[obs_order]
+        cell_values = np.concatenate(self._obs_cells)[obs_order]
+        obs = pd.DataFrame(
+            {"sample_id": sample_values, "cell_id": cell_values},
+            index=pd.Index(_make_unique_names(obs_keys[obs_order]), name="obs_names"),
+        )
+        if self._sample_metadata is not None:
+            obs = _merge_sample_metadata(obs.reset_index(), self._sample_metadata)
+            obs = obs.set_index("obs_names")
+        obs["sample_id"] = _coerce_obs_id(obs["sample_id"])
+        obs["cell_id"] = _coerce_obs_id(obs["cell_id"])
+
+        var = pd.DataFrame(index=pd.Index(self._var_names.to_numpy()[var_order], name="gene"))
+        result = ad.AnnData(X=matrix, obs=obs, var=var)
+        if self._uns:
+            result.uns["malva"] = _json_safe(self._uns)
+        return result
+
+    def flush(self) -> ad.AnnData:
+        """Return the current chunk and start a new one on the same var axis.
+
+        Observations and blocks are cleared; the genes discovered so far stay,
+        so the next chunk keeps their column positions and appends new genes at
+        the end.
+        """
+        chunk = self.finish()
+        self._obs_keys = pd.Index([], dtype=object)
+        self._obs_samples = []
+        self._obs_cells = []
+        self._blocks = []
+        self._block_rows = []
+        return chunk
+
+
 class CellExpressionStream:
     """Iterable wrapper around a server cell-expression stream.
 
@@ -1608,49 +1796,6 @@ class CellExpressionStream:
         self._enriched = True
         return self
 
-    def _collect_parts(self, aggregate: bool):
-        sample_parts = []
-        cell_parts = []
-        gene_parts = []
-        value_parts = []
-        for batch in self:
-            if batch is None or batch.empty:
-                continue
-            required = {"sample_id", "cell_id", "gene", "value"}
-            missing = required.difference(batch.columns)
-            if missing:
-                raise ValueError(
-                    "Expression batches must contain sample_id, cell_id, gene, and value "
-                    f"columns (missing: {', '.join(sorted(missing))})"
-                )
-            if aggregate:
-                sample_parts.append(batch["sample_id"].to_numpy(copy=True))
-                cell_parts.append(batch["cell_id"].to_numpy(copy=True))
-                gene_parts.append(batch["gene"].astype(str).to_numpy(copy=True))
-                value_parts.append(
-                    pd.to_numeric(batch["value"], errors="coerce")
-                    .fillna(0.0)
-                    .to_numpy(dtype=np.float32)
-                )
-            else:
-                yield batch
-        if aggregate:
-            if not sample_parts:
-                yield _empty_anndata()
-                return
-            sample_ids = np.concatenate(sample_parts)
-            cell_ids = np.concatenate(cell_parts)
-            genes = np.concatenate(gene_parts)
-            values = np.concatenate(value_parts)
-            yield _arrays_to_anndata(
-                sample_ids,
-                cell_ids,
-                genes,
-                values,
-                sample_metadata=self._sample_metadata,
-                uns=self._uns(),
-            )
-
     def _uns(self) -> Dict[str, Any]:
         return {
             "source": "cell_expression_stream",
@@ -1663,28 +1808,73 @@ class CellExpressionStream:
     def to_anndata(self) -> ad.AnnData:
         """Materialise the full stream as a cells × genes sparse AnnData.
 
-        Observation names are ``sample_id:cell_id`` and variables are genes.
-        This is a terminal operation: the whole stream is consumed.
+        Observation names are ``sample_id:cell_id`` and variables are genes,
+        both in sorted order. The stream is folded into per-batch CSR blocks as
+        it arrives, so peak memory stays close to one copy of the expression
+        data instead of holding every batch plus a concatenated copy. This is a
+        terminal operation: the whole stream is consumed and cannot be
+        re-converted.
         """
-        parts = list(self._collect_parts(aggregate=True))
-        return parts[0] if parts else _empty_anndata()
-
-    def iter_anndata(self):
-        """Yield one sparse AnnData per server batch.
-
-        Parts can be combined with :func:`anndata.concat`, for example
-        ``ad.concat(stream.iter_anndata(), join="outer", fill_value=0)``.
-        """
+        accumulator = _AnnDataAccumulator(
+            sample_metadata=self._sample_metadata,
+            uns=self._uns(),
+        )
         for batch in self:
-            if batch is None or batch.empty:
-                continue
-            uns = self._uns()
-            uns["batch"] = True
-            yield _frame_to_anndata(
-                batch,
-                sample_metadata=self._sample_metadata,
-                uns=uns,
-            )
+            accumulator.add(batch)
+        return accumulator.finish(sort=True)
+
+    def iter_anndata(self, chunk_obs: Optional[int] = None):
+        """Yield sparse AnnData parts while the stream is consumed.
+
+        ``chunk_obs=None`` (the default) yields one AnnData per server batch,
+        each with its own sorted variable axis. Combine the parts with
+        ``anndata.concat(parts, join="outer", fill_value=0)``.
+
+        ``chunk_obs=N`` groups consecutive batches until a chunk holds at least
+        ``N`` cells, yields that chunk, and starts the next one. Chunks share a
+        growing variable axis: genes keep the position where they first
+        appeared and genes discovered later are appended, so an emitted chunk
+        never contains a gene first seen afterwards. To build one matrix from
+        several chunks, use ``anndata.concat(chunks, join="outer",
+        fill_value=0)`` or zero-pad the shorter chunks yourself; concatenation
+        is only needed to add the columns discovered later, not to align the
+        genes already present. The last chunk may hold fewer than ``N`` cells.
+
+        Chunks are cut at batch boundaries. A cell whose entries are spread over
+        two batches inside one chunk becomes a single observation; if the
+        server splits it across a chunk boundary, the cell appears in both
+        chunks and the caller decides how to merge it.
+
+        Each part carries ``uns["malva"]`` with ``batch`` or ``chunk`` set.
+        Either mode is terminal: the stream is consumed once.
+        """
+        if chunk_obs is None:
+            for batch in self:
+                if batch is None or batch.empty:
+                    continue
+                uns = self._uns()
+                uns["batch"] = True
+                yield _frame_to_anndata(
+                    batch,
+                    sample_metadata=self._sample_metadata,
+                    uns=uns,
+                )
+            return
+
+        if isinstance(chunk_obs, bool) or not isinstance(chunk_obs, int) or chunk_obs < 1:
+            raise ValueError("chunk_obs must be a positive integer or None")
+        uns = self._uns()
+        uns["chunk"] = True
+        accumulator = _AnnDataAccumulator(
+            sample_metadata=self._sample_metadata,
+            uns=uns,
+        )
+        for batch in self:
+            accumulator.add(batch)
+            if accumulator.n_obs >= chunk_obs:
+                yield accumulator.flush()
+        if accumulator.n_obs:
+            yield accumulator.flush()
 
     def write_h5ad(self, path: Union[str, Path]):
         """Write the stream to ``path`` with bounded memory.

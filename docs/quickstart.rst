@@ -294,7 +294,9 @@ returned. Iterate over the batches rather than wrapping large streams in
 The returned object is a small ``CellExpressionStream`` wrapper. You can still
 loop over it exactly as above, or convert it to AnnData. ``to_anndata()`` reads
 the whole stream and builds a cells × genes sparse float32 matrix; observation
-names are ``sample_id:cell_id`` and variables are genes:
+names are ``sample_id:cell_id`` and variables are genes. Each batch is folded
+into a sparse block as it arrives and the blocks are stacked once at the end, so
+peak memory stays close to one copy of the expression data:
 
 .. code-block:: python
 
@@ -320,7 +322,7 @@ bounded memory and can be read lazily afterwards:
    print(backed)
 
 If you prefer to build the matrix yourself, ``iter_anndata()`` yields one
-AnnData per server batch. Combine the parts with ``anndata.concat``:
+AnnData per server batch:
 
 .. code-block:: python
 
@@ -332,6 +334,32 @@ AnnData per server batch. Combine the parts with ``anndata.concat``:
    ).iter_anndata()
    combined = ad.concat(parts, join="outer", fill_value=0)
    print(combined)
+
+Pass ``chunk_obs`` to let the client group consecutive batches into chunks of at
+least that many cells while the stream runs. A chunk is emitted as soon as the
+accumulated batches hold ``chunk_obs`` cells. Each chunk is a cells × genes
+AnnData with CSR float32 ``X``, ``sample_id:cell_id`` observations and gene
+symbols as variables; it carries every gene discovered so far, and a gene keeps
+its column once it appears:
+
+.. code-block:: python
+
+   # before 0.8.0: collect per-batch parts, then concatenate them
+   parts = client.stream_cell_expression(sample_ids=[sample_id]).iter_anndata()
+   combined = ad.concat(parts, join="outer", fill_value=0)
+
+   # 0.8.0: consume fixed-size chunks as they are emitted
+   chunks = client.stream_cell_expression(
+       sample_ids=[sample_id],
+   ).iter_anndata(chunk_obs=5_000)
+   for chunk in chunks:
+       print(chunk.shape)  # e.g. (5000, 812), (5000, 830), (1200, 830)
+
+Chunks are cut at batch boundaries, so an early chunk cannot contain a gene that
+the server only sends later. Concatenate the chunks with ``anndata.concat``
+(``join="outer"``) or zero-pad the shorter ones when you need one rectangular
+matrix. Use ``to_anndata()`` when you want the complete matrix without chunk
+bookkeeping.
 
 
 Get expression for specific cells
