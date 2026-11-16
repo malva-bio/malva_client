@@ -594,6 +594,30 @@ Cells come back in the same order:</p>
 <p>This is useful when you have sorted a cell table by expression and want to
 fetch the cells in high-to-low order. Leave out <code class="docutils literal notranslate"><span class="pre">gene_ids</span></code> to get all
 features for each cell.</p>
+<p><code class="docutils literal notranslate"><span class="pre">cells</span></code> streams use the server’s compact framing with zstd compression by
+default. The compact framing sends cell identity once and row deltas instead of
+four flat arrays, and compression brings the reference 19.2 M-value request from
+about 460 MB to about 36 MB. The defaults are transparent: a server that rejects
+the options, or whose start frame advertises the released framing, is retried
+once without them, and the client remembers that outcome. Every choice can be
+made explicit, and an explicit choice always wins:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># released framing and no compression: the exact 0.8.0 request</span>
+<span class="n">client</span><span class="o">.</span><span class="n">stream_cell_expression</span><span class="p">(</span><span class="n">cells</span><span class="o">=</span><span class="n">cells</span><span class="p">,</span> <span class="n">layout</span><span class="o">=</span><span class="s2">"legacy"</span><span class="p">,</span> <span class="n">compress</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
+
+<span class="c1"># compact framing with uncompressed frames</span>
+<span class="n">client</span><span class="o">.</span><span class="n">stream_cell_expression</span><span class="p">(</span><span class="n">cells</span><span class="o">=</span><span class="n">cells</span><span class="p">,</span> <span class="n">compress</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
+
+<span class="c1"># released framing with compressed frames (newer servers only)</span>
+<span class="n">client</span><span class="o">.</span><span class="n">stream_cell_expression</span><span class="p">(</span><span class="n">cells</span><span class="o">=</span><span class="n">cells</span><span class="p">,</span> <span class="n">layout</span><span class="o">=</span><span class="s2">"legacy"</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>Values stay <code class="docutils literal notranslate"><span class="pre">float32</span></code> unless you ask for <code class="docutils literal notranslate"><span class="pre">values=&quot;f16&quot;</span></code>, which halves the
+value payload at about <code class="docutils literal notranslate"><span class="pre">1e-3</span></code> relative error and requires the compact layout.
+Compression needs <code class="docutils literal notranslate"><span class="pre">zstandard</span></code> or <code class="docutils literal notranslate"><span class="pre">numcodecs</span></code> on the client: install
+<code class="docutils literal notranslate"><span class="pre">malva-client[zstd]</span></code> to be sure. If neither is importable the client keeps the
+compact framing and drops only compression, which is still smaller and faster
+than the released framing. Decoding always follows the start frame, so mixed
+server versions produce the same DataFrames.</p>
 <p>For these cells, the conversion methods fetch the metadata once and join it
 into <code class="docutils literal notranslate"><span class="pre">obs</span></code>. Every per-cell field keeps its name, so <code class="docutils literal notranslate"><span class="pre">cell_type</span></code>,
 <code class="docutils literal notranslate"><span class="pre">total_counts</span></code> and any other column returned by the metadata service are
@@ -887,7 +911,7 @@ API reference for those workflows.</p>
       
     </aside>
   </div>
-</div><script src="_static/documentation_options.js?v=a82ae3da"></script>
+</div><script src="_static/documentation_options.js?v=016a97bc"></script>
     <script src="_static/doctools.js?v=9a2dae69"></script>
     <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
     <script src="_static/scripts/furo.js?v=46bd48cc"></script>

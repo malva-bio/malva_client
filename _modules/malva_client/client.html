@@ -271,7 +271,7 @@
 <span class="kn">import</span><span class="w"> </span><span class="nn">time</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">warnings</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span><span class="p">,</span> <span class="n">Callable</span><span class="p">,</span> <span class="n">Dict</span><span class="p">,</span> <span class="n">Iterable</span><span class="p">,</span> <span class="n">List</span><span class="p">,</span> <span class="n">Optional</span><span class="p">,</span> <span class="n">Tuple</span><span class="p">,</span> <span class="n">Union</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span><span class="p">,</span> <span class="n">Callable</span><span class="p">,</span> <span class="n">Dict</span><span class="p">,</span> <span class="n">Iterable</span><span class="p">,</span> <span class="n">List</span><span class="p">,</span> <span class="n">Optional</span><span class="p">,</span> <span class="n">Set</span><span class="p">,</span> <span class="n">Tuple</span><span class="p">,</span> <span class="n">Union</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">urllib.parse</span><span class="w"> </span><span class="kn">import</span> <span class="n">urljoin</span><span class="p">,</span> <span class="n">urlparse</span><span class="p">,</span> <span class="n">urlunparse</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="nn">anndata</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">ad</span>
@@ -634,6 +634,119 @@
     <span class="k">return</span> <span class="p">[</span><span class="n">names</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">index</span><span class="p">,</span> <span class="sa">f</span><span class="s2">"feature_</span><span class="si">{</span><span class="n">index</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span> <span class="k">for</span> <span class="n">index</span> <span class="ow">in</span> <span class="n">positions</span><span class="p">]</span>
 
 
+<span class="k">class</span><span class="w"> </span><span class="nc">_Unset</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""Marker for a ``stream_cell_expression`` option the caller omitted.</span>
+
+<span class="sd">    ``None`` already carries meaning for several of these options (no</span>
+<span class="sd">    compression, the server's default framing), so a distinct marker is needed</span>
+<span class="sd">    to tell "apply the fast-path default" apart from "the caller explicitly</span>
+<span class="sd">    turned this off".  Keeping a caller's explicit choice authoritative is the</span>
+<span class="sd">    whole point: ``compress=None`` must send uncompressed frames and</span>
+<span class="sd">    ``layout="legacy"`` must ask for the default framing.</span>
+<span class="sd">    """</span>
+
+    <span class="vm">__slots__</span> <span class="o">=</span> <span class="p">()</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__repr__</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>  <span class="c1"># pragma: no cover - debugging aid</span>
+        <span class="k">return</span> <span class="s2">"UNSET"</span>
+
+
+<span class="n">_UNSET</span> <span class="o">=</span> <span class="n">_Unset</span><span class="p">()</span>
+
+<span class="c1">#: Layout names that mean the released default framing.  They are resolved to</span>
+<span class="c1">#: "send no layout field" and are never forwarded to the server.</span>
+<span class="n">_LEGACY_LAYOUT_NAMES</span> <span class="o">=</span> <span class="p">(</span><span class="s2">"legacy"</span><span class="p">,</span> <span class="s2">"default"</span><span class="p">,</span> <span class="s2">"dense"</span><span class="p">,</span> <span class="s2">"none"</span><span class="p">,</span> <span class="s2">"0"</span><span class="p">,</span> <span class="s2">"false"</span><span class="p">,</span> <span class="s2">"off"</span><span class="p">)</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">_LegacyCellStreamRequired</span><span class="p">(</span><span class="ne">Exception</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">"""Internal signal to retry a defaulted cell stream without compact framing.</span>
+
+<span class="sd">    Raised only before the first batch is yielded, either when the request is</span>
+<span class="sd">    rejected as a validation error or when the ``start`` frame advertises the</span>
+<span class="sd">    default framing, so the retry never re-delivers data.</span>
+<span class="sd">    """</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_is_cell_stream_validation_error</span><span class="p">(</span><span class="n">response</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""Whether a failed response says the server rejected the stream options.</span>
+
+<span class="sd">    FastAPI and pydantic answer ``422`` for a body the request model rejects,</span>
+<span class="sd">    which is what a pre-compact server does when configured to forbid unknown</span>
+<span class="sd">    fields.  A ``400`` is only treated as a validation error when its detail</span>
+<span class="sd">    names a validation problem, because ``400`` also covers ordinary domain</span>
+<span class="sd">    errors (unknown cell, dataset mismatch) that a retry cannot fix.</span>
+<span class="sd">    """</span>
+    <span class="k">if</span> <span class="n">response</span><span class="o">.</span><span class="n">status_code</span> <span class="o">==</span> <span class="mi">422</span><span class="p">:</span>
+        <span class="k">return</span> <span class="kc">True</span>
+    <span class="k">if</span> <span class="n">response</span><span class="o">.</span><span class="n">status_code</span> <span class="o">!=</span> <span class="mi">400</span><span class="p">:</span>
+        <span class="k">return</span> <span class="kc">False</span>
+    <span class="n">detail</span> <span class="o">=</span> <span class="p">(</span><span class="nb">getattr</span><span class="p">(</span><span class="n">response</span><span class="p">,</span> <span class="s2">"text"</span><span class="p">,</span> <span class="s2">""</span><span class="p">)</span> <span class="ow">or</span> <span class="s2">""</span><span class="p">)</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span>
+    <span class="k">return</span> <span class="nb">any</span><span class="p">(</span>
+        <span class="n">marker</span> <span class="ow">in</span> <span class="n">detail</span>
+        <span class="k">for</span> <span class="n">marker</span> <span class="ow">in</span> <span class="p">(</span>
+            <span class="s2">"validation error"</span><span class="p">,</span>
+            <span class="s2">"extra_forbidden"</span><span class="p">,</span>
+            <span class="s2">"extra fields not permitted"</span><span class="p">,</span>
+            <span class="s2">"unexpected keyword"</span><span class="p">,</span>
+            <span class="s2">"unknown field"</span><span class="p">,</span>
+            <span class="s2">"value_error"</span><span class="p">,</span>
+        <span class="p">)</span>
+    <span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_resolve_cell_stream_options</span><span class="p">(</span>
+    <span class="n">compress</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span>
+    <span class="n">layout</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span>
+    <span class="n">values</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Tuple</span><span class="p">[</span><span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span> <span class="nb">bool</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">"""Resolve the cell-stream options, applying the fast path to omissions.</span>
+
+<span class="sd">    Omitted options select the compact framing with zstd compression.  An</span>
+<span class="sd">    explicit ``None`` for ``compress`` and ``"legacy"`` for ``layout`` turn the</span>
+<span class="sd">    corresponding fast-path feature off, so an explicit choice always wins.</span>
+
+<span class="sd">    Returns ``(layout, compress, values, defaulted_layout)``.  The last value</span>
+<span class="sd">    marks a compact layout that came from the defaults; only those requests may</span>
+<span class="sd">    be transparently retried with the released framing.</span>
+<span class="sd">    """</span>
+    <span class="n">defaulted_layout</span> <span class="o">=</span> <span class="n">layout</span> <span class="ow">is</span> <span class="n">_UNSET</span>
+    <span class="k">if</span> <span class="n">defaulted_layout</span><span class="p">:</span>
+        <span class="n">layout</span> <span class="o">=</span> <span class="s2">"compact"</span>
+    <span class="k">if</span> <span class="n">compress</span> <span class="ow">is</span> <span class="n">_UNSET</span><span class="p">:</span>
+        <span class="n">compress</span> <span class="o">=</span> <span class="s2">"zstd"</span>
+    <span class="k">if</span> <span class="n">values</span> <span class="ow">is</span> <span class="n">_UNSET</span><span class="p">:</span>
+        <span class="n">values</span> <span class="o">=</span> <span class="kc">None</span>
+
+    <span class="n">resolved_layout</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="k">if</span> <span class="n">layout</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">name</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">layout</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span>
+        <span class="k">if</span> <span class="n">name</span> <span class="ow">and</span> <span class="n">name</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">_LEGACY_LAYOUT_NAMES</span><span class="p">:</span>
+            <span class="n">resolved_layout</span> <span class="o">=</span> <span class="n">name</span>
+    <span class="k">if</span> <span class="n">resolved_layout</span> <span class="o">!=</span> <span class="s2">"compact"</span><span class="p">:</span>
+        <span class="c1"># An explicit default/legacy layout (or an unknown one the server is</span>
+        <span class="c1"># asked to validate itself) is the caller's choice: never retry it.</span>
+        <span class="n">defaulted_layout</span> <span class="o">=</span> <span class="kc">False</span>
+
+    <span class="n">resolved_compress</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="k">if</span> <span class="n">compress</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">resolved_compress</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">compress</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span> <span class="ow">or</span> <span class="kc">None</span>
+        <span class="k">if</span> <span class="n">resolved_compress</span> <span class="o">==</span> <span class="s2">"zstandard"</span><span class="p">:</span>
+            <span class="n">resolved_compress</span> <span class="o">=</span> <span class="s2">"zstd"</span>
+
+    <span class="n">resolved_values</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="k">if</span> <span class="n">values</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">resolved_values</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">values</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span> <span class="ow">or</span> <span class="kc">None</span>
+    <span class="k">if</span> <span class="n">resolved_values</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">resolved_layout</span> <span class="o">!=</span> <span class="s2">"compact"</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">"values= requires layout='compact'"</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">resolved_values</span> <span class="ow">not</span> <span class="ow">in</span> <span class="p">(</span><span class="kc">None</span><span class="p">,</span> <span class="s2">"f32"</span><span class="p">):</span>
+        <span class="c1"># Half precision only exists in the compact framing, so a request for it</span>
+        <span class="c1"># is authoritative even though ``layout`` came from the defaults: a</span>
+        <span class="c1"># retry with the released framing would silently return float32.</span>
+        <span class="n">defaulted_layout</span> <span class="o">=</span> <span class="kc">False</span>
+
+    <span class="k">return</span> <span class="n">resolved_layout</span><span class="p">,</span> <span class="n">resolved_compress</span><span class="p">,</span> <span class="n">resolved_values</span><span class="p">,</span> <span class="n">defaulted_layout</span>
+
+
 <div class="viewcode-block" id="MalvaClient">
 <a class="viewcode-back" href="../../api/malva_client.client.html#malva_client.client.MalvaClient">[docs]</a>
 <span class="k">class</span><span class="w"> </span><span class="nc">MalvaClient</span><span class="p">:</span>
@@ -715,6 +828,12 @@
         <span class="c1"># ``None`` means auto-detection is still pending. An explicit</span>
         <span class="c1"># ``MALVA_ENDPOINT_STYLE`` value skips the network probe entirely.</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">_endpoint_style</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_configured_endpoint_style</span><span class="p">()</span>
+
+        <span class="c1"># Base URLs whose server answered a defaulted cell-stream request with</span>
+        <span class="c1"># the released framing (or rejected the compact options).  A defaulted</span>
+        <span class="c1"># call to one of them skips the compact request, so an older deployment</span>
+        <span class="c1"># pays the compatibility probe only once per client.</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_cell_stream_legacy_urls</span><span class="p">:</span> <span class="n">Set</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="nb">set</span><span class="p">()</span>
 
         <span class="bp">self</span><span class="o">.</span><span class="n">session</span> <span class="o">=</span> <span class="n">requests</span><span class="o">.</span><span class="n">Session</span><span class="p">()</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">session</span><span class="o">.</span><span class="n">verify</span> <span class="o">=</span> <span class="n">verify_ssl</span>
@@ -2214,15 +2333,14 @@
         <span class="n">cells</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Iterable</span><span class="p">[</span><span class="n">Any</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
         <span class="n">cell_metadata</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Any</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
         <span class="n">include_cell_metadata</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
-        <span class="n">compress</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-        <span class="n">layout</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-        <span class="n">values</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">compress</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
+        <span class="n">layout</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
+        <span class="n">values</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
     <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">CellExpressionStream</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">"""Stream sparse per-cell expression batches for selected samples.</span>
 
-<span class="sd">        By default this returns a :class:`~malva_client.models.CellExpressionStream`</span>
-<span class="sd">        that yields one pandas ``DataFrame`` per server batch, exactly like the</span>
-<span class="sd">        previous generator API::</span>
+<span class="sd">        This returns a :class:`~malva_client.models.CellExpressionStream` that</span>
+<span class="sd">        yields one pandas ``DataFrame`` per server batch::</span>
 
 <span class="sd">            for batch in client.stream_cell_expression(</span>
 <span class="sd">                sample_ids=[30064771072],</span>
@@ -2237,26 +2355,44 @@
 <span class="sd">        ``gene_ids`` is strongly recommended: without it the server must scan</span>
 <span class="sd">        every non-zero entry in the selected petal stores.</span>
 
-<span class="sd">        ``cells`` requests opt into two server-side payload modes that older</span>
-<span class="sd">        servers ignore and older clients never ask for, and both return the same</span>
-<span class="sd">        DataFrames:</span>
+<span class="sd">        ``cells`` requests use the server's fast stream by default. The compact</span>
+<span class="sd">        framing sends cell identity once as a bitmask over the request order and</span>
+<span class="sd">        each row as fixed-width feature deltas, about 4x smaller than the flat</span>
+<span class="sd">        arrays before any compression, and every frame body is compressed with</span>
+<span class="sd">        zstd, which brings the reference 19.2 M-value stream from about 460 MB</span>
+<span class="sd">        to about 36 MB. Decoding is vectorised, so both changes save time as</span>
+<span class="sd">        well as bytes. ``values`` stays ``float32`` unless asked otherwise.</span>
 
-<span class="sd">        * ``layout="compact"`` sends cell identity once as a bitmask over the</span>
-<span class="sd">          request order and each row as fixed-width feature deltas, about 4x</span>
-<span class="sd">          smaller than the flat arrays before any compression.</span>
-<span class="sd">        * ``compress="zstd"`` (or ``"zlib"``) compresses every frame body,</span>
-<span class="sd">          which brings the reference stream from ~460 MB to ~36 MB.  zstd needs</span>
-<span class="sd">          ``zstandard`` or ``numcodecs`` on the client; when neither is</span>
-<span class="sd">          installed the request silently falls back to the default framing.</span>
+<span class="sd">        Compatibility is automatic and invisible:</span>
 
-<span class="sd">        ``values="f16"`` halves the value payload and is lossy (about 1e-3</span>
-<span class="sd">        relative), so it has to be asked for explicitly.</span>
+<span class="sd">        * A server that rejects the options with a validation error, or whose</span>
+<span class="sd">          ``start`` frame advertises the default framing, is retried once</span>
+<span class="sd">          without them. The result is remembered for this client and base URL,</span>
+<span class="sd">          so later defaulted calls go straight to the released framing. The</span>
+<span class="sd">          retry happens before any batch is yielded and is logged at debug.</span>
+<span class="sd">        * When neither ``zstandard`` nor ``numcodecs`` zstd is importable, the</span>
+<span class="sd">          client keeps the compact framing and drops only compression. Compact</span>
+<span class="sd">          uncompressed is still about 4x smaller than the legacy framing, so it</span>
+<span class="sd">          remains the faster of the two options.</span>
+<span class="sd">        * Decoding follows the ``start`` frame, not the request, so an explicit</span>
+<span class="sd">          ``layout="legacy"`` request, a mixed fleet and compressed frames all</span>
+<span class="sd">          produce the same DataFrames.</span>
+
+<span class="sd">        Every choice is authoritative. ``layout="legacy"`` sends no layout</span>
+<span class="sd">        field and asks for the released framing; ``compress=None`` sends</span>
+<span class="sd">        uncompressed frames (with the compact framing unless ``layout`` also</span>
+<span class="sd">        says otherwise); ``values="f16"`` halves the value payload and is lossy</span>
+<span class="sd">        (about 1e-3 relative), so it has to be asked for explicitly.</span>
 
 <span class="sd">        The wrapper also provides ``to_anndata()``, ``write_h5ad(path)`` and</span>
 <span class="sd">        ``iter_anndata()`` for standard AnnData workflows. Pass ``cell_metadata``</span>
 <span class="sd">        to add per-cell ``obs`` columns, or call ``enrich()`` on a stream built</span>
 <span class="sd">        from ``cells`` to fetch them once from the metadata service. Set</span>
 <span class="sd">        ``include_cell_metadata=False`` to skip both.</span>
+
+<span class="sd">        The stream options only apply to ``cells`` requests; ``sample_ids``</span>
+<span class="sd">        streams have a single framing, and passing one of them there raises</span>
+<span class="sd">        ``ValueError``.</span>
 <span class="sd">        """</span>
         <span class="n">dataset_id</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_default_dataset_id</span><span class="p">(</span><span class="n">dataset_id</span><span class="p">)</span>
         <span class="n">gene_list</span> <span class="o">=</span> <span class="kc">None</span>
@@ -2271,6 +2407,12 @@
                 <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">"Pass either sample_ids or cells, not both"</span><span class="p">)</span>
             <span class="n">known_cells</span> <span class="o">=</span> <span class="n">_normalise_cell_pairs</span><span class="p">(</span><span class="n">cells</span><span class="p">)</span>
             <span class="n">known_samples</span> <span class="o">=</span> <span class="nb">sorted</span><span class="p">({</span><span class="nb">int</span><span class="p">(</span><span class="n">sample_id</span><span class="p">)</span> <span class="k">for</span> <span class="n">sample_id</span><span class="p">,</span> <span class="n">_</span> <span class="ow">in</span> <span class="n">known_cells</span><span class="p">})</span>
+            <span class="p">(</span>
+                <span class="n">stream_layout</span><span class="p">,</span>
+                <span class="n">stream_compress</span><span class="p">,</span>
+                <span class="n">stream_values</span><span class="p">,</span>
+                <span class="n">defaulted_layout</span><span class="p">,</span>
+            <span class="p">)</span> <span class="o">=</span> <span class="n">_resolve_cell_stream_options</span><span class="p">(</span><span class="n">compress</span><span class="p">,</span> <span class="n">layout</span><span class="p">,</span> <span class="n">values</span><span class="p">)</span>
         <span class="k">else</span><span class="p">:</span>
             <span class="k">if</span> <span class="n">sample_ids</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
                 <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">"Pass sample_ids or cells"</span><span class="p">)</span>
@@ -2279,12 +2421,13 @@
             <span class="n">known_samples</span> <span class="o">=</span> <span class="p">[</span><span class="nb">int</span><span class="p">(</span><span class="n">sample_id</span><span class="p">)</span> <span class="k">for</span> <span class="n">sample_id</span> <span class="ow">in</span> <span class="n">sample_ids</span><span class="p">]</span>
             <span class="k">if</span> <span class="ow">not</span> <span class="n">known_samples</span><span class="p">:</span>
                 <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">"sample_ids must contain at least one sample id"</span><span class="p">)</span>
-
-        <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">value</span> <span class="ow">in</span> <span class="p">((</span><span class="s2">"compress"</span><span class="p">,</span> <span class="n">compress</span><span class="p">),</span> <span class="p">(</span><span class="s2">"layout"</span><span class="p">,</span> <span class="n">layout</span><span class="p">),</span> <span class="p">(</span><span class="s2">"values"</span><span class="p">,</span> <span class="n">values</span><span class="p">)):</span>
-            <span class="k">if</span> <span class="n">value</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">cells</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-                <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">= requires cells=; the sample_ids stream has one framing"</span><span class="p">)</span>
-        <span class="k">if</span> <span class="n">values</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">layout</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">"values= requires layout='compact'"</span><span class="p">)</span>
+            <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">value</span> <span class="ow">in</span> <span class="p">((</span><span class="s2">"compress"</span><span class="p">,</span> <span class="n">compress</span><span class="p">),</span> <span class="p">(</span><span class="s2">"layout"</span><span class="p">,</span> <span class="n">layout</span><span class="p">),</span> <span class="p">(</span><span class="s2">"values"</span><span class="p">,</span> <span class="n">values</span><span class="p">)):</span>
+                <span class="k">if</span> <span class="n">value</span> <span class="ow">is</span> <span class="ow">not</span> <span class="n">_UNSET</span><span class="p">:</span>
+                    <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                        <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">= requires cells=; the sample_ids stream has one framing"</span>
+                    <span class="p">)</span>
+            <span class="n">stream_layout</span> <span class="o">=</span> <span class="n">stream_compress</span> <span class="o">=</span> <span class="n">stream_values</span> <span class="o">=</span> <span class="kc">None</span>
+            <span class="n">defaulted_layout</span> <span class="o">=</span> <span class="kc">False</span>
 
         <span class="k">return</span> <span class="n">CellExpressionStream</span><span class="p">(</span>
             <span class="k">lambda</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">_iter_cell_expression_batches</span><span class="p">(</span>
@@ -2294,9 +2437,10 @@
                 <span class="n">max_batch_bytes</span><span class="o">=</span><span class="n">max_batch_bytes</span><span class="p">,</span>
                 <span class="n">chunk_size</span><span class="o">=</span><span class="n">chunk_size</span><span class="p">,</span>
                 <span class="n">cells</span><span class="o">=</span><span class="n">known_cells</span><span class="p">,</span>
-                <span class="n">compress</span><span class="o">=</span><span class="n">compress</span><span class="p">,</span>
-                <span class="n">layout</span><span class="o">=</span><span class="n">layout</span><span class="p">,</span>
-                <span class="n">values</span><span class="o">=</span><span class="n">values</span><span class="p">,</span>
+                <span class="n">compress</span><span class="o">=</span><span class="n">stream_compress</span><span class="p">,</span>
+                <span class="n">layout</span><span class="o">=</span><span class="n">stream_layout</span><span class="p">,</span>
+                <span class="n">values</span><span class="o">=</span><span class="n">stream_values</span><span class="p">,</span>
+                <span class="n">allow_layout_fallback</span><span class="o">=</span><span class="n">defaulted_layout</span><span class="p">,</span>
             <span class="p">),</span>
             <span class="n">client</span><span class="o">=</span><span class="bp">self</span><span class="p">,</span>
             <span class="n">dataset_id</span><span class="o">=</span><span class="n">dataset_id</span><span class="p">,</span>
@@ -2319,9 +2463,17 @@
         <span class="n">compress</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
         <span class="n">layout</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
         <span class="n">values</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">allow_layout_fallback</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
     <span class="p">):</span>
-<span class="w">        </span><span class="sd">"""Yield the raw pandas batches from the server frame stream."""</span>
+<span class="w">        </span><span class="sd">"""Yield the raw pandas batches from the server frame stream.</span>
+
+<span class="sd">        ``layout``/``compress``/``values`` arrive resolved from</span>
+<span class="sd">        :meth:`stream_cell_expression`; ``allow_layout_fallback`` marks a</span>
+<span class="sd">        compact layout that came from the defaults and may therefore be retried</span>
+<span class="sd">        transparently with the released framing.</span>
+<span class="sd">        """</span>
         <span class="n">requested_cells</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">Tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">]]</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="n">requested_genes</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
         <span class="k">if</span> <span class="n">cells</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
             <span class="k">if</span> <span class="n">sample_ids</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
                 <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">"Pass either sample_ids or cells, not both"</span><span class="p">)</span>
@@ -2352,30 +2504,96 @@
         <span class="k">if</span> <span class="n">gene_ids</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
             <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">gene_ids</span><span class="p">,</span> <span class="nb">str</span><span class="p">):</span>
                 <span class="n">gene_ids</span> <span class="o">=</span> <span class="p">[</span><span class="n">gene_ids</span><span class="p">]</span>
-            <span class="n">genes</span> <span class="o">=</span> <span class="p">[</span><span class="nb">str</span><span class="p">(</span><span class="n">gene</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span> <span class="k">for</span> <span class="n">gene</span> <span class="ow">in</span> <span class="n">gene_ids</span> <span class="k">if</span> <span class="nb">str</span><span class="p">(</span><span class="n">gene</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()]</span>
-            <span class="k">if</span> <span class="n">genes</span><span class="p">:</span>
-                <span class="n">payload</span><span class="p">[</span><span class="s2">"gene_ids"</span><span class="p">]</span> <span class="o">=</span> <span class="n">genes</span>
-        <span class="c1"># Capability fallback: a compression mode the client cannot decode must</span>
-        <span class="c1"># never turn into a stream that fails halfway through.  Drop back to the</span>
-        <span class="c1"># default framing silently (debug log only), as released clients do.</span>
-        <span class="n">needs_zstd</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">compress</span> <span class="ow">or</span> <span class="s2">""</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">"zstd"</span><span class="p">,</span> <span class="s2">"zstandard"</span><span class="p">)</span>
-        <span class="k">if</span> <span class="n">needs_zstd</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">stream_codec</span><span class="o">.</span><span class="n">has_zstd</span><span class="p">():</span>
-            <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span>
-                <span class="s2">"No zstd decoder is installed; falling back to the legacy cell-expression stream"</span>
+            <span class="n">requested_genes</span> <span class="o">=</span> <span class="p">[</span><span class="nb">str</span><span class="p">(</span><span class="n">gene</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span> <span class="k">for</span> <span class="n">gene</span> <span class="ow">in</span> <span class="n">gene_ids</span> <span class="k">if</span> <span class="nb">str</span><span class="p">(</span><span class="n">gene</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()]</span>
+            <span class="k">if</span> <span class="n">requested_genes</span><span class="p">:</span>
+                <span class="n">payload</span><span class="p">[</span><span class="s2">"gene_ids"</span><span class="p">]</span> <span class="o">=</span> <span class="n">requested_genes</span>
+
+        <span class="k">if</span> <span class="n">cells</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">yield from</span> <span class="bp">self</span><span class="o">.</span><span class="n">_stream_cell_frames</span><span class="p">(</span>
+                <span class="n">payload</span><span class="p">,</span>
+                <span class="n">requested_cells</span><span class="p">,</span>
+                <span class="n">requested_genes</span><span class="p">,</span>
+                <span class="n">chunk_size</span><span class="o">=</span><span class="n">chunk_size</span><span class="p">,</span>
             <span class="p">)</span>
-            <span class="n">compress</span> <span class="o">=</span> <span class="kc">None</span>
-            <span class="n">layout</span> <span class="o">=</span> <span class="kc">None</span>
-        <span class="k">if</span> <span class="n">compress</span><span class="p">:</span>
-            <span class="n">payload</span><span class="p">[</span><span class="s2">"compress"</span><span class="p">]</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">compress</span><span class="p">)</span>
+            <span class="k">return</span>
+
+        <span class="c1"># Capability fallback: a compression mode the client cannot decode must</span>
+        <span class="c1"># never turn into a stream that fails halfway through.  Keep the compact</span>
+        <span class="c1"># framing (still about 4x smaller than the released framing before any</span>
+        <span class="c1"># compression) and drop only the encoding.</span>
+        <span class="k">if</span> <span class="nb">str</span><span class="p">(</span><span class="n">compress</span> <span class="ow">or</span> <span class="s2">""</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">"zstd"</span><span class="p">,</span> <span class="s2">"zstandard"</span><span class="p">):</span>
+            <span class="k">if</span> <span class="ow">not</span> <span class="n">stream_codec</span><span class="o">.</span><span class="n">has_zstd</span><span class="p">():</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s2">"No zstd decoder is installed; streaming compact frames uncompressed"</span><span class="p">)</span>
+                <span class="n">compress</span> <span class="o">=</span> <span class="kc">None</span>
+
+        <span class="k">if</span> <span class="n">allow_layout_fallback</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">base_url</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_cell_stream_legacy_urls</span><span class="p">:</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span>
+                <span class="s2">"Using the legacy cell-expression framing for </span><span class="si">%s</span><span class="s2"> (remembered from an earlier stream)"</span><span class="p">,</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">base_url</span><span class="p">,</span>
+            <span class="p">)</span>
+            <span class="n">layout</span> <span class="o">=</span> <span class="n">compress</span> <span class="o">=</span> <span class="n">values</span> <span class="o">=</span> <span class="kc">None</span>
+            <span class="n">allow_layout_fallback</span> <span class="o">=</span> <span class="kc">False</span>
+
+        <span class="k">try</span><span class="p">:</span>
+            <span class="k">yield from</span> <span class="bp">self</span><span class="o">.</span><span class="n">_stream_cell_frames</span><span class="p">(</span>
+                <span class="n">payload</span><span class="p">,</span>
+                <span class="n">requested_cells</span><span class="p">,</span>
+                <span class="n">requested_genes</span><span class="p">,</span>
+                <span class="n">layout</span><span class="o">=</span><span class="n">layout</span><span class="p">,</span>
+                <span class="n">compress</span><span class="o">=</span><span class="n">compress</span><span class="p">,</span>
+                <span class="n">values</span><span class="o">=</span><span class="n">values</span><span class="p">,</span>
+                <span class="n">allow_layout_fallback</span><span class="o">=</span><span class="n">allow_layout_fallback</span><span class="p">,</span>
+                <span class="n">chunk_size</span><span class="o">=</span><span class="n">chunk_size</span><span class="p">,</span>
+            <span class="p">)</span>
+        <span class="k">except</span> <span class="n">_LegacyCellStreamRequired</span> <span class="k">as</span> <span class="n">exc</span><span class="p">:</span>
+            <span class="c1"># The compatibility retry happens before the first batch is yielded,</span>
+            <span class="c1"># so a defaulted call never surfaces an error caused by the new</span>
+            <span class="c1"># defaults and never re-delivers data.  Remember the outcome per</span>
+            <span class="c1"># base URL so only the first defaulted stream pays for the probe.</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span>
+                <span class="s2">"Server </span><span class="si">%s</span><span class="s2"> did not provide the compact cell framing (</span><span class="si">%s</span><span class="s2">); "</span>
+                <span class="s2">"retrying with the released framing"</span><span class="p">,</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">base_url</span><span class="p">,</span>
+                <span class="n">exc</span><span class="p">,</span>
+            <span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_cell_stream_legacy_urls</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">base_url</span><span class="p">)</span>
+            <span class="k">yield from</span> <span class="bp">self</span><span class="o">.</span><span class="n">_stream_cell_frames</span><span class="p">(</span>
+                <span class="n">payload</span><span class="p">,</span>
+                <span class="n">requested_cells</span><span class="p">,</span>
+                <span class="n">requested_genes</span><span class="p">,</span>
+                <span class="n">chunk_size</span><span class="o">=</span><span class="n">chunk_size</span><span class="p">,</span>
+            <span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_stream_cell_frames</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">payload</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">],</span>
+        <span class="n">requested_cells</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">Tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">]],</span>
+        <span class="n">requested_genes</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span>
+        <span class="n">layout</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">compress</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">values</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">allow_layout_fallback</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+        <span class="n">chunk_size</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">64</span> <span class="o">*</span> <span class="mi">1024</span><span class="p">,</span>
+    <span class="p">):</span>
+<span class="w">        </span><span class="sd">"""Request one cell-expression stream and yield its DataFrames.</span>
+
+<span class="sd">        When ``allow_layout_fallback`` is set, a validation error or a ``start``</span>
+<span class="sd">        frame that advertises the released framing raises</span>
+<span class="sd">        :class:`_LegacyCellStreamRequired` before any batch is yielded, so the</span>
+<span class="sd">        caller can retry without the compact options.</span>
+<span class="sd">        """</span>
+        <span class="n">request_body</span> <span class="o">=</span> <span class="nb">dict</span><span class="p">(</span><span class="n">payload</span><span class="p">)</span>
         <span class="k">if</span> <span class="n">layout</span><span class="p">:</span>
-            <span class="n">payload</span><span class="p">[</span><span class="s2">"layout"</span><span class="p">]</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">layout</span><span class="p">)</span>
+            <span class="n">request_body</span><span class="p">[</span><span class="s2">"layout"</span><span class="p">]</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">layout</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">compress</span><span class="p">:</span>
+            <span class="n">request_body</span><span class="p">[</span><span class="s2">"compress"</span><span class="p">]</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">compress</span><span class="p">)</span>
         <span class="k">if</span> <span class="n">values</span><span class="p">:</span>
-            <span class="n">payload</span><span class="p">[</span><span class="s2">"values"</span><span class="p">]</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">values</span><span class="p">)</span>
+            <span class="n">request_body</span><span class="p">[</span><span class="s2">"values"</span><span class="p">]</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">values</span><span class="p">)</span>
 
         <span class="n">url</span> <span class="o">=</span> <span class="n">urljoin</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">base_url</span> <span class="o">+</span> <span class="s2">"/"</span><span class="p">,</span> <span class="s2">"api/expression/cell-expression-stream"</span><span class="p">)</span>
         <span class="n">response</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">session</span><span class="o">.</span><span class="n">post</span><span class="p">(</span>
             <span class="n">url</span><span class="p">,</span>
-            <span class="n">json</span><span class="o">=</span><span class="n">payload</span><span class="p">,</span>
+            <span class="n">json</span><span class="o">=</span><span class="n">request_body</span><span class="p">,</span>
             <span class="n">stream</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
             <span class="n">timeout</span><span class="o">=</span><span class="p">(</span><span class="mi">10</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">timeout</span><span class="p">),</span>
         <span class="p">)</span>
@@ -2386,11 +2604,12 @@
                 <span class="k">raise</span> <span class="n">AuthenticationError</span><span class="p">(</span><span class="s2">"API token is not allowed to stream cell expression"</span><span class="p">)</span>
             <span class="k">if</span> <span class="ow">not</span> <span class="n">response</span><span class="o">.</span><span class="n">ok</span><span class="p">:</span>
                 <span class="n">detail</span> <span class="o">=</span> <span class="n">response</span><span class="o">.</span><span class="n">text</span><span class="p">[:</span><span class="mi">500</span><span class="p">]</span> <span class="k">if</span> <span class="n">response</span><span class="o">.</span><span class="n">text</span> <span class="k">else</span> <span class="s2">""</span>
+                <span class="k">if</span> <span class="n">allow_layout_fallback</span> <span class="ow">and</span> <span class="n">_is_cell_stream_validation_error</span><span class="p">(</span><span class="n">response</span><span class="p">):</span>
+                    <span class="k">raise</span> <span class="n">_LegacyCellStreamRequired</span><span class="p">(</span><span class="sa">f</span><span class="s2">"HTTP </span><span class="si">{</span><span class="n">response</span><span class="o">.</span><span class="n">status_code</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">detail</span><span class="p">[:</span><span class="mi">200</span><span class="p">]</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
                 <span class="k">raise</span> <span class="n">MalvaAPIError</span><span class="p">(</span>
                     <span class="sa">f</span><span class="s2">"Cell expression stream failed (</span><span class="si">{</span><span class="n">response</span><span class="o">.</span><span class="n">status_code</span><span class="si">}</span><span class="s2">): </span><span class="si">{</span><span class="n">detail</span><span class="si">}</span><span class="s2">"</span>
                 <span class="p">)</span>
 
-            <span class="n">requested_genes</span> <span class="o">=</span> <span class="p">[</span><span class="n">gene_ids</span><span class="p">]</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">gene_ids</span><span class="p">,</span> <span class="nb">str</span><span class="p">)</span> <span class="k">else</span> <span class="nb">list</span><span class="p">(</span><span class="n">gene_ids</span> <span class="ow">or</span> <span class="p">[])</span>
             <span class="n">features_by_store</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]]</span> <span class="o">=</span> <span class="p">{}</span>
             <span class="n">encoding</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
             <span class="n">compact</span> <span class="o">=</span> <span class="kc">False</span>
@@ -2422,6 +2641,10 @@
                             <span class="n">compact</span> <span class="o">=</span> <span class="n">frame</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"layout"</span><span class="p">)</span> <span class="o">==</span> <span class="n">stream_codec</span><span class="o">.</span><span class="n">COMPACT_LAYOUT</span>
                             <span class="n">values_dtype</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">frame</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"values"</span><span class="p">)</span> <span class="ow">or</span> <span class="s2">"f32"</span><span class="p">)</span>
                             <span class="k">if</span> <span class="n">layout</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">compact</span><span class="p">:</span>
+                                <span class="k">if</span> <span class="n">allow_layout_fallback</span><span class="p">:</span>
+                                    <span class="k">raise</span> <span class="n">_LegacyCellStreamRequired</span><span class="p">(</span>
+                                        <span class="s2">"the start frame advertises the released framing"</span>
+                                    <span class="p">)</span>
                                 <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span>
                                     <span class="s2">"Server did not honour layout=</span><span class="si">%r</span><span class="s2">; decoding the default framing"</span><span class="p">,</span>
                                     <span class="n">layout</span><span class="p">,</span>
@@ -2472,6 +2695,8 @@
                                         <span class="s2">"value"</span><span class="p">:</span> <span class="n">value_values</span><span class="p">,</span>
                                     <span class="p">}</span>
                                 <span class="p">)</span>
+                    <span class="k">except</span> <span class="n">_LegacyCellStreamRequired</span><span class="p">:</span>
+                        <span class="k">raise</span>
                     <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">exc</span><span class="p">:</span>
                         <span class="k">raise</span> <span class="n">MalvaAPIError</span><span class="p">(</span>
                             <span class="s2">"Failed to decode cell-expression frame "</span>
@@ -5460,7 +5685,7 @@
       
     </aside>
   </div>
-</div><script src="../../_static/documentation_options.js?v=a82ae3da"></script>
+</div><script src="../../_static/documentation_options.js?v=016a97bc"></script>
     <script src="../../_static/doctools.js?v=9a2dae69"></script>
     <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script src="../../_static/scripts/furo.js?v=46bd48cc"></script>
