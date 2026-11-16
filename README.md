@@ -128,6 +128,22 @@ combined = ad.concat(
 print(combined)
 ```
 
+Per-cell metadata is joined into `obs` for every conversion method. With an
+explicit cell list, `enrich()` fetches it once from the metadata service:
+
+```python
+cells = [(sample_id, cell_id)]  # replace with your (sample_id, cell_id) pairs
+
+adata = client.stream_cell_expression(
+    cells=cells,
+    gene_ids=["SPP1", "CD3D"],
+).enrich().to_anndata()
+print(adata.obs[["cell_type", "total_counts"]].head())
+```
+
+Pass `cell_metadata=frame` to supply your own table keyed by `sample_id` and
+`cell_id`, or `include_cell_metadata=False` to skip both the fetch and the join.
+
 
 ## Indexing Your Own Data
 
