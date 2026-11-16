@@ -545,7 +545,7 @@ provenance.</p>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="malva_client.client.MalvaClient.stream_cell_expression">
-<span class="sig-name descname"><span class="pre">stream_cell_expression</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">sample_ids</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">gene_ids</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">dataset_id</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_batch_bytes</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">4194304</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">chunk_size</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">65536</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cells</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cell_metadata</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">include_cell_metadata</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/malva_client/client.html#MalvaClient.stream_cell_expression"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#malva_client.client.MalvaClient.stream_cell_expression" title="Link to this definition">¶</a></dt>
+<span class="sig-name descname"><span class="pre">stream_cell_expression</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">sample_ids</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">gene_ids</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">dataset_id</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_batch_bytes</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">4194304</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">chunk_size</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">65536</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cells</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cell_metadata</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">include_cell_metadata</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">compress</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">layout</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">values</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/malva_client/client.html#MalvaClient.stream_cell_expression"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#malva_client.client.MalvaClient.stream_cell_expression" title="Link to this definition">¶</a></dt>
 <dd><p>Stream sparse per-cell expression batches for selected samples.</p>
 <p>By default this returns a <a class="reference internal" href="malva_client.models.html#malva_client.models.CellExpressionStream" title="malva_client.models.CellExpressionStream"><code class="xref py py-class docutils literal notranslate"><span class="pre">CellExpressionStream</span></code></a>
 that yields one pandas <code class="docutils literal notranslate"><span class="pre">DataFrame</span></code> per server batch, exactly like the
@@ -563,16 +563,26 @@ and <code class="docutils literal notranslate"><span class="pre">value</span></c
 <code class="docutils literal notranslate"><span class="pre">(sample_id,</span> <span class="pre">cell_id,</span> <span class="pre">gene)</span></code> combinations are zero. Passing
 <code class="docutils literal notranslate"><span class="pre">gene_ids</span></code> is strongly recommended: without it the server must scan
 every non-zero entry in the selected petal stores.</p>
+<p><code class="docutils literal notranslate"><span class="pre">cells</span></code> requests opt into two server-side payload modes that older
+servers ignore and older clients never ask for, and both return the same
+DataFrames:
+:rtype: <span class="sphinx_autodoc_typehints-type"><a class="reference internal" href="malva_client.models.html#malva_client.models.CellExpressionStream" title="malva_client.models.CellExpressionStream"><code class="xref py py-class docutils literal notranslate"><span class="pre">CellExpressionStream</span></code></a></span></p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">layout=&quot;compact&quot;</span></code> sends cell identity once as a bitmask over the
+request order and each row as fixed-width feature deltas, about 4x
+smaller than the flat arrays before any compression.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">compress=&quot;zstd&quot;</span></code> (or <code class="docutils literal notranslate"><span class="pre">&quot;zlib&quot;</span></code>) compresses every frame body,
+which brings the reference stream from ~460 MB to ~36 MB.  zstd needs
+<code class="docutils literal notranslate"><span class="pre">zstandard</span></code> or <code class="docutils literal notranslate"><span class="pre">numcodecs</span></code> on the client; when neither is
+installed the request silently falls back to the default framing.</p></li>
+</ul>
+<p><code class="docutils literal notranslate"><span class="pre">values=&quot;f16&quot;</span></code> halves the value payload and is lossy (about 1e-3
+relative), so it has to be asked for explicitly.</p>
 <p>The wrapper also provides <code class="docutils literal notranslate"><span class="pre">to_anndata()</span></code>, <code class="docutils literal notranslate"><span class="pre">write_h5ad(path)</span></code> and
 <code class="docutils literal notranslate"><span class="pre">iter_anndata()</span></code> for standard AnnData workflows. Pass <code class="docutils literal notranslate"><span class="pre">cell_metadata</span></code>
 to add per-cell <code class="docutils literal notranslate"><span class="pre">obs</span></code> columns, or call <code class="docutils literal notranslate"><span class="pre">enrich()</span></code> on a stream built
 from <code class="docutils literal notranslate"><span class="pre">cells</span></code> to fetch them once from the metadata service. Set
 <code class="docutils literal notranslate"><span class="pre">include_cell_metadata=False</span></code> to skip both.</p>
-<dl class="field-list simple">
-<dt class="field-odd">Return type<span class="colon">:</span></dt>
-<dd class="field-odd"><p><span class="sphinx_autodoc_typehints-type"><a class="reference internal" href="malva_client.models.html#malva_client.models.CellExpressionStream" title="malva_client.models.CellExpressionStream"><code class="xref py py-class docutils literal notranslate"><span class="pre">CellExpressionStream</span></code></a></span></p>
-</dd>
-</dl>
 </dd></dl>
 
 <p class="rubric">Job Management</p>
@@ -1702,7 +1712,7 @@ only an <code class="docutils literal notranslate"><span class="pre">auto</span>
       
     </aside>
   </div>
-</div><script src="../_static/documentation_options.js?v=cce5339e"></script>
+</div><script src="../_static/documentation_options.js?v=a82ae3da"></script>
     <script src="../_static/doctools.js?v=9a2dae69"></script>
     <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script src="../_static/scripts/furo.js?v=46bd48cc"></script>
