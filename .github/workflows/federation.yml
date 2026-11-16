@@ -3,11 +3,9 @@ name: federation
 # Federation is not available on the mainstream/free deployment, so this
 # workflow is deliberately separate from ci.yml. The offline contract job runs
 # when the `federation` label is added to a pull request; the live job only runs
-# on demand or on the daily schedule.
+# on demand.
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "37 4 * * *"
   pull_request:
     types: [labeled]
 
