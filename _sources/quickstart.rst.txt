@@ -296,7 +296,10 @@ loop over it exactly as above, or convert it to AnnData. ``to_anndata()`` reads
 the whole stream and builds a cells × genes sparse float32 matrix; observation
 names are ``sample_id:cell_id`` and variables are genes. Each batch is folded
 into a sparse block as it arrives and the blocks are stacked once at the end, so
-peak memory stays close to one copy of the expression data:
+peak memory stays close to one copy of the expression data. With
+``layout="compact"`` the accumulator works on integer sample, cell and feature
+codes, builds observation names with one NumPy string cast at the end, and never
+re-factorizes the gene axis per batch:
 
 .. code-block:: python
 

@@ -2429,8 +2429,8 @@
             <span class="n">stream_layout</span> <span class="o">=</span> <span class="n">stream_compress</span> <span class="o">=</span> <span class="n">stream_values</span> <span class="o">=</span> <span class="kc">None</span>
             <span class="n">defaulted_layout</span> <span class="o">=</span> <span class="kc">False</span>
 
-        <span class="k">return</span> <span class="n">CellExpressionStream</span><span class="p">(</span>
-            <span class="k">lambda</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">_iter_cell_expression_batches</span><span class="p">(</span>
+        <span class="k">def</span><span class="w"> </span><span class="nf">_batches</span><span class="p">(</span><span class="o">*</span><span class="p">,</span> <span class="n">fast</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">):</span>
+            <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_iter_cell_expression_batches</span><span class="p">(</span>
                 <span class="n">sample_ids</span><span class="o">=</span><span class="kc">None</span> <span class="k">if</span> <span class="n">known_cells</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="n">sample_ids</span><span class="p">,</span>
                 <span class="n">gene_ids</span><span class="o">=</span><span class="n">gene_list</span><span class="p">,</span>
                 <span class="n">dataset_id</span><span class="o">=</span><span class="n">dataset_id</span><span class="p">,</span>
@@ -2441,7 +2441,12 @@
                 <span class="n">layout</span><span class="o">=</span><span class="n">stream_layout</span><span class="p">,</span>
                 <span class="n">values</span><span class="o">=</span><span class="n">stream_values</span><span class="p">,</span>
                 <span class="n">allow_layout_fallback</span><span class="o">=</span><span class="n">defaulted_layout</span><span class="p">,</span>
-            <span class="p">),</span>
+                <span class="n">fast</span><span class="o">=</span><span class="n">fast</span><span class="p">,</span>
+            <span class="p">)</span>
+
+        <span class="k">return</span> <span class="n">CellExpressionStream</span><span class="p">(</span>
+            <span class="k">lambda</span><span class="p">:</span> <span class="n">_batches</span><span class="p">(</span><span class="n">fast</span><span class="o">=</span><span class="kc">False</span><span class="p">),</span>
+            <span class="n">fast_batches</span><span class="o">=</span><span class="k">lambda</span><span class="p">:</span> <span class="n">_batches</span><span class="p">(</span><span class="n">fast</span><span class="o">=</span><span class="kc">True</span><span class="p">),</span>
             <span class="n">client</span><span class="o">=</span><span class="bp">self</span><span class="p">,</span>
             <span class="n">dataset_id</span><span class="o">=</span><span class="n">dataset_id</span><span class="p">,</span>
             <span class="n">sample_ids</span><span class="o">=</span><span class="n">known_samples</span><span class="p">,</span>
@@ -2464,13 +2469,18 @@
         <span class="n">layout</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
         <span class="n">values</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
         <span class="n">allow_layout_fallback</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+        <span class="n">fast</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
     <span class="p">):</span>
-<span class="w">        </span><span class="sd">"""Yield the raw pandas batches from the server frame stream.</span>
+<span class="w">        </span><span class="sd">"""Yield the raw batches from the server frame stream.</span>
 
 <span class="sd">        ``layout``/``compress``/``values`` arrive resolved from</span>
 <span class="sd">        :meth:`stream_cell_expression`; ``allow_layout_fallback`` marks a</span>
 <span class="sd">        compact layout that came from the defaults and may therefore be retried</span>
-<span class="sd">        transparently with the released framing.</span>
+<span class="sd">        transparently with the released framing. With ``fast=True`` and a</span>
+<span class="sd">        server that sends a feature list, each data frame is yielded as a</span>
+<span class="sd">        :class:`~malva_client.stream_codec.ExpressionBatch` carrying integer</span>
+<span class="sd">        feature codes instead of gene names. The public iterator converts those</span>
+<span class="sd">        back to the same DataFrames.</span>
 <span class="sd">        """</span>
         <span class="n">requested_cells</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">Tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">]]</span> <span class="o">=</span> <span class="p">[]</span>
         <span class="n">requested_genes</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
@@ -2514,6 +2524,7 @@
                 <span class="n">requested_cells</span><span class="p">,</span>
                 <span class="n">requested_genes</span><span class="p">,</span>
                 <span class="n">chunk_size</span><span class="o">=</span><span class="n">chunk_size</span><span class="p">,</span>
+                <span class="n">fast</span><span class="o">=</span><span class="n">fast</span><span class="p">,</span>
             <span class="p">)</span>
             <span class="k">return</span>
 
@@ -2544,6 +2555,7 @@
                 <span class="n">values</span><span class="o">=</span><span class="n">values</span><span class="p">,</span>
                 <span class="n">allow_layout_fallback</span><span class="o">=</span><span class="n">allow_layout_fallback</span><span class="p">,</span>
                 <span class="n">chunk_size</span><span class="o">=</span><span class="n">chunk_size</span><span class="p">,</span>
+                <span class="n">fast</span><span class="o">=</span><span class="n">fast</span><span class="p">,</span>
             <span class="p">)</span>
         <span class="k">except</span> <span class="n">_LegacyCellStreamRequired</span> <span class="k">as</span> <span class="n">exc</span><span class="p">:</span>
             <span class="c1"># The compatibility retry happens before the first batch is yielded,</span>
@@ -2562,6 +2574,7 @@
                 <span class="n">requested_cells</span><span class="p">,</span>
                 <span class="n">requested_genes</span><span class="p">,</span>
                 <span class="n">chunk_size</span><span class="o">=</span><span class="n">chunk_size</span><span class="p">,</span>
+                <span class="n">fast</span><span class="o">=</span><span class="n">fast</span><span class="p">,</span>
             <span class="p">)</span>
 
     <span class="k">def</span><span class="w"> </span><span class="nf">_stream_cell_frames</span><span class="p">(</span>
@@ -2574,6 +2587,7 @@
         <span class="n">values</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
         <span class="n">allow_layout_fallback</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
         <span class="n">chunk_size</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">64</span> <span class="o">*</span> <span class="mi">1024</span><span class="p">,</span>
+        <span class="n">fast</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
     <span class="p">):</span>
 <span class="w">        </span><span class="sd">"""Request one cell-expression stream and yield its DataFrames.</span>
 
@@ -2611,6 +2625,59 @@
                 <span class="p">)</span>
 
             <span class="n">features_by_store</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]]</span> <span class="o">=</span> <span class="p">{}</span>
+            <span class="c1"># Integer feature codes let the AnnData accumulator skip the</span>
+            <span class="c1"># per-entry gene names and the repeated string factorization.</span>
+            <span class="n">feature_names</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+            <span class="n">feature_name_to_code</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
+            <span class="n">feature_tables</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
+            <span class="n">seen_codes</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">bool</span><span class="p">)</span>
+            <span class="n">requested_array</span> <span class="o">=</span> <span class="p">(</span>
+                <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">requested_cells</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">int64</span><span class="p">)</span>
+                <span class="k">if</span> <span class="n">requested_cells</span>
+                <span class="k">else</span> <span class="n">np</span><span class="o">.</span><span class="n">empty</span><span class="p">((</span><span class="mi">0</span><span class="p">,</span> <span class="mi">2</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">int64</span><span class="p">)</span>
+            <span class="p">)</span>
+
+            <span class="k">def</span><span class="w"> </span><span class="nf">_feature_table</span><span class="p">(</span><span class="n">store_index</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">features</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">                </span><span class="sd">"""Map panel positions to stable integer codes for one store."""</span>
+                <span class="n">table</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">empty</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">features</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">int64</span><span class="p">)</span>
+                <span class="k">for</span> <span class="n">position</span><span class="p">,</span> <span class="n">name</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">features</span><span class="p">):</span>
+                    <span class="n">code</span> <span class="o">=</span> <span class="n">feature_name_to_code</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">name</span><span class="p">)</span>
+                    <span class="k">if</span> <span class="n">code</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+                        <span class="n">code</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">feature_names</span><span class="p">)</span>
+                        <span class="n">feature_name_to_code</span><span class="p">[</span><span class="n">name</span><span class="p">]</span> <span class="o">=</span> <span class="n">code</span>
+                        <span class="n">feature_names</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">name</span><span class="p">)</span>
+                    <span class="n">table</span><span class="p">[</span><span class="n">position</span><span class="p">]</span> <span class="o">=</span> <span class="n">code</span>
+                <span class="n">feature_tables</span><span class="p">[</span><span class="n">store_index</span><span class="p">]</span> <span class="o">=</span> <span class="n">table</span>
+                <span class="k">return</span> <span class="n">table</span>
+
+            <span class="k">def</span><span class="w"> </span><span class="nf">_codes_for</span><span class="p">(</span><span class="n">store_index</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">positions</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Optional</span><span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">]:</span>
+                <span class="k">if</span> <span class="ow">not</span> <span class="n">fast</span><span class="p">:</span>
+                    <span class="k">return</span> <span class="kc">None</span>
+                <span class="n">table</span> <span class="o">=</span> <span class="n">feature_tables</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">store_index</span><span class="p">)</span>
+                <span class="k">if</span> <span class="n">table</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="n">positions</span><span class="o">.</span><span class="n">size</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+                    <span class="k">return</span> <span class="kc">None</span>
+                <span class="n">highest</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">positions</span><span class="o">.</span><span class="n">max</span><span class="p">(</span><span class="n">initial</span><span class="o">=-</span><span class="mi">1</span><span class="p">))</span>
+                <span class="n">lowest</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">positions</span><span class="o">.</span><span class="n">min</span><span class="p">(</span><span class="n">initial</span><span class="o">=</span><span class="mi">0</span><span class="p">))</span>
+                <span class="k">if</span> <span class="n">lowest</span> <span class="o">&lt;</span> <span class="mi">0</span> <span class="ow">or</span> <span class="n">highest</span> <span class="o">&gt;=</span> <span class="n">table</span><span class="o">.</span><span class="n">size</span><span class="p">:</span>
+                    <span class="k">return</span> <span class="kc">None</span>
+                <span class="k">return</span> <span class="n">table</span><span class="p">[</span><span class="n">positions</span><span class="p">]</span>
+
+            <span class="k">def</span><span class="w"> </span><span class="nf">_new_codes</span><span class="p">(</span><span class="n">codes</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+                <span class="k">nonlocal</span> <span class="n">seen_codes</span>
+                <span class="k">if</span> <span class="n">codes</span><span class="o">.</span><span class="n">size</span> <span class="ow">and</span> <span class="nb">int</span><span class="p">(</span><span class="n">codes</span><span class="o">.</span><span class="n">max</span><span class="p">())</span> <span class="o">&gt;=</span> <span class="n">seen_codes</span><span class="o">.</span><span class="n">size</span><span class="p">:</span>
+                    <span class="n">grown</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="nb">int</span><span class="p">(</span><span class="n">codes</span><span class="o">.</span><span class="n">max</span><span class="p">())</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">bool</span><span class="p">)</span>
+                    <span class="n">grown</span><span class="p">[:</span> <span class="n">seen_codes</span><span class="o">.</span><span class="n">size</span><span class="p">]</span> <span class="o">=</span> <span class="n">seen_codes</span>
+                    <span class="n">seen_codes</span> <span class="o">=</span> <span class="n">grown</span>
+                <span class="n">fresh</span> <span class="o">=</span> <span class="n">codes</span><span class="p">[</span><span class="o">~</span><span class="n">seen_codes</span><span class="p">[</span><span class="n">codes</span><span class="p">]]</span>
+                <span class="k">if</span> <span class="ow">not</span> <span class="n">fresh</span><span class="o">.</span><span class="n">size</span><span class="p">:</span>
+                    <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">empty</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">int64</span><span class="p">)</span>
+                <span class="n">unique</span><span class="p">,</span> <span class="n">first</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">unique</span><span class="p">(</span><span class="n">fresh</span><span class="p">,</span> <span class="n">return_index</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+                <span class="c1"># First appearance in this frame, not sorted code order, so the</span>
+                <span class="c1"># variable axis keeps its first-seen contract.</span>
+                <span class="n">new</span> <span class="o">=</span> <span class="n">unique</span><span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">argsort</span><span class="p">(</span><span class="n">first</span><span class="p">,</span> <span class="n">kind</span><span class="o">=</span><span class="s2">"stable"</span><span class="p">)]</span>
+                <span class="n">seen_codes</span><span class="p">[</span><span class="n">new</span><span class="p">]</span> <span class="o">=</span> <span class="kc">True</span>
+                <span class="k">return</span> <span class="n">new</span>
+
             <span class="n">encoding</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
             <span class="n">compact</span> <span class="o">=</span> <span class="kc">False</span>
             <span class="n">values_dtype</span> <span class="o">=</span> <span class="s2">"f32"</span>
@@ -2653,25 +2720,38 @@
                         <span class="k">if</span> <span class="n">frame_type</span> <span class="o">==</span> <span class="s2">"features"</span><span class="p">:</span>
                             <span class="n">store_index</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">frame</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"store_index"</span><span class="p">,</span> <span class="mi">0</span><span class="p">))</span>
                             <span class="n">features_by_store</span><span class="p">[</span><span class="n">store_index</span><span class="p">]</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">frame</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"features"</span><span class="p">)</span> <span class="ow">or</span> <span class="p">[])</span>
+                            <span class="k">if</span> <span class="n">fast</span><span class="p">:</span>
+                                <span class="n">_feature_table</span><span class="p">(</span><span class="n">store_index</span><span class="p">,</span> <span class="n">features_by_store</span><span class="p">[</span><span class="n">store_index</span><span class="p">])</span>
                         <span class="k">elif</span> <span class="n">frame_type</span> <span class="o">==</span> <span class="s2">"data"</span><span class="p">:</span>
                             <span class="n">count</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">frame</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"n"</span><span class="p">)</span> <span class="ow">or</span> <span class="mi">0</span><span class="p">)</span>
                             <span class="k">if</span> <span class="n">count</span><span class="p">:</span>
                                 <span class="n">store_index</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">frame</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"store_index"</span><span class="p">,</span> <span class="mi">0</span><span class="p">))</span>
                                 <span class="n">features</span> <span class="o">=</span> <span class="n">features_by_store</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">store_index</span><span class="p">,</span> <span class="p">[])</span>
+                                <span class="n">codes</span> <span class="o">=</span> <span class="kc">None</span>
+                                <span class="n">gene_names</span> <span class="o">=</span> <span class="kc">None</span>
                                 <span class="k">if</span> <span class="n">compact</span><span class="p">:</span>
                                     <span class="p">(</span>
+                                        <span class="n">_present</span><span class="p">,</span>
+                                        <span class="n">_nnz</span><span class="p">,</span>
                                         <span class="n">sample_values</span><span class="p">,</span>
                                         <span class="n">cell_values</span><span class="p">,</span>
-                                        <span class="n">gene_names</span><span class="p">,</span>
+                                        <span class="n">positions</span><span class="p">,</span>
                                         <span class="n">value_values</span><span class="p">,</span>
-                                    <span class="p">)</span> <span class="o">=</span> <span class="n">stream_codec</span><span class="o">.</span><span class="n">decode_compact_frame</span><span class="p">(</span>
-                                        <span class="n">frame</span><span class="p">,</span> <span class="n">requested_cells</span><span class="p">,</span> <span class="n">features</span><span class="p">,</span> <span class="n">values_dtype</span>
+                                    <span class="p">)</span> <span class="o">=</span> <span class="n">stream_codec</span><span class="o">.</span><span class="n">decode_compact_columns</span><span class="p">(</span>
+                                        <span class="n">frame</span><span class="p">,</span> <span class="n">requested_array</span><span class="p">,</span> <span class="n">values_dtype</span>
                                     <span class="p">)</span>
+                                    <span class="n">codes</span> <span class="o">=</span> <span class="n">_codes_for</span><span class="p">(</span><span class="n">store_index</span><span class="p">,</span> <span class="n">positions</span><span class="p">)</span>
+                                    <span class="k">if</span> <span class="n">codes</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+                                        <span class="p">(</span>
+                                            <span class="n">sample_values</span><span class="p">,</span>
+                                            <span class="n">cell_values</span><span class="p">,</span>
+                                            <span class="n">gene_names</span><span class="p">,</span>
+                                            <span class="n">value_values</span><span class="p">,</span>
+                                        <span class="p">)</span> <span class="o">=</span> <span class="n">stream_codec</span><span class="o">.</span><span class="n">decode_compact_frame</span><span class="p">(</span>
+                                            <span class="n">frame</span><span class="p">,</span> <span class="n">requested_cells</span><span class="p">,</span> <span class="n">features</span><span class="p">,</span> <span class="n">values_dtype</span>
+                                        <span class="p">)</span>
                                 <span class="k">else</span><span class="p">:</span>
                                     <span class="n">positions</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">frombuffer</span><span class="p">(</span><span class="n">frame</span><span class="p">[</span><span class="s2">"feature_index"</span><span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><span class="s2">"&lt;i4"</span><span class="p">)</span>
-                                    <span class="n">gene_names</span> <span class="o">=</span> <span class="n">stream_codec</span><span class="o">.</span><span class="n">map_gene_names</span><span class="p">(</span>
-                                        <span class="n">positions</span><span class="p">,</span> <span class="n">features</span><span class="p">,</span> <span class="n">requested_genes</span>
-                                    <span class="p">)</span>
                                     <span class="n">sample_values</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">frombuffer</span><span class="p">(</span><span class="n">frame</span><span class="p">[</span><span class="s2">"sample_ids"</span><span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><span class="s2">"&lt;i8"</span><span class="p">)</span>
                                     <span class="n">cell_values</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">frombuffer</span><span class="p">(</span><span class="n">frame</span><span class="p">[</span><span class="s2">"cell_ids"</span><span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><span class="s2">"&lt;i8"</span><span class="p">)</span>
                                     <span class="n">value_values</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">frombuffer</span><span class="p">(</span><span class="n">frame</span><span class="p">[</span><span class="s2">"values"</span><span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><span class="s2">"&lt;f4"</span><span class="p">)</span>
@@ -2686,15 +2766,33 @@
                                                 <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2"> carries </span><span class="si">{</span><span class="nb">int</span><span class="p">(</span><span class="n">column</span><span class="o">.</span><span class="n">size</span><span class="p">)</span><span class="si">}</span><span class="s2"> entries "</span>
                                                 <span class="sa">f</span><span class="s2">"but the frame declares </span><span class="si">{</span><span class="n">count</span><span class="si">}</span><span class="s2">"</span>
                                             <span class="p">)</span>
-                                <span class="n">batch</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">(</span>
-                                    <span class="p">{</span>
-                                        <span class="s2">"sample_id"</span><span class="p">:</span> <span class="n">sample_values</span><span class="p">,</span>
-                                        <span class="s2">"cell_id"</span><span class="p">:</span> <span class="n">cell_values</span><span class="p">,</span>
-                                        <span class="s2">"store_index"</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">full</span><span class="p">(</span><span class="n">count</span><span class="p">,</span> <span class="n">store_index</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
-                                        <span class="s2">"gene"</span><span class="p">:</span> <span class="n">gene_names</span><span class="p">,</span>
-                                        <span class="s2">"value"</span><span class="p">:</span> <span class="n">value_values</span><span class="p">,</span>
-                                    <span class="p">}</span>
-                                <span class="p">)</span>
+                                    <span class="n">codes</span> <span class="o">=</span> <span class="n">_codes_for</span><span class="p">(</span><span class="n">store_index</span><span class="p">,</span> <span class="n">positions</span><span class="p">)</span>
+                                    <span class="k">if</span> <span class="n">codes</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+                                        <span class="n">gene_names</span> <span class="o">=</span> <span class="n">stream_codec</span><span class="o">.</span><span class="n">map_gene_names</span><span class="p">(</span>
+                                            <span class="n">positions</span><span class="p">,</span> <span class="n">features</span><span class="p">,</span> <span class="n">requested_genes</span>
+                                        <span class="p">)</span>
+                                <span class="k">if</span> <span class="n">codes</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+                                    <span class="n">batch</span> <span class="o">=</span> <span class="n">stream_codec</span><span class="o">.</span><span class="n">ExpressionBatch</span><span class="p">(</span>
+                                        <span class="n">sample_values</span><span class="p">,</span>
+                                        <span class="n">cell_values</span><span class="p">,</span>
+                                        <span class="n">codes</span><span class="p">,</span>
+                                        <span class="n">value_values</span><span class="p">,</span>
+                                        <span class="n">store_index</span><span class="p">,</span>
+                                        <span class="n">feature_names</span><span class="p">,</span>
+                                        <span class="n">_new_codes</span><span class="p">(</span><span class="n">codes</span><span class="p">),</span>
+                                    <span class="p">)</span>
+                                <span class="k">else</span><span class="p">:</span>
+                                    <span class="n">batch</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">(</span>
+                                        <span class="p">{</span>
+                                            <span class="s2">"sample_id"</span><span class="p">:</span> <span class="n">sample_values</span><span class="p">,</span>
+                                            <span class="s2">"cell_id"</span><span class="p">:</span> <span class="n">cell_values</span><span class="p">,</span>
+                                            <span class="s2">"store_index"</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">full</span><span class="p">(</span>
+                                                <span class="n">count</span><span class="p">,</span> <span class="n">store_index</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span>
+                                            <span class="p">),</span>
+                                            <span class="s2">"gene"</span><span class="p">:</span> <span class="n">gene_names</span><span class="p">,</span>
+                                            <span class="s2">"value"</span><span class="p">:</span> <span class="n">value_values</span><span class="p">,</span>
+                                        <span class="p">}</span>
+                                    <span class="p">)</span>
                     <span class="k">except</span> <span class="n">_LegacyCellStreamRequired</span><span class="p">:</span>
                         <span class="k">raise</span>
                     <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">exc</span><span class="p">:</span>
@@ -5685,7 +5783,7 @@
       
     </aside>
   </div>
-</div><script src="../../_static/documentation_options.js?v=016a97bc"></script>
+</div><script src="../../_static/documentation_options.js?v=21db0d57"></script>
     <script src="../../_static/doctools.js?v=9a2dae69"></script>
     <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script src="../../_static/scripts/furo.js?v=46bd48cc"></script>

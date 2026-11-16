@@ -522,7 +522,10 @@ loop over it exactly as above, or convert it to AnnData. <code class="docutils l
 the whole stream and builds a cells × genes sparse float32 matrix; observation
 names are <code class="docutils literal notranslate"><span class="pre">sample_id:cell_id</span></code> and variables are genes. Each batch is folded
 into a sparse block as it arrives and the blocks are stacked once at the end, so
-peak memory stays close to one copy of the expression data:</p>
+peak memory stays close to one copy of the expression data. With
+<code class="docutils literal notranslate"><span class="pre">layout=&quot;compact&quot;</span></code> the accumulator works on integer sample, cell and feature
+codes, builds observation names with one NumPy string cast at the end, and never
+re-factorizes the gene axis per batch:</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">stream</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">stream_cell_expression</span><span class="p">(</span>
     <span class="n">sample_ids</span><span class="o">=</span><span class="p">[</span><span class="n">sample_id</span><span class="p">],</span>
     <span class="n">gene_ids</span><span class="o">=</span><span class="p">[</span><span class="s2">"SPP1"</span><span class="p">,</span> <span class="s2">"CD3D"</span><span class="p">],</span>
@@ -911,7 +914,7 @@ API reference for those workflows.</p>
       
     </aside>
   </div>
-</div><script src="_static/documentation_options.js?v=016a97bc"></script>
+</div><script src="_static/documentation_options.js?v=21db0d57"></script>
     <script src="_static/doctools.js?v=9a2dae69"></script>
     <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
     <script src="_static/scripts/furo.js?v=46bd48cc"></script>
