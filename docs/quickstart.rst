@@ -381,22 +381,23 @@ This is useful when you have sorted a cell table by expression and want to
 fetch the cells in high-to-low order. Leave out ``gene_ids`` to get all
 features for each cell.
 
-For these cells, ``enrich()`` fetches the metadata once and the conversion
-methods join it into ``obs``. Every per-cell field keeps its name, so
-``cell_type``, ``total_counts`` and any other column returned by the metadata
-service are available directly:
+For these cells, the conversion methods fetch the metadata once and join it
+into ``obs``. Every per-cell field keeps its name, so ``cell_type``,
+``total_counts`` and any other column returned by the metadata service are
+available directly:
 
 .. code-block:: python
 
     adata = client.stream_cell_expression(
         cells=cells,
         gene_ids=["CD3D", "CD3E"],
-    ).enrich().to_anndata()
+    ).to_anndata()
     print(adata.obs[["cell_type", "total_counts"]].head())
 
 Cells without a metadata row get ``NaN``. Pass your own table with
 ``cell_metadata=`` (a DataFrame or a dict keyed by ``(sample_id, cell_id)``), or
-set ``include_cell_metadata=False`` to skip the fetch and the join.
+set ``include_cell_metadata=False`` to skip the fetch and the join. Call
+``enrich()`` when you want to fetch the metadata ahead of time.
 
 The server needs a cell-major CSR index in the expression store. If the store
 does not have one, the call fails with a clear "not available yet" error

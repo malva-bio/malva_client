@@ -9,11 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - `CellExpressionStream` joins per-cell metadata into `obs` in `to_anndata()`,
   every `iter_anndata()` part and `write_h5ad()`. Pass `cell_metadata=` (a
-  DataFrame or a dict keyed by `(sample_id, cell_id)`), or call `enrich()` on a
-  stream created from `cells=[...]` to fetch it once from the metadata service.
-  Fields such as `cell_type` and `total_counts` keep their names; cells without
-  a metadata row get `NaN`. `include_cell_metadata=False` skips the fetch and
-  the join.
+  DataFrame or a dict keyed by `(sample_id, cell_id)`). A stream created from
+  `cells=[...]` fetches the metadata automatically on the first conversion and
+  `enrich()` shares that state. Fields such as `cell_type` and `total_counts`
+  keep their names; cells without a metadata row get `NaN`.
+  `include_cell_metadata=False` skips the fetch and the join.
 - `CellExpressionStream.iter_anndata(chunk_obs=...)` groups consecutive server
   batches into fixed-variable-axis chunks of at least `chunk_obs` cells and
   yields them while the stream is still running. Chunks share one growing

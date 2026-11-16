@@ -1854,10 +1854,10 @@ class CellExpressionStream:
 
     Per-cell metadata supplied as ``cell_metadata`` (a DataFrame or a dict keyed
     by ``(sample_id, cell_id)``) is joined into ``obs`` by every conversion
-    method. When the stream was built from an explicit ``cells`` list,
-    :meth:`enrich` fetches the metadata once with
-    ``MalvaClient.get_cells_by_metadata``. Pass ``include_cell_metadata=False``
-    to skip both the fetch and the join.
+    method. When the stream was built from an explicit ``cells`` list and no
+    metadata was supplied, the first conversion fetches it once with
+    ``MalvaClient.get_cells_by_metadata``; :meth:`enrich` shares that state.
+    Pass ``include_cell_metadata=False`` to skip both the fetch and the join.
     """
 
     def __init__(
@@ -1882,6 +1882,7 @@ class CellExpressionStream:
         self._cells = _normalise_cell_pairs(cells) if cells is not None else None
         self._cell_metadata = _cell_metadata_frame(cell_metadata)
         self.include_cell_metadata = bool(include_cell_metadata)
+        self._cell_metadata_fetched = False
         self._enriched = False
 
     def __iter__(self):
@@ -1908,6 +1909,8 @@ class CellExpressionStream:
         ``obs``. When the stream was created from an explicit ``cells`` list and
         no cell metadata is available yet, the client fetches it once for those
         cells with ``get_cells_by_metadata(..., include_cell_metadata=True)``.
+        The conversion methods do this automatically; calling ``enrich`` is only
+        needed to supply metadata or fetch it ahead of time.
         ``include_cell_metadata=False`` skips that fetch.
         """
         if sample_metadata is not None:
@@ -1928,23 +1931,7 @@ class CellExpressionStream:
                     [self._cell_metadata, incoming], ignore_index=True
                 ).drop_duplicates(["sample_id", "cell_id"], keep="last")
 
-        if (
-            self.include_cell_metadata
-            and self._cell_metadata.empty
-            and self._cells
-            and self.client is not None
-        ):
-            sample_ids = sorted({int(sample_id) for sample_id, _ in self._cells})
-            try:
-                fetched = self.client.get_cells_by_metadata(
-                    sample_ids=sample_ids,
-                    include_cell_metadata=True,
-                )
-            except Exception as exc:  # pragma: no cover - network failure path
-                logger.warning("Could not fetch cell metadata: %s", exc)
-                fetched = None
-            if fetched is not None and not fetched.empty:
-                self._cell_metadata = _restrict_cell_metadata(fetched, self._cells)
+        self._ensure_enriched()
 
         if (
             (self._sample_metadata.empty or not self._enriched)
@@ -1970,6 +1957,38 @@ class CellExpressionStream:
                             [self._sample_metadata, meta], ignore_index=True
                         ).drop_duplicates("sample_id", keep="last")
         self._enriched = True
+        return self
+
+    def _ensure_enriched(self) -> "CellExpressionStream":
+        """Fetch per-cell metadata once, before any AnnData conversion.
+
+        The conversion methods call this so a stream built from an explicit
+        ``cells`` list gets ``cell_type``, ``total_counts`` and the other
+        metadata fields without an explicit :meth:`enrich`. ``enrich`` shares
+        this state, so mixing conversions never repeats the request.
+        """
+        if self._cell_metadata_fetched:
+            return self
+        self._cell_metadata_fetched = True
+        if (
+            not self.include_cell_metadata
+            or not self._cell_metadata.empty
+            or not self._cells
+            or self.client is None
+        ):
+            return self
+
+        sample_ids = sorted({int(sample_id) for sample_id, _ in self._cells})
+        try:
+            fetched = self.client.get_cells_by_metadata(
+                sample_ids=sample_ids,
+                include_cell_metadata=True,
+            )
+        except Exception as exc:  # pragma: no cover - network failure path
+            logger.warning("Could not fetch cell metadata: %s", exc)
+            return self
+        if fetched is not None and not fetched.empty:
+            self._cell_metadata = _restrict_cell_metadata(fetched, self._cells)
         return self
 
     def _with_cell_metadata(self, adata: ad.AnnData) -> ad.AnnData:
@@ -1998,6 +2017,7 @@ class CellExpressionStream:
         re-converted. Per-cell metadata resolved on the stream becomes ``obs``
         columns unless ``include_cell_metadata=False``.
         """
+        self._ensure_enriched()
         accumulator = _AnnDataAccumulator(
             sample_metadata=self._sample_metadata,
             uns=self._uns(),
@@ -2033,6 +2053,7 @@ class CellExpressionStream:
         ``include_cell_metadata=False``. Either mode is terminal: the stream is
         consumed once.
         """
+        self._ensure_enriched()
         if chunk_obs is None:
             for batch in self:
                 if batch is None or batch.empty:
@@ -2075,6 +2096,7 @@ class CellExpressionStream:
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         cell_chunk_size = 10_000
+        self._ensure_enriched()
         part_paths: List[str] = []
         with tempfile.TemporaryDirectory(prefix="malva_stream_") as tmpdir:
             db_path = str(Path(tmpdir) / "entries.sqlite")

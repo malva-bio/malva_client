@@ -207,6 +207,90 @@ class TestCellMetadataFetch:
 # ---------------------------------------------------------------------------
 
 
+class TestAutomaticCellMetadataFetch:
+    """Conversions must fetch cell metadata even without an explicit enrich()."""
+
+    @staticmethod
+    def _stub(mock_client, monkeypatch, calls):
+        monkeypatch.setattr(
+            mock_client,
+            "_iter_cell_expression_batches",
+            lambda **kwargs: iter(_frames()),
+        )
+
+        def fake_cells_by_metadata(**kwargs):
+            calls.append(kwargs)
+            return _metadata()
+
+        monkeypatch.setattr(mock_client, "get_cells_by_metadata", fake_cells_by_metadata)
+        # enrich() also tries sample metadata; keep the test offline.
+        monkeypatch.setattr(mock_client, "get_sample_metadata", lambda sample_ids: {})
+
+    def test_to_anndata_fetches_without_enrich(self, mock_client, monkeypatch):
+        calls = []
+        self._stub(mock_client, monkeypatch, calls)
+        stream = mock_client.stream_cell_expression(
+            cells=[(1, 10), (1, 11), (2, 20)],
+            gene_ids=["G1", "G2"],
+        )
+
+        obs: Any = stream.to_anndata().obs
+
+        assert len(calls) == 1
+        assert calls[0]["sample_ids"] == [1, 2]
+        assert obs.loc["1:10", "cell_type"] == "B"
+        assert obs.loc["1:11", "total_counts"] == 200
+        assert obs.loc["2:20", "cell_type"] == "NK"
+        assert stream.cell_metadata["cell_id"].tolist() == [10, 11, 20]
+
+    def test_fetch_runs_once_for_to_anndata_and_iter_anndata(self, mock_client, monkeypatch):
+        calls = []
+        self._stub(mock_client, monkeypatch, calls)
+        stream = mock_client.stream_cell_expression(cells=[(1, 10), (2, 20)])
+
+        stream.to_anndata()
+        chunks = list(stream.iter_anndata(chunk_obs=2))
+
+        assert len(calls) == 1
+        assert all("cell_type" in chunk.obs.columns for chunk in chunks)
+
+    def test_enrich_and_conversion_share_the_fetch(self, mock_client, monkeypatch):
+        calls = []
+        self._stub(mock_client, monkeypatch, calls)
+        stream = mock_client.stream_cell_expression(cells=[(1, 10)])
+
+        stream.enrich()
+        stream.to_anndata()
+
+        assert len(calls) == 1
+
+    def test_write_h5ad_fetches_without_enrich(self, mock_client, monkeypatch, tmp_path):
+        calls = []
+        self._stub(mock_client, monkeypatch, calls)
+        path = tmp_path / "cells.h5ad"
+
+        mock_client.stream_cell_expression(cells=[(1, 10)]).write_h5ad(path)
+
+        assert len(calls) == 1
+        adata = ad.read_h5ad(path)
+        obs: Any = adata.obs
+        assert obs.loc["1:10", "cell_type"] == "B"
+
+    def test_opt_out_makes_no_request(self, mock_client, monkeypatch):
+        calls = []
+        self._stub(mock_client, monkeypatch, calls)
+        stream = mock_client.stream_cell_expression(
+            cells=[(1, 10), (2, 20)],
+            include_cell_metadata=False,
+        )
+
+        obs: Any = stream.to_anndata().obs
+        list(stream.iter_anndata(chunk_obs=1))
+
+        assert calls == []
+        assert "cell_type" not in obs.columns
+
+
 class TestCellMetadataEverywhere:
     def test_chunked_iter_anndata_carries_the_same_columns(self):
         chunks = list(
