@@ -268,6 +268,7 @@
 <span class="kn">import</span><span class="w"> </span><span class="nn">sqlite3</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">tempfile</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">zipfile</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collections.abc</span><span class="w"> </span><span class="kn">import</span> <span class="n">Mapping</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">TYPE_CHECKING</span><span class="p">,</span> <span class="n">Any</span><span class="p">,</span> <span class="n">Dict</span><span class="p">,</span> <span class="n">Iterable</span><span class="p">,</span> <span class="n">List</span><span class="p">,</span> <span class="n">Optional</span><span class="p">,</span> <span class="n">Tuple</span><span class="p">,</span> <span class="n">Union</span>
 
@@ -358,6 +359,124 @@
     <span class="k">if</span> <span class="n">meta</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="o">&lt;=</span> <span class="mi">1</span><span class="p">:</span>
         <span class="k">return</span> <span class="n">frame</span>
     <span class="k">return</span> <span class="n">frame</span><span class="o">.</span><span class="n">merge</span><span class="p">(</span><span class="n">meta</span><span class="p">,</span> <span class="n">on</span><span class="o">=</span><span class="s2">"sample_id"</span><span class="p">,</span> <span class="n">how</span><span class="o">=</span><span class="s2">"left"</span><span class="p">,</span> <span class="n">suffixes</span><span class="o">=</span><span class="p">(</span><span class="s2">""</span><span class="p">,</span> <span class="s2">"_metadata"</span><span class="p">))</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_attach_cell_metadata</span><span class="p">(</span><span class="n">adata</span><span class="p">:</span> <span class="n">ad</span><span class="o">.</span><span class="n">AnnData</span><span class="p">,</span> <span class="n">metadata</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ad</span><span class="o">.</span><span class="n">AnnData</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""Left-join per-cell metadata onto ``adata.obs`` without reordering rows.</span>
+
+<span class="sd">    ``metadata`` is a DataFrame with ``sample_id`` and ``cell_id`` columns (or</span>
+<span class="sd">    an equivalent two-level index) or a dict keyed by ``(sample_id, cell_id)``.</span>
+<span class="sd">    Every other column is added to ``obs`` under its own name. Cells without a</span>
+<span class="sd">    metadata row get ``NaN``; extra metadata rows are ignored; existing obs</span>
+<span class="sd">    columns are never replaced.</span>
+<span class="sd">    """</span>
+    <span class="n">meta</span> <span class="o">=</span> <span class="n">_cell_metadata_frame</span><span class="p">(</span><span class="n">metadata</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">meta</span><span class="o">.</span><span class="n">empty</span> <span class="ow">or</span> <span class="n">adata</span><span class="o">.</span><span class="n">n_obs</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">adata</span>
+    <span class="k">if</span> <span class="s2">"sample_id"</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">adata</span><span class="o">.</span><span class="n">obs</span><span class="o">.</span><span class="n">columns</span> <span class="ow">or</span> <span class="s2">"cell_id"</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">adata</span><span class="o">.</span><span class="n">obs</span><span class="o">.</span><span class="n">columns</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">adata</span>
+    <span class="n">extra</span> <span class="o">=</span> <span class="p">[</span>
+        <span class="n">column</span>
+        <span class="k">for</span> <span class="n">column</span> <span class="ow">in</span> <span class="n">meta</span><span class="o">.</span><span class="n">columns</span>
+        <span class="k">if</span> <span class="n">column</span> <span class="ow">not</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">"sample_id"</span><span class="p">,</span> <span class="s2">"cell_id"</span><span class="p">)</span> <span class="ow">and</span> <span class="n">column</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">adata</span><span class="o">.</span><span class="n">obs</span><span class="o">.</span><span class="n">columns</span>
+    <span class="p">]</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">extra</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">adata</span>
+
+    <span class="n">payload</span> <span class="o">=</span> <span class="n">_coerce_cell_keys</span><span class="p">(</span><span class="n">meta</span><span class="p">)</span>
+    <span class="n">payload</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">concat</span><span class="p">([</span><span class="n">payload</span><span class="p">,</span> <span class="n">meta</span><span class="p">[</span><span class="n">extra</span><span class="p">]</span><span class="o">.</span><span class="n">reset_index</span><span class="p">(</span><span class="n">drop</span><span class="o">=</span><span class="kc">True</span><span class="p">)],</span> <span class="n">axis</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+    <span class="n">payload</span> <span class="o">=</span> <span class="n">payload</span><span class="o">.</span><span class="n">drop_duplicates</span><span class="p">([</span><span class="s2">"sample_id"</span><span class="p">,</span> <span class="s2">"cell_id"</span><span class="p">],</span> <span class="n">keep</span><span class="o">=</span><span class="s2">"last"</span><span class="p">)</span>
+
+    <span class="n">obs</span> <span class="o">=</span> <span class="n">adata</span><span class="o">.</span><span class="n">obs</span><span class="o">.</span><span class="n">copy</span><span class="p">()</span>
+    <span class="n">obs</span><span class="p">[</span><span class="s2">"_malva_sample_key"</span><span class="p">]</span> <span class="o">=</span> <span class="n">_coerce_obs_id</span><span class="p">(</span><span class="n">obs</span><span class="p">[</span><span class="s2">"sample_id"</span><span class="p">])</span>
+    <span class="n">obs</span><span class="p">[</span><span class="s2">"_malva_cell_key"</span><span class="p">]</span> <span class="o">=</span> <span class="n">_coerce_obs_id</span><span class="p">(</span><span class="n">obs</span><span class="p">[</span><span class="s2">"cell_id"</span><span class="p">])</span>
+    <span class="n">merged</span> <span class="o">=</span> <span class="n">obs</span><span class="o">.</span><span class="n">merge</span><span class="p">(</span>
+        <span class="n">payload</span><span class="o">.</span><span class="n">rename</span><span class="p">(</span><span class="n">columns</span><span class="o">=</span><span class="p">{</span><span class="s2">"sample_id"</span><span class="p">:</span> <span class="s2">"_malva_sample_key"</span><span class="p">,</span> <span class="s2">"cell_id"</span><span class="p">:</span> <span class="s2">"_malva_cell_key"</span><span class="p">}),</span>
+        <span class="n">on</span><span class="o">=</span><span class="p">[</span><span class="s2">"_malva_sample_key"</span><span class="p">,</span> <span class="s2">"_malva_cell_key"</span><span class="p">],</span>
+        <span class="n">how</span><span class="o">=</span><span class="s2">"left"</span><span class="p">,</span>
+        <span class="n">sort</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="n">merged</span><span class="o">.</span><span class="n">index</span> <span class="o">=</span> <span class="n">adata</span><span class="o">.</span><span class="n">obs</span><span class="o">.</span><span class="n">index</span>
+    <span class="n">adata</span><span class="o">.</span><span class="n">obs</span> <span class="o">=</span> <span class="n">merged</span><span class="o">.</span><span class="n">drop</span><span class="p">(</span><span class="n">columns</span><span class="o">=</span><span class="p">[</span><span class="s2">"_malva_sample_key"</span><span class="p">,</span> <span class="s2">"_malva_cell_key"</span><span class="p">])</span>
+    <span class="k">return</span> <span class="n">adata</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_cell_metadata_frame</span><span class="p">(</span><span class="n">metadata</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""Normalise per-cell metadata to a frame with ``sample_id`` and ``cell_id``."""</span>
+    <span class="k">if</span> <span class="n">metadata</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">()</span>
+    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">metadata</span><span class="p">,</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">):</span>
+        <span class="n">frame</span> <span class="o">=</span> <span class="n">metadata</span><span class="o">.</span><span class="n">copy</span><span class="p">()</span>
+        <span class="k">if</span> <span class="n">frame</span><span class="o">.</span><span class="n">empty</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">()</span>
+    <span class="k">elif</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">metadata</span><span class="p">,</span> <span class="n">Mapping</span><span class="p">):</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">metadata</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">()</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="nb">all</span><span class="p">(</span><span class="nb">isinstance</span><span class="p">(</span><span class="n">key</span><span class="p">,</span> <span class="nb">tuple</span><span class="p">)</span> <span class="ow">and</span> <span class="nb">len</span><span class="p">(</span><span class="n">key</span><span class="p">)</span> <span class="o">==</span> <span class="mi">2</span> <span class="k">for</span> <span class="n">key</span> <span class="ow">in</span> <span class="n">metadata</span><span class="p">):</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">"cell_metadata dict keys must be (sample_id, cell_id) pairs"</span><span class="p">)</span>
+        <span class="n">rows</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="k">for</span> <span class="p">(</span><span class="n">sample_id</span><span class="p">,</span> <span class="n">cell_id</span><span class="p">),</span> <span class="n">value</span> <span class="ow">in</span> <span class="n">metadata</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+            <span class="n">row</span> <span class="o">=</span> <span class="nb">dict</span><span class="p">(</span><span class="n">value</span><span class="p">)</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">value</span><span class="p">,</span> <span class="n">Mapping</span><span class="p">)</span> <span class="k">else</span> <span class="p">{</span><span class="s2">"value"</span><span class="p">:</span> <span class="n">value</span><span class="p">}</span>
+            <span class="n">row</span><span class="p">[</span><span class="s2">"sample_id"</span><span class="p">]</span> <span class="o">=</span> <span class="n">sample_id</span>
+            <span class="n">row</span><span class="p">[</span><span class="s2">"cell_id"</span><span class="p">]</span> <span class="o">=</span> <span class="n">cell_id</span>
+            <span class="n">rows</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">row</span><span class="p">)</span>
+        <span class="n">frame</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">(</span><span class="n">rows</span><span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">TypeError</span><span class="p">(</span><span class="s2">"cell_metadata must be a DataFrame or a dict keyed by (sample_id, cell_id)"</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="s2">"sample_id"</span> <span class="ow">in</span> <span class="n">frame</span><span class="o">.</span><span class="n">columns</span> <span class="ow">and</span> <span class="s2">"cell_id"</span> <span class="ow">in</span> <span class="n">frame</span><span class="o">.</span><span class="n">columns</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">frame</span>
+    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">frame</span><span class="o">.</span><span class="n">index</span><span class="p">,</span> <span class="n">pd</span><span class="o">.</span><span class="n">MultiIndex</span><span class="p">)</span> <span class="ow">and</span> <span class="n">frame</span><span class="o">.</span><span class="n">index</span><span class="o">.</span><span class="n">nlevels</span> <span class="o">&gt;=</span> <span class="mi">2</span><span class="p">:</span>
+        <span class="n">frame</span> <span class="o">=</span> <span class="n">frame</span><span class="o">.</span><span class="n">reset_index</span><span class="p">()</span>
+        <span class="k">if</span> <span class="s2">"sample_id"</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">frame</span><span class="o">.</span><span class="n">columns</span> <span class="ow">or</span> <span class="s2">"cell_id"</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">frame</span><span class="o">.</span><span class="n">columns</span><span class="p">:</span>
+            <span class="n">frame</span> <span class="o">=</span> <span class="n">frame</span><span class="o">.</span><span class="n">rename</span><span class="p">(</span>
+                <span class="n">columns</span><span class="o">=</span><span class="p">{</span><span class="n">frame</span><span class="o">.</span><span class="n">columns</span><span class="p">[</span><span class="mi">0</span><span class="p">]:</span> <span class="s2">"sample_id"</span><span class="p">,</span> <span class="n">frame</span><span class="o">.</span><span class="n">columns</span><span class="p">[</span><span class="mi">1</span><span class="p">]:</span> <span class="s2">"cell_id"</span><span class="p">}</span>
+            <span class="p">)</span>
+        <span class="k">return</span> <span class="n">frame</span>
+    <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">"cell_metadata needs sample_id and cell_id columns or a two-level index"</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_coerce_cell_keys</span><span class="p">(</span><span class="n">frame</span><span class="p">:</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""Return sample/cell key columns with the same dtype rules as ``obs``."""</span>
+    <span class="k">return</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">(</span>
+        <span class="p">{</span>
+            <span class="s2">"sample_id"</span><span class="p">:</span> <span class="n">_coerce_obs_id</span><span class="p">(</span><span class="n">frame</span><span class="p">[</span><span class="s2">"sample_id"</span><span class="p">]),</span>
+            <span class="s2">"cell_id"</span><span class="p">:</span> <span class="n">_coerce_obs_id</span><span class="p">(</span><span class="n">frame</span><span class="p">[</span><span class="s2">"cell_id"</span><span class="p">]),</span>
+        <span class="p">}</span>
+    <span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_normalise_cell_pairs</span><span class="p">(</span><span class="n">cells</span><span class="p">:</span> <span class="n">Iterable</span><span class="p">[</span><span class="n">Any</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span><span class="n">Tuple</span><span class="p">[</span><span class="n">Any</span><span class="p">,</span> <span class="n">Any</span><span class="p">]]:</span>
+<span class="w">    </span><span class="sd">"""Turn cell selectors into ``(sample_id, cell_id)`` pairs."""</span>
+    <span class="n">pairs</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">Tuple</span><span class="p">[</span><span class="n">Any</span><span class="p">,</span> <span class="n">Any</span><span class="p">]]</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">cell</span> <span class="ow">in</span> <span class="n">cells</span><span class="p">:</span>
+        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">cell</span><span class="p">,</span> <span class="nb">dict</span><span class="p">):</span>
+            <span class="n">sample_id</span> <span class="o">=</span> <span class="n">cell</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"sample_id"</span><span class="p">)</span>
+            <span class="n">cell_id</span> <span class="o">=</span> <span class="n">cell</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"cell_id"</span><span class="p">)</span>
+        <span class="k">elif</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">cell</span><span class="p">,</span> <span class="p">(</span><span class="nb">tuple</span><span class="p">,</span> <span class="nb">list</span><span class="p">))</span> <span class="ow">and</span> <span class="nb">len</span><span class="p">(</span><span class="n">cell</span><span class="p">)</span> <span class="o">==</span> <span class="mi">2</span><span class="p">:</span>
+            <span class="n">sample_id</span><span class="p">,</span> <span class="n">cell_id</span> <span class="o">=</span> <span class="n">cell</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">sample_id</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">cell</span><span class="p">,</span> <span class="s2">"sample_id"</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+            <span class="n">cell_id</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">cell</span><span class="p">,</span> <span class="s2">"cell_id"</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">sample_id</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="n">cell_id</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                <span class="s2">"Each cell must be (sample_id, cell_id), a dict, or an object with those fields"</span>
+            <span class="p">)</span>
+        <span class="n">pairs</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="n">sample_id</span><span class="p">,</span> <span class="n">cell_id</span><span class="p">))</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">pairs</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">"cells must contain at least one cell"</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">pairs</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_restrict_cell_metadata</span><span class="p">(</span><span class="n">metadata</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="n">cells</span><span class="p">:</span> <span class="n">Iterable</span><span class="p">[</span><span class="n">Tuple</span><span class="p">[</span><span class="n">Any</span><span class="p">,</span> <span class="n">Any</span><span class="p">]])</span> <span class="o">-&gt;</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""Keep only metadata rows for the requested ``(sample_id, cell_id)`` pairs."""</span>
+    <span class="n">frame</span> <span class="o">=</span> <span class="n">_cell_metadata_frame</span><span class="p">(</span><span class="n">metadata</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">frame</span><span class="o">.</span><span class="n">empty</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">frame</span>
+    <span class="n">wanted</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">(</span><span class="n">_normalise_cell_pairs</span><span class="p">(</span><span class="n">cells</span><span class="p">),</span> <span class="n">columns</span><span class="o">=</span><span class="p">[</span><span class="s2">"sample_id"</span><span class="p">,</span> <span class="s2">"cell_id"</span><span class="p">])</span>
+    <span class="n">wanted</span> <span class="o">=</span> <span class="n">_coerce_cell_keys</span><span class="p">(</span><span class="n">wanted</span><span class="p">)</span><span class="o">.</span><span class="n">drop_duplicates</span><span class="p">()</span>
+    <span class="n">keep</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">MultiIndex</span><span class="o">.</span><span class="n">from_frame</span><span class="p">(</span><span class="n">_coerce_cell_keys</span><span class="p">(</span><span class="n">frame</span><span class="p">))</span><span class="o">.</span><span class="n">isin</span><span class="p">(</span><span class="n">pd</span><span class="o">.</span><span class="n">MultiIndex</span><span class="o">.</span><span class="n">from_frame</span><span class="p">(</span><span class="n">wanted</span><span class="p">))</span>
+    <span class="k">return</span> <span class="n">frame</span><span class="o">.</span><span class="n">loc</span><span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">keep</span><span class="p">)]</span><span class="o">.</span><span class="n">reset_index</span><span class="p">(</span><span class="n">drop</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
 
 
 <span class="k">def</span><span class="w"> </span><span class="nf">_empty_anndata</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n">ad</span><span class="o">.</span><span class="n">AnnData</span><span class="p">:</span>
@@ -1858,6 +1977,194 @@
     <span class="k">return</span> <span class="n">result</span>
 
 
+<span class="k">class</span><span class="w"> </span><span class="nc">_AnnDataAccumulator</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""Fold long-format expression batches into one cells × genes CSR matrix.</span>
+
+<span class="sd">    The accumulator is the single implementation behind</span>
+<span class="sd">    :meth:`CellExpressionStream.to_anndata` and the chunked mode of</span>
+<span class="sd">    :meth:`CellExpressionStream.iter_anndata`. It keeps</span>
+
+<span class="sd">    * the observation axis in first-seen order, named ``sample_id:cell_id``;</span>
+<span class="sd">    * the variable axis in first-seen order, so the column of a gene that has</span>
+<span class="sd">      already been seen never moves;</span>
+<span class="sd">    * one CSR block per ingested batch with ``cells_in_batch`` rows and every</span>
+<span class="sd">      gene discovered so far as columns.</span>
+
+<span class="sd">    Blocks are widened by metadata only when a batch introduces new genes and</span>
+<span class="sd">    stacked with a single :func:`scipy.sparse.vstack` in :meth:`finish`, so the</span>
+<span class="sd">    stream never materialises a concatenated copy of all batches. Cells split</span>
+<span class="sd">    across server batches are folded into one observation row at that point.</span>
+<span class="sd">    """</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="o">*</span><span class="p">,</span>
+        <span class="n">sample_metadata</span><span class="p">:</span> <span class="n">Any</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">uns</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_sample_metadata</span> <span class="o">=</span> <span class="n">sample_metadata</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_uns</span> <span class="o">=</span> <span class="n">uns</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_obs_keys</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">Index</span><span class="p">([],</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">object</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_obs_samples</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_obs_cells</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_var_names</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">Index</span><span class="p">([],</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">object</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_blocks</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">sparse</span><span class="o">.</span><span class="n">csr_matrix</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_block_rows</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">n_obs</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""Number of distinct observations ingested so far."""</span>
+        <span class="k">return</span> <span class="nb">int</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_obs_keys</span><span class="o">.</span><span class="n">size</span><span class="p">)</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">n_vars</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""Number of distinct genes discovered so far."""</span>
+        <span class="k">return</span> <span class="nb">int</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_var_names</span><span class="o">.</span><span class="n">size</span><span class="p">)</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">bytes_estimate</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""Approximate memory held by the blocks and the label indexes.</span>
+
+<span class="sd">        Counts the sparse arrays exactly and adds a rough per-label overhead,</span>
+<span class="sd">        which is enough to drive a progress bar without scanning every string.</span>
+<span class="sd">        """</span>
+        <span class="n">sparse_bytes</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span>
+            <span class="n">block</span><span class="o">.</span><span class="n">data</span><span class="o">.</span><span class="n">nbytes</span> <span class="o">+</span> <span class="n">block</span><span class="o">.</span><span class="n">indices</span><span class="o">.</span><span class="n">nbytes</span> <span class="o">+</span> <span class="n">block</span><span class="o">.</span><span class="n">indptr</span><span class="o">.</span><span class="n">nbytes</span> <span class="k">for</span> <span class="n">block</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_blocks</span>
+        <span class="p">)</span>
+        <span class="k">return</span> <span class="nb">int</span><span class="p">(</span><span class="n">sparse_bytes</span> <span class="o">+</span> <span class="mi">64</span> <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">n_obs</span> <span class="o">+</span> <span class="mi">64</span> <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">n_vars</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">add</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">batch</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="s2">"_AnnDataAccumulator"</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""Ingest one long-format batch without iterating its rows in Python."""</span>
+        <span class="k">if</span> <span class="n">batch</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="n">batch</span><span class="o">.</span><span class="n">empty</span><span class="p">:</span>
+            <span class="k">return</span> <span class="bp">self</span>
+        <span class="n">required</span> <span class="o">=</span> <span class="p">{</span><span class="s2">"sample_id"</span><span class="p">,</span> <span class="s2">"cell_id"</span><span class="p">,</span> <span class="s2">"gene"</span><span class="p">,</span> <span class="s2">"value"</span><span class="p">}</span>
+        <span class="n">missing</span> <span class="o">=</span> <span class="n">required</span><span class="o">.</span><span class="n">difference</span><span class="p">(</span><span class="n">batch</span><span class="o">.</span><span class="n">columns</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">missing</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                <span class="s2">"Expression batches must contain sample_id, cell_id, gene, and value "</span>
+                <span class="sa">f</span><span class="s2">"columns (missing: </span><span class="si">{</span><span class="s1">', '</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="nb">sorted</span><span class="p">(</span><span class="n">missing</span><span class="p">))</span><span class="si">}</span><span class="s2">)"</span>
+            <span class="p">)</span>
+
+        <span class="n">obs_keys</span> <span class="o">=</span> <span class="n">batch</span><span class="p">[</span><span class="s2">"sample_id"</span><span class="p">]</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="nb">str</span><span class="p">)</span> <span class="o">+</span> <span class="s2">":"</span> <span class="o">+</span> <span class="n">batch</span><span class="p">[</span><span class="s2">"cell_id"</span><span class="p">]</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="nb">str</span><span class="p">)</span>
+        <span class="n">local_obs</span><span class="p">,</span> <span class="n">unique_obs</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">factorize</span><span class="p">(</span><span class="n">obs_keys</span><span class="p">,</span> <span class="n">sort</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+        <span class="n">obs_codes</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_obs_keys</span><span class="o">.</span><span class="n">get_indexer</span><span class="p">(</span><span class="n">unique_obs</span><span class="p">)</span>
+        <span class="n">new_obs</span> <span class="o">=</span> <span class="n">obs_codes</span> <span class="o">&lt;</span> <span class="mi">0</span>
+        <span class="k">if</span> <span class="n">new_obs</span><span class="o">.</span><span class="n">any</span><span class="p">():</span>
+            <span class="c1"># ``unique_obs`` and the first occurrence of each key follow the same</span>
+            <span class="c1"># row order, so the raw identifiers can be selected with one mask.</span>
+            <span class="n">first</span> <span class="o">=</span> <span class="n">batch</span><span class="o">.</span><span class="n">loc</span><span class="p">[</span><span class="o">~</span><span class="n">obs_keys</span><span class="o">.</span><span class="n">duplicated</span><span class="p">(),</span> <span class="p">[</span><span class="s2">"sample_id"</span><span class="p">,</span> <span class="s2">"cell_id"</span><span class="p">]]</span>
+            <span class="n">obs_codes</span><span class="p">[</span><span class="n">new_obs</span><span class="p">]</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">n_obs</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">n_obs</span> <span class="o">+</span> <span class="nb">int</span><span class="p">(</span><span class="n">new_obs</span><span class="o">.</span><span class="n">sum</span><span class="p">()))</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_obs_keys</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_obs_keys</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">pd</span><span class="o">.</span><span class="n">Index</span><span class="p">(</span><span class="n">unique_obs</span><span class="p">[</span><span class="n">new_obs</span><span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">object</span><span class="p">))</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_obs_samples</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">first</span><span class="p">[</span><span class="s2">"sample_id"</span><span class="p">]</span><span class="o">.</span><span class="n">to_numpy</span><span class="p">()[</span><span class="n">new_obs</span><span class="p">])</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_obs_cells</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">first</span><span class="p">[</span><span class="s2">"cell_id"</span><span class="p">]</span><span class="o">.</span><span class="n">to_numpy</span><span class="p">()[</span><span class="n">new_obs</span><span class="p">])</span>
+
+        <span class="n">genes</span> <span class="o">=</span> <span class="n">batch</span><span class="p">[</span><span class="s2">"gene"</span><span class="p">]</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="nb">str</span><span class="p">)</span>
+        <span class="n">local_var</span><span class="p">,</span> <span class="n">unique_genes</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">factorize</span><span class="p">(</span><span class="n">genes</span><span class="p">,</span> <span class="n">sort</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+        <span class="n">var_codes</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_var_names</span><span class="o">.</span><span class="n">get_indexer</span><span class="p">(</span><span class="n">unique_genes</span><span class="p">)</span>
+        <span class="n">new_var</span> <span class="o">=</span> <span class="n">var_codes</span> <span class="o">&lt;</span> <span class="mi">0</span>
+        <span class="k">if</span> <span class="n">new_var</span><span class="o">.</span><span class="n">any</span><span class="p">():</span>
+            <span class="n">var_codes</span><span class="p">[</span><span class="n">new_var</span><span class="p">]</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">n_vars</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">n_vars</span> <span class="o">+</span> <span class="nb">int</span><span class="p">(</span><span class="n">new_var</span><span class="o">.</span><span class="n">sum</span><span class="p">()))</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_var_names</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_var_names</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">pd</span><span class="o">.</span><span class="n">Index</span><span class="p">(</span><span class="n">unique_genes</span><span class="p">[</span><span class="n">new_var</span><span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">object</span><span class="p">))</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_widen_blocks</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">n_vars</span><span class="p">)</span>
+
+        <span class="n">values</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">to_numeric</span><span class="p">(</span><span class="n">batch</span><span class="p">[</span><span class="s2">"value"</span><span class="p">],</span> <span class="n">errors</span><span class="o">=</span><span class="s2">"coerce"</span><span class="p">)</span><span class="o">.</span><span class="n">fillna</span><span class="p">(</span><span class="mf">0.0</span><span class="p">)</span>
+        <span class="n">block</span> <span class="o">=</span> <span class="n">sparse</span><span class="o">.</span><span class="n">coo_matrix</span><span class="p">(</span>
+            <span class="p">(</span>
+                <span class="n">values</span><span class="o">.</span><span class="n">to_numpy</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">),</span>
+                <span class="p">(</span><span class="n">local_obs</span><span class="p">,</span> <span class="n">var_codes</span><span class="p">[</span><span class="n">local_var</span><span class="p">]),</span>
+            <span class="p">),</span>
+            <span class="n">shape</span><span class="o">=</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">unique_obs</span><span class="p">),</span> <span class="bp">self</span><span class="o">.</span><span class="n">n_vars</span><span class="p">),</span>
+            <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">,</span>
+        <span class="p">)</span><span class="o">.</span><span class="n">tocsr</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_blocks</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">block</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_block_rows</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">obs_codes</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">int64</span><span class="p">))</span>
+        <span class="k">return</span> <span class="bp">self</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_widen_blocks</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">n_vars</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""Extend existing blocks to ``n_vars`` columns without copying data.</span>
+
+<span class="sd">        New genes are appended to the variable axis, so a block keeps its data,</span>
+<span class="sd">        indices and row pointers; only the declared shape changes.</span>
+<span class="sd">        """</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_blocks</span> <span class="o">=</span> <span class="p">[</span>
+            <span class="n">block</span>
+            <span class="k">if</span> <span class="n">block</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="o">==</span> <span class="n">n_vars</span>
+            <span class="k">else</span> <span class="n">sparse</span><span class="o">.</span><span class="n">csr_matrix</span><span class="p">(</span>
+                <span class="p">(</span><span class="n">block</span><span class="o">.</span><span class="n">data</span><span class="p">,</span> <span class="n">block</span><span class="o">.</span><span class="n">indices</span><span class="p">,</span> <span class="n">block</span><span class="o">.</span><span class="n">indptr</span><span class="p">),</span>
+                <span class="n">shape</span><span class="o">=</span><span class="p">(</span><span class="n">block</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">n_vars</span><span class="p">),</span>
+                <span class="n">copy</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+            <span class="p">)</span>
+            <span class="k">for</span> <span class="n">block</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_blocks</span>
+        <span class="p">]</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_stack</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">sparse</span><span class="o">.</span><span class="n">csr_matrix</span><span class="p">:</span>
+        <span class="n">matrix</span> <span class="o">=</span> <span class="n">sparse</span><span class="o">.</span><span class="n">vstack</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_blocks</span><span class="p">,</span> <span class="nb">format</span><span class="o">=</span><span class="s2">"csr"</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">matrix</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">==</span> <span class="bp">self</span><span class="o">.</span><span class="n">n_obs</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">matrix</span>
+        <span class="c1"># A cell whose entries arrived in more than one batch owns one row per</span>
+        <span class="c1"># block. Sum those rows back into the single observation row.</span>
+        <span class="n">rows</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">concatenate</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_block_rows</span><span class="p">)</span>
+        <span class="n">selector</span> <span class="o">=</span> <span class="n">sparse</span><span class="o">.</span><span class="n">csr_matrix</span><span class="p">(</span>
+            <span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">ones</span><span class="p">(</span><span class="n">rows</span><span class="o">.</span><span class="n">size</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">),</span> <span class="p">(</span><span class="n">rows</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">rows</span><span class="o">.</span><span class="n">size</span><span class="p">))),</span>
+            <span class="n">shape</span><span class="o">=</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">n_obs</span><span class="p">,</span> <span class="n">rows</span><span class="o">.</span><span class="n">size</span><span class="p">),</span>
+            <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="k">return</span> <span class="p">(</span><span class="n">selector</span> <span class="o">@</span> <span class="n">matrix</span><span class="p">)</span><span class="o">.</span><span class="n">tocsr</span><span class="p">()</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">finish</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">sort</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ad</span><span class="o">.</span><span class="n">AnnData</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""Return the AnnData for everything ingested so far.</span>
+
+<span class="sd">        With ``sort=False`` observations and variables keep first-seen order.</span>
+<span class="sd">        With ``sort=True`` both axes are sorted by name, which is the order</span>
+<span class="sd">        :meth:`CellExpressionStream.to_anndata` has always returned.</span>
+<span class="sd">        """</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">n_obs</span> <span class="o">==</span> <span class="mi">0</span> <span class="ow">or</span> <span class="bp">self</span><span class="o">.</span><span class="n">n_vars</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">_empty_anndata</span><span class="p">()</span>
+        <span class="n">obs_keys</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_obs_keys</span><span class="o">.</span><span class="n">to_numpy</span><span class="p">()</span>
+        <span class="n">obs_order</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">n_obs</span><span class="p">)</span>
+        <span class="n">var_order</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">n_vars</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">sort</span><span class="p">:</span>
+            <span class="n">obs_order</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">argsort</span><span class="p">(</span><span class="n">obs_keys</span><span class="p">,</span> <span class="n">kind</span><span class="o">=</span><span class="s2">"stable"</span><span class="p">)</span>
+            <span class="n">var_order</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">argsort</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_var_names</span><span class="o">.</span><span class="n">to_numpy</span><span class="p">(),</span> <span class="n">kind</span><span class="o">=</span><span class="s2">"stable"</span><span class="p">)</span>
+
+        <span class="n">matrix</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_stack</span><span class="p">()</span>
+        <span class="k">if</span> <span class="n">sort</span><span class="p">:</span>
+            <span class="n">matrix</span> <span class="o">=</span> <span class="n">matrix</span><span class="p">[</span><span class="n">obs_order</span><span class="p">][:,</span> <span class="n">var_order</span><span class="p">]</span>
+
+        <span class="n">sample_values</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">concatenate</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_obs_samples</span><span class="p">)[</span><span class="n">obs_order</span><span class="p">]</span>
+        <span class="n">cell_values</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">concatenate</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_obs_cells</span><span class="p">)[</span><span class="n">obs_order</span><span class="p">]</span>
+        <span class="n">obs</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">(</span>
+            <span class="p">{</span><span class="s2">"sample_id"</span><span class="p">:</span> <span class="n">sample_values</span><span class="p">,</span> <span class="s2">"cell_id"</span><span class="p">:</span> <span class="n">cell_values</span><span class="p">},</span>
+            <span class="n">index</span><span class="o">=</span><span class="n">pd</span><span class="o">.</span><span class="n">Index</span><span class="p">(</span><span class="n">_make_unique_names</span><span class="p">(</span><span class="n">obs_keys</span><span class="p">[</span><span class="n">obs_order</span><span class="p">]),</span> <span class="n">name</span><span class="o">=</span><span class="s2">"obs_names"</span><span class="p">),</span>
+        <span class="p">)</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_sample_metadata</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">obs</span> <span class="o">=</span> <span class="n">_merge_sample_metadata</span><span class="p">(</span><span class="n">obs</span><span class="o">.</span><span class="n">reset_index</span><span class="p">(),</span> <span class="bp">self</span><span class="o">.</span><span class="n">_sample_metadata</span><span class="p">)</span>
+            <span class="n">obs</span> <span class="o">=</span> <span class="n">obs</span><span class="o">.</span><span class="n">set_index</span><span class="p">(</span><span class="s2">"obs_names"</span><span class="p">)</span>
+        <span class="n">obs</span><span class="p">[</span><span class="s2">"sample_id"</span><span class="p">]</span> <span class="o">=</span> <span class="n">_coerce_obs_id</span><span class="p">(</span><span class="n">obs</span><span class="p">[</span><span class="s2">"sample_id"</span><span class="p">])</span>
+        <span class="n">obs</span><span class="p">[</span><span class="s2">"cell_id"</span><span class="p">]</span> <span class="o">=</span> <span class="n">_coerce_obs_id</span><span class="p">(</span><span class="n">obs</span><span class="p">[</span><span class="s2">"cell_id"</span><span class="p">])</span>
+
+        <span class="n">var</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">(</span><span class="n">index</span><span class="o">=</span><span class="n">pd</span><span class="o">.</span><span class="n">Index</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_var_names</span><span class="o">.</span><span class="n">to_numpy</span><span class="p">()[</span><span class="n">var_order</span><span class="p">],</span> <span class="n">name</span><span class="o">=</span><span class="s2">"gene"</span><span class="p">))</span>
+        <span class="n">result</span> <span class="o">=</span> <span class="n">ad</span><span class="o">.</span><span class="n">AnnData</span><span class="p">(</span><span class="n">X</span><span class="o">=</span><span class="n">matrix</span><span class="p">,</span> <span class="n">obs</span><span class="o">=</span><span class="n">obs</span><span class="p">,</span> <span class="n">var</span><span class="o">=</span><span class="n">var</span><span class="p">)</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_uns</span><span class="p">:</span>
+            <span class="n">result</span><span class="o">.</span><span class="n">uns</span><span class="p">[</span><span class="s2">"malva"</span><span class="p">]</span> <span class="o">=</span> <span class="n">_json_safe</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_uns</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">result</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">flush</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ad</span><span class="o">.</span><span class="n">AnnData</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""Return the current chunk and start a new one on the same var axis.</span>
+
+<span class="sd">        Observations and blocks are cleared; the genes discovered so far stay,</span>
+<span class="sd">        so the next chunk keeps their column positions and appends new genes at</span>
+<span class="sd">        the end.</span>
+<span class="sd">        """</span>
+        <span class="n">chunk</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">finish</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_obs_keys</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">Index</span><span class="p">([],</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">object</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_obs_samples</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_obs_cells</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_blocks</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_block_rows</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="k">return</span> <span class="n">chunk</span>
+
+
 <div class="viewcode-block" id="CellExpressionStream">
 <a class="viewcode-back" href="../../api/malva_client.models.html#malva_client.models.CellExpressionStream">[docs]</a>
 <span class="k">class</span><span class="w"> </span><span class="nc">CellExpressionStream</span><span class="p">:</span>
@@ -1867,6 +2174,13 @@
 <span class="sd">    per server batch with ``sample_id``, ``cell_id``, ``store_index``, ``gene``</span>
 <span class="sd">    and ``value`` columns. The convenience methods materialise those batches as</span>
 <span class="sd">    standard AnnData objects.</span>
+
+<span class="sd">    Per-cell metadata supplied as ``cell_metadata`` (a DataFrame or a dict keyed</span>
+<span class="sd">    by ``(sample_id, cell_id)``) is joined into ``obs`` by every conversion</span>
+<span class="sd">    method. When the stream was built from an explicit ``cells`` list and no</span>
+<span class="sd">    metadata was supplied, the first conversion fetches it once with</span>
+<span class="sd">    ``MalvaClient.get_cells_by_metadata``; :meth:`enrich` shares that state.</span>
+<span class="sd">    Pass ``include_cell_metadata=False`` to skip both the fetch and the join.</span>
 <span class="sd">    """</span>
 
 <div class="viewcode-block" id="CellExpressionStream.__init__">
@@ -1880,6 +2194,9 @@
         <span class="n">sample_ids</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">List</span><span class="p">[</span><span class="n">Any</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
         <span class="n">gene_ids</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
         <span class="n">sample_metadata</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Any</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">cells</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Iterable</span><span class="p">[</span><span class="n">Any</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">cell_metadata</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Any</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">include_cell_metadata</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
     <span class="p">):</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">_batches</span> <span class="o">=</span> <span class="n">batches</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">client</span> <span class="o">=</span> <span class="n">client</span>
@@ -1887,6 +2204,10 @@
         <span class="bp">self</span><span class="o">.</span><span class="n">sample_ids</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">sample_ids</span><span class="p">)</span> <span class="k">if</span> <span class="n">sample_ids</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="kc">None</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">gene_ids</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">gene_ids</span><span class="p">)</span> <span class="k">if</span> <span class="n">gene_ids</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="kc">None</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">_sample_metadata</span> <span class="o">=</span> <span class="n">_metadata_to_frame</span><span class="p">(</span><span class="n">sample_metadata</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_cells</span> <span class="o">=</span> <span class="n">_normalise_cell_pairs</span><span class="p">(</span><span class="n">cells</span><span class="p">)</span> <span class="k">if</span> <span class="n">cells</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="kc">None</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_cell_metadata</span> <span class="o">=</span> <span class="n">_cell_metadata_frame</span><span class="p">(</span><span class="n">cell_metadata</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">include_cell_metadata</span> <span class="o">=</span> <span class="nb">bool</span><span class="p">(</span><span class="n">include_cell_metadata</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_cell_metadata_fetched</span> <span class="o">=</span> <span class="kc">False</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">_enriched</span> <span class="o">=</span> <span class="kc">False</span></div>
 
 
@@ -1897,10 +2218,29 @@
     <span class="k">def</span><span class="w"> </span><span class="fm">__repr__</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
         <span class="k">return</span> <span class="sa">f</span><span class="s2">"CellExpressionStream(dataset_id=</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">dataset_id</span><span class="si">!r}</span><span class="s2">)"</span>
 
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">cell_metadata</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""Resolved per-cell metadata, empty when none was supplied or fetched."""</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_cell_metadata</span><span class="o">.</span><span class="n">copy</span><span class="p">()</span>
+
 <div class="viewcode-block" id="CellExpressionStream.enrich">
 <a class="viewcode-back" href="../../api/malva_client.models.html#malva_client.models.CellExpressionStream.enrich">[docs]</a>
-    <span class="k">def</span><span class="w"> </span><span class="nf">enrich</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">sample_metadata</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Union</span><span class="p">[</span><span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">,</span> <span class="n">Dict</span><span class="p">[</span><span class="n">Any</span><span class="p">,</span> <span class="n">Any</span><span class="p">]]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">):</span>
-<span class="w">        </span><span class="sd">"""Attach local sample metadata used by the AnnData conversion methods."""</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">enrich</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">sample_metadata</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Union</span><span class="p">[</span><span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">,</span> <span class="n">Dict</span><span class="p">[</span><span class="n">Any</span><span class="p">,</span> <span class="n">Any</span><span class="p">]]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">cell_metadata</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Any</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="p">):</span>
+<span class="w">        </span><span class="sd">"""Attach metadata used by the AnnData conversion methods.</span>
+
+<span class="sd">        ``sample_metadata`` is keyed by ``sample_id``. ``cell_metadata`` is a</span>
+<span class="sd">        DataFrame or dict keyed by ``(sample_id, cell_id)`` and is joined into</span>
+<span class="sd">        ``obs``. When the stream was created from an explicit ``cells`` list and</span>
+<span class="sd">        no cell metadata is available yet, the client fetches it once for those</span>
+<span class="sd">        cells with ``get_cells_by_metadata(..., include_cell_metadata=True)``.</span>
+<span class="sd">        The conversion methods do this automatically; calling ``enrich`` is only</span>
+<span class="sd">        needed to supply metadata or fetch it ahead of time.</span>
+<span class="sd">        ``include_cell_metadata=False`` skips that fetch.</span>
+<span class="sd">        """</span>
         <span class="k">if</span> <span class="n">sample_metadata</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
             <span class="n">meta</span> <span class="o">=</span> <span class="n">_metadata_to_frame</span><span class="p">(</span><span class="n">sample_metadata</span><span class="p">)</span>
             <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_sample_metadata</span><span class="o">.</span><span class="n">empty</span><span class="p">:</span>
@@ -1909,6 +2249,17 @@
                 <span class="bp">self</span><span class="o">.</span><span class="n">_sample_metadata</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">concat</span><span class="p">(</span>
                     <span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">_sample_metadata</span><span class="p">,</span> <span class="n">meta</span><span class="p">],</span> <span class="n">ignore_index</span><span class="o">=</span><span class="kc">True</span>
                 <span class="p">)</span><span class="o">.</span><span class="n">drop_duplicates</span><span class="p">(</span><span class="s2">"sample_id"</span><span class="p">,</span> <span class="n">keep</span><span class="o">=</span><span class="s2">"last"</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">cell_metadata</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">incoming</span> <span class="o">=</span> <span class="n">_cell_metadata_frame</span><span class="p">(</span><span class="n">cell_metadata</span><span class="p">)</span>
+            <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_cell_metadata</span><span class="o">.</span><span class="n">empty</span><span class="p">:</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_cell_metadata</span> <span class="o">=</span> <span class="n">incoming</span>
+            <span class="k">elif</span> <span class="ow">not</span> <span class="n">incoming</span><span class="o">.</span><span class="n">empty</span><span class="p">:</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_cell_metadata</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">concat</span><span class="p">(</span>
+                    <span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">_cell_metadata</span><span class="p">,</span> <span class="n">incoming</span><span class="p">],</span> <span class="n">ignore_index</span><span class="o">=</span><span class="kc">True</span>
+                <span class="p">)</span><span class="o">.</span><span class="n">drop_duplicates</span><span class="p">([</span><span class="s2">"sample_id"</span><span class="p">,</span> <span class="s2">"cell_id"</span><span class="p">],</span> <span class="n">keep</span><span class="o">=</span><span class="s2">"last"</span><span class="p">)</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">_ensure_enriched</span><span class="p">()</span>
 
         <span class="k">if</span> <span class="p">(</span>
             <span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_sample_metadata</span><span class="o">.</span><span class="n">empty</span> <span class="ow">or</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">_enriched</span><span class="p">)</span>
@@ -1937,48 +2288,43 @@
         <span class="k">return</span> <span class="bp">self</span></div>
 
 
-    <span class="k">def</span><span class="w"> </span><span class="nf">_collect_parts</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">aggregate</span><span class="p">:</span> <span class="nb">bool</span><span class="p">):</span>
-        <span class="n">sample_parts</span> <span class="o">=</span> <span class="p">[]</span>
-        <span class="n">cell_parts</span> <span class="o">=</span> <span class="p">[]</span>
-        <span class="n">gene_parts</span> <span class="o">=</span> <span class="p">[]</span>
-        <span class="n">value_parts</span> <span class="o">=</span> <span class="p">[]</span>
-        <span class="k">for</span> <span class="n">batch</span> <span class="ow">in</span> <span class="bp">self</span><span class="p">:</span>
-            <span class="k">if</span> <span class="n">batch</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="n">batch</span><span class="o">.</span><span class="n">empty</span><span class="p">:</span>
-                <span class="k">continue</span>
-            <span class="n">required</span> <span class="o">=</span> <span class="p">{</span><span class="s2">"sample_id"</span><span class="p">,</span> <span class="s2">"cell_id"</span><span class="p">,</span> <span class="s2">"gene"</span><span class="p">,</span> <span class="s2">"value"</span><span class="p">}</span>
-            <span class="n">missing</span> <span class="o">=</span> <span class="n">required</span><span class="o">.</span><span class="n">difference</span><span class="p">(</span><span class="n">batch</span><span class="o">.</span><span class="n">columns</span><span class="p">)</span>
-            <span class="k">if</span> <span class="n">missing</span><span class="p">:</span>
-                <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
-                    <span class="s2">"Expression batches must contain sample_id, cell_id, gene, and value "</span>
-                    <span class="sa">f</span><span class="s2">"columns (missing: </span><span class="si">{</span><span class="s1">', '</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="nb">sorted</span><span class="p">(</span><span class="n">missing</span><span class="p">))</span><span class="si">}</span><span class="s2">)"</span>
-                <span class="p">)</span>
-            <span class="k">if</span> <span class="n">aggregate</span><span class="p">:</span>
-                <span class="n">sample_parts</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">batch</span><span class="p">[</span><span class="s2">"sample_id"</span><span class="p">]</span><span class="o">.</span><span class="n">to_numpy</span><span class="p">(</span><span class="n">copy</span><span class="o">=</span><span class="kc">True</span><span class="p">))</span>
-                <span class="n">cell_parts</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">batch</span><span class="p">[</span><span class="s2">"cell_id"</span><span class="p">]</span><span class="o">.</span><span class="n">to_numpy</span><span class="p">(</span><span class="n">copy</span><span class="o">=</span><span class="kc">True</span><span class="p">))</span>
-                <span class="n">gene_parts</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">batch</span><span class="p">[</span><span class="s2">"gene"</span><span class="p">]</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="nb">str</span><span class="p">)</span><span class="o">.</span><span class="n">to_numpy</span><span class="p">(</span><span class="n">copy</span><span class="o">=</span><span class="kc">True</span><span class="p">))</span>
-                <span class="n">value_parts</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
-                    <span class="n">pd</span><span class="o">.</span><span class="n">to_numeric</span><span class="p">(</span><span class="n">batch</span><span class="p">[</span><span class="s2">"value"</span><span class="p">],</span> <span class="n">errors</span><span class="o">=</span><span class="s2">"coerce"</span><span class="p">)</span>
-                    <span class="o">.</span><span class="n">fillna</span><span class="p">(</span><span class="mf">0.0</span><span class="p">)</span>
-                    <span class="o">.</span><span class="n">to_numpy</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
-                <span class="p">)</span>
-            <span class="k">else</span><span class="p">:</span>
-                <span class="k">yield</span> <span class="n">batch</span>
-        <span class="k">if</span> <span class="n">aggregate</span><span class="p">:</span>
-            <span class="k">if</span> <span class="ow">not</span> <span class="n">sample_parts</span><span class="p">:</span>
-                <span class="k">yield</span> <span class="n">_empty_anndata</span><span class="p">()</span>
-                <span class="k">return</span>
-            <span class="n">sample_ids</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">concatenate</span><span class="p">(</span><span class="n">sample_parts</span><span class="p">)</span>
-            <span class="n">cell_ids</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">concatenate</span><span class="p">(</span><span class="n">cell_parts</span><span class="p">)</span>
-            <span class="n">genes</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">concatenate</span><span class="p">(</span><span class="n">gene_parts</span><span class="p">)</span>
-            <span class="n">values</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">concatenate</span><span class="p">(</span><span class="n">value_parts</span><span class="p">)</span>
-            <span class="k">yield</span> <span class="n">_arrays_to_anndata</span><span class="p">(</span>
-                <span class="n">sample_ids</span><span class="p">,</span>
-                <span class="n">cell_ids</span><span class="p">,</span>
-                <span class="n">genes</span><span class="p">,</span>
-                <span class="n">values</span><span class="p">,</span>
-                <span class="n">sample_metadata</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">_sample_metadata</span><span class="p">,</span>
-                <span class="n">uns</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">_uns</span><span class="p">(),</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">_ensure_enriched</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">"CellExpressionStream"</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""Fetch per-cell metadata once, before any AnnData conversion.</span>
+
+<span class="sd">        The conversion methods call this so a stream built from an explicit</span>
+<span class="sd">        ``cells`` list gets ``cell_type``, ``total_counts`` and the other</span>
+<span class="sd">        metadata fields without an explicit :meth:`enrich`. ``enrich`` shares</span>
+<span class="sd">        this state, so mixing conversions never repeats the request.</span>
+<span class="sd">        """</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_cell_metadata_fetched</span><span class="p">:</span>
+            <span class="k">return</span> <span class="bp">self</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_cell_metadata_fetched</span> <span class="o">=</span> <span class="kc">True</span>
+        <span class="k">if</span> <span class="p">(</span>
+            <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">include_cell_metadata</span>
+            <span class="ow">or</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">_cell_metadata</span><span class="o">.</span><span class="n">empty</span>
+            <span class="ow">or</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">_cells</span>
+            <span class="ow">or</span> <span class="bp">self</span><span class="o">.</span><span class="n">client</span> <span class="ow">is</span> <span class="kc">None</span>
+        <span class="p">):</span>
+            <span class="k">return</span> <span class="bp">self</span>
+
+        <span class="n">sample_ids</span> <span class="o">=</span> <span class="nb">sorted</span><span class="p">({</span><span class="nb">int</span><span class="p">(</span><span class="n">sample_id</span><span class="p">)</span> <span class="k">for</span> <span class="n">sample_id</span><span class="p">,</span> <span class="n">_</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_cells</span><span class="p">})</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">fetched</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">client</span><span class="o">.</span><span class="n">get_cells_by_metadata</span><span class="p">(</span>
+                <span class="n">sample_ids</span><span class="o">=</span><span class="n">sample_ids</span><span class="p">,</span>
+                <span class="n">include_cell_metadata</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
             <span class="p">)</span>
+        <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">exc</span><span class="p">:</span>  <span class="c1"># pragma: no cover - network failure path</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="s2">"Could not fetch cell metadata: </span><span class="si">%s</span><span class="s2">"</span><span class="p">,</span> <span class="n">exc</span><span class="p">)</span>
+            <span class="k">return</span> <span class="bp">self</span>
+        <span class="k">if</span> <span class="n">fetched</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">fetched</span><span class="o">.</span><span class="n">empty</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_cell_metadata</span> <span class="o">=</span> <span class="n">_restrict_cell_metadata</span><span class="p">(</span><span class="n">fetched</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">_cells</span><span class="p">)</span>
+        <span class="k">return</span> <span class="bp">self</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_with_cell_metadata</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">adata</span><span class="p">:</span> <span class="n">ad</span><span class="o">.</span><span class="n">AnnData</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ad</span><span class="o">.</span><span class="n">AnnData</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""Join the resolved per-cell metadata unless the caller opted out."""</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">include_cell_metadata</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">adata</span>
+        <span class="k">return</span> <span class="n">_attach_cell_metadata</span><span class="p">(</span><span class="n">adata</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">_cell_metadata</span><span class="p">)</span>
 
     <span class="k">def</span><span class="w"> </span><span class="nf">_uns</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]:</span>
         <span class="k">return</span> <span class="p">{</span>
@@ -1994,31 +2340,83 @@
     <span class="k">def</span><span class="w"> </span><span class="nf">to_anndata</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ad</span><span class="o">.</span><span class="n">AnnData</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">"""Materialise the full stream as a cells × genes sparse AnnData.</span>
 
-<span class="sd">        Observation names are ``sample_id:cell_id`` and variables are genes.</span>
-<span class="sd">        This is a terminal operation: the whole stream is consumed.</span>
+<span class="sd">        Observation names are ``sample_id:cell_id`` and variables are genes,</span>
+<span class="sd">        both in sorted order. The stream is folded into per-batch CSR blocks as</span>
+<span class="sd">        it arrives, so peak memory stays close to one copy of the expression</span>
+<span class="sd">        data instead of holding every batch plus a concatenated copy. This is a</span>
+<span class="sd">        terminal operation: the whole stream is consumed and cannot be</span>
+<span class="sd">        re-converted. Per-cell metadata resolved on the stream becomes ``obs``</span>
+<span class="sd">        columns unless ``include_cell_metadata=False``.</span>
 <span class="sd">        """</span>
-        <span class="n">parts</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_collect_parts</span><span class="p">(</span><span class="n">aggregate</span><span class="o">=</span><span class="kc">True</span><span class="p">))</span>
-        <span class="k">return</span> <span class="n">parts</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="k">if</span> <span class="n">parts</span> <span class="k">else</span> <span class="n">_empty_anndata</span><span class="p">()</span></div>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_ensure_enriched</span><span class="p">()</span>
+        <span class="n">accumulator</span> <span class="o">=</span> <span class="n">_AnnDataAccumulator</span><span class="p">(</span>
+            <span class="n">sample_metadata</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">_sample_metadata</span><span class="p">,</span>
+            <span class="n">uns</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">_uns</span><span class="p">(),</span>
+        <span class="p">)</span>
+        <span class="k">for</span> <span class="n">batch</span> <span class="ow">in</span> <span class="bp">self</span><span class="p">:</span>
+            <span class="n">accumulator</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">batch</span><span class="p">)</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_with_cell_metadata</span><span class="p">(</span><span class="n">accumulator</span><span class="o">.</span><span class="n">finish</span><span class="p">(</span><span class="n">sort</span><span class="o">=</span><span class="kc">True</span><span class="p">))</span></div>
 
 
 <div class="viewcode-block" id="CellExpressionStream.iter_anndata">
 <a class="viewcode-back" href="../../api/malva_client.models.html#malva_client.models.CellExpressionStream.iter_anndata">[docs]</a>
-    <span class="k">def</span><span class="w"> </span><span class="nf">iter_anndata</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
-<span class="w">        </span><span class="sd">"""Yield one sparse AnnData per server batch.</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">iter_anndata</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">chunk_obs</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">"""Yield sparse AnnData parts while the stream is consumed.</span>
 
-<span class="sd">        Parts can be combined with :func:`anndata.concat`, for example</span>
-<span class="sd">        ``ad.concat(stream.iter_anndata(), join="outer", fill_value=0)``.</span>
+<span class="sd">        ``chunk_obs=None`` (the default) yields one AnnData per server batch,</span>
+<span class="sd">        each with its own sorted variable axis. Combine the parts with</span>
+<span class="sd">        ``anndata.concat(parts, join="outer", fill_value=0)``.</span>
+
+<span class="sd">        ``chunk_obs=N`` groups consecutive batches until a chunk holds at least</span>
+<span class="sd">        ``N`` cells, yields that chunk, and starts the next one. Chunks share a</span>
+<span class="sd">        growing variable axis: genes keep the position where they first</span>
+<span class="sd">        appeared and genes discovered later are appended, so an emitted chunk</span>
+<span class="sd">        never contains a gene first seen afterwards. To build one matrix from</span>
+<span class="sd">        several chunks, use ``anndata.concat(chunks, join="outer",</span>
+<span class="sd">        fill_value=0)`` or zero-pad the shorter chunks yourself; concatenation</span>
+<span class="sd">        is only needed to add the columns discovered later, not to align the</span>
+<span class="sd">        genes already present. The last chunk may hold fewer than ``N`` cells.</span>
+
+<span class="sd">        Chunks are cut at batch boundaries. A cell whose entries are spread over</span>
+<span class="sd">        two batches inside one chunk becomes a single observation; if the</span>
+<span class="sd">        server splits it across a chunk boundary, the cell appears in both</span>
+<span class="sd">        chunks and the caller decides how to merge it.</span>
+
+<span class="sd">        Each part carries ``uns["malva"]`` with ``batch`` or ``chunk`` set and</span>
+<span class="sd">        the same per-cell metadata columns in ``obs``, unless</span>
+<span class="sd">        ``include_cell_metadata=False``. Either mode is terminal: the stream is</span>
+<span class="sd">        consumed once.</span>
 <span class="sd">        """</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_ensure_enriched</span><span class="p">()</span>
+        <span class="k">if</span> <span class="n">chunk_obs</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">for</span> <span class="n">batch</span> <span class="ow">in</span> <span class="bp">self</span><span class="p">:</span>
+                <span class="k">if</span> <span class="n">batch</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="n">batch</span><span class="o">.</span><span class="n">empty</span><span class="p">:</span>
+                    <span class="k">continue</span>
+                <span class="n">uns</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_uns</span><span class="p">()</span>
+                <span class="n">uns</span><span class="p">[</span><span class="s2">"batch"</span><span class="p">]</span> <span class="o">=</span> <span class="kc">True</span>
+                <span class="k">yield</span> <span class="bp">self</span><span class="o">.</span><span class="n">_with_cell_metadata</span><span class="p">(</span>
+                    <span class="n">_frame_to_anndata</span><span class="p">(</span>
+                        <span class="n">batch</span><span class="p">,</span>
+                        <span class="n">sample_metadata</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">_sample_metadata</span><span class="p">,</span>
+                        <span class="n">uns</span><span class="o">=</span><span class="n">uns</span><span class="p">,</span>
+                    <span class="p">)</span>
+                <span class="p">)</span>
+            <span class="k">return</span>
+
+        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">chunk_obs</span><span class="p">,</span> <span class="nb">bool</span><span class="p">)</span> <span class="ow">or</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">chunk_obs</span><span class="p">,</span> <span class="nb">int</span><span class="p">)</span> <span class="ow">or</span> <span class="n">chunk_obs</span> <span class="o">&lt;</span> <span class="mi">1</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">"chunk_obs must be a positive integer or None"</span><span class="p">)</span>
+        <span class="n">uns</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_uns</span><span class="p">()</span>
+        <span class="n">uns</span><span class="p">[</span><span class="s2">"chunk"</span><span class="p">]</span> <span class="o">=</span> <span class="kc">True</span>
+        <span class="n">accumulator</span> <span class="o">=</span> <span class="n">_AnnDataAccumulator</span><span class="p">(</span>
+            <span class="n">sample_metadata</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">_sample_metadata</span><span class="p">,</span>
+            <span class="n">uns</span><span class="o">=</span><span class="n">uns</span><span class="p">,</span>
+        <span class="p">)</span>
         <span class="k">for</span> <span class="n">batch</span> <span class="ow">in</span> <span class="bp">self</span><span class="p">:</span>
-            <span class="k">if</span> <span class="n">batch</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="n">batch</span><span class="o">.</span><span class="n">empty</span><span class="p">:</span>
-                <span class="k">continue</span>
-            <span class="n">uns</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_uns</span><span class="p">()</span>
-            <span class="n">uns</span><span class="p">[</span><span class="s2">"batch"</span><span class="p">]</span> <span class="o">=</span> <span class="kc">True</span>
-            <span class="k">yield</span> <span class="n">_frame_to_anndata</span><span class="p">(</span>
-                <span class="n">batch</span><span class="p">,</span>
-                <span class="n">sample_metadata</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">_sample_metadata</span><span class="p">,</span>
-                <span class="n">uns</span><span class="o">=</span><span class="n">uns</span><span class="p">,</span>
-            <span class="p">)</span></div>
+            <span class="n">accumulator</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">batch</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">accumulator</span><span class="o">.</span><span class="n">n_obs</span> <span class="o">&gt;=</span> <span class="n">chunk_obs</span><span class="p">:</span>
+                <span class="k">yield</span> <span class="bp">self</span><span class="o">.</span><span class="n">_with_cell_metadata</span><span class="p">(</span><span class="n">accumulator</span><span class="o">.</span><span class="n">flush</span><span class="p">())</span>
+        <span class="k">if</span> <span class="n">accumulator</span><span class="o">.</span><span class="n">n_obs</span><span class="p">:</span>
+            <span class="k">yield</span> <span class="bp">self</span><span class="o">.</span><span class="n">_with_cell_metadata</span><span class="p">(</span><span class="n">accumulator</span><span class="o">.</span><span class="n">flush</span><span class="p">())</span></div>
 
 
 <div class="viewcode-block" id="CellExpressionStream.write_h5ad">
@@ -2028,12 +2426,14 @@
 
 <span class="sd">        The stream is spooled to a temporary SQLite database, then assembled in</span>
 <span class="sd">        cell chunks of at most ``cell_chunk_size`` observations. Only one chunk</span>
-<span class="sd">        is held in memory at a time. Read the result lazily with</span>
-<span class="sd">        ``anndata.read_h5ad(path, backed="r")``.</span>
+<span class="sd">        is held in memory at a time. Per-cell metadata is joined into ``obs``</span>
+<span class="sd">        for every chunk unless ``include_cell_metadata=False``. Read the result</span>
+<span class="sd">        lazily with ``anndata.read_h5ad(path, backed="r")``.</span>
 <span class="sd">        """</span>
         <span class="n">path</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="n">path</span><span class="p">)</span>
         <span class="n">path</span><span class="o">.</span><span class="n">parent</span><span class="o">.</span><span class="n">mkdir</span><span class="p">(</span><span class="n">parents</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
         <span class="n">cell_chunk_size</span> <span class="o">=</span> <span class="mi">10_000</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_ensure_enriched</span><span class="p">()</span>
         <span class="n">part_paths</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
         <span class="k">with</span> <span class="n">tempfile</span><span class="o">.</span><span class="n">TemporaryDirectory</span><span class="p">(</span><span class="n">prefix</span><span class="o">=</span><span class="s2">"malva_stream_"</span><span class="p">)</span> <span class="k">as</span> <span class="n">tmpdir</span><span class="p">:</span>
             <span class="n">db_path</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">Path</span><span class="p">(</span><span class="n">tmpdir</span><span class="p">)</span> <span class="o">/</span> <span class="s2">"entries.sqlite"</span><span class="p">)</span>
@@ -2108,14 +2508,16 @@
                         <span class="n">seen_cells</span><span class="o">.</span><span class="n">add</span><span class="p">((</span><span class="n">sample_id</span><span class="p">,</span> <span class="n">cell_id</span><span class="p">))</span>
                     <span class="k">if</span> <span class="ow">not</span> <span class="n">chunk_sample</span><span class="p">:</span>
                         <span class="k">break</span>
-                    <span class="n">part</span> <span class="o">=</span> <span class="n">_arrays_to_anndata</span><span class="p">(</span>
-                        <span class="n">chunk_sample</span><span class="p">,</span>
-                        <span class="n">chunk_cell</span><span class="p">,</span>
-                        <span class="n">chunk_gene</span><span class="p">,</span>
-                        <span class="n">chunk_value</span><span class="p">,</span>
-                        <span class="n">sample_metadata</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">_sample_metadata</span><span class="p">,</span>
-                        <span class="n">uns</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">_uns</span><span class="p">(),</span>
-                        <span class="n">var_names</span><span class="o">=</span><span class="n">var_names</span><span class="p">,</span>
+                    <span class="n">part</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_with_cell_metadata</span><span class="p">(</span>
+                        <span class="n">_arrays_to_anndata</span><span class="p">(</span>
+                            <span class="n">chunk_sample</span><span class="p">,</span>
+                            <span class="n">chunk_cell</span><span class="p">,</span>
+                            <span class="n">chunk_gene</span><span class="p">,</span>
+                            <span class="n">chunk_value</span><span class="p">,</span>
+                            <span class="n">sample_metadata</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">_sample_metadata</span><span class="p">,</span>
+                            <span class="n">uns</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">_uns</span><span class="p">(),</span>
+                            <span class="n">var_names</span><span class="o">=</span><span class="n">var_names</span><span class="p">,</span>
+                        <span class="p">)</span>
                     <span class="p">)</span>
                     <span class="n">part_path</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">Path</span><span class="p">(</span><span class="n">tmpdir</span><span class="p">)</span> <span class="o">/</span> <span class="sa">f</span><span class="s2">"part_</span><span class="si">{</span><span class="n">part_index</span><span class="si">:</span><span class="s2">05d</span><span class="si">}</span><span class="s2">.h5ad"</span><span class="p">)</span>
                     <span class="n">part</span><span class="o">.</span><span class="n">write_h5ad</span><span class="p">(</span><span class="n">part_path</span><span class="p">,</span> <span class="n">compression</span><span class="o">=</span><span class="s2">"gzip"</span><span class="p">)</span>
@@ -3969,7 +4371,7 @@
       
     </aside>
   </div>
-</div><script src="../../_static/documentation_options.js?v=3096642c"></script>
+</div><script src="../../_static/documentation_options.js?v=cce5339e"></script>
     <script src="../../_static/doctools.js?v=9a2dae69"></script>
     <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script src="../../_static/scripts/furo.js?v=46bd48cc"></script>

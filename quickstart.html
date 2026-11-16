@@ -520,7 +520,9 @@ returned. Iterate over the batches rather than wrapping large streams in
 <p>The returned object is a small <code class="docutils literal notranslate"><span class="pre">CellExpressionStream</span></code> wrapper. You can still
 loop over it exactly as above, or convert it to AnnData. <code class="docutils literal notranslate"><span class="pre">to_anndata()</span></code> reads
 the whole stream and builds a cells × genes sparse float32 matrix; observation
-names are <code class="docutils literal notranslate"><span class="pre">sample_id:cell_id</span></code> and variables are genes:</p>
+names are <code class="docutils literal notranslate"><span class="pre">sample_id:cell_id</span></code> and variables are genes. Each batch is folded
+into a sparse block as it arrives and the blocks are stacked once at the end, so
+peak memory stays close to one copy of the expression data:</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">stream</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">stream_cell_expression</span><span class="p">(</span>
     <span class="n">sample_ids</span><span class="o">=</span><span class="p">[</span><span class="n">sample_id</span><span class="p">],</span>
     <span class="n">gene_ids</span><span class="o">=</span><span class="p">[</span><span class="s2">"SPP1"</span><span class="p">,</span> <span class="s2">"CD3D"</span><span class="p">],</span>
@@ -542,7 +544,7 @@ bounded memory and can be read lazily afterwards:</p>
 </pre></div>
 </div>
 <p>If you prefer to build the matrix yourself, <code class="docutils literal notranslate"><span class="pre">iter_anndata()</span></code> yields one
-AnnData per server batch. Combine the parts with <code class="docutils literal notranslate"><span class="pre">anndata.concat</span></code>:</p>
+AnnData per server batch:</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">anndata</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">ad</span>
 
 <span class="n">parts</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">stream_cell_expression</span><span class="p">(</span>
@@ -553,6 +555,29 @@ AnnData per server batch. Combine the parts with <code class="docutils literal n
 <span class="nb">print</span><span class="p">(</span><span class="n">combined</span><span class="p">)</span>
 </pre></div>
 </div>
+<p>Pass <code class="docutils literal notranslate"><span class="pre">chunk_obs</span></code> to let the client group consecutive batches into chunks of at
+least that many cells while the stream runs. A chunk is emitted as soon as the
+accumulated batches hold <code class="docutils literal notranslate"><span class="pre">chunk_obs</span></code> cells. Each chunk is a cells × genes
+AnnData with CSR float32 <code class="docutils literal notranslate"><span class="pre">X</span></code>, <code class="docutils literal notranslate"><span class="pre">sample_id:cell_id</span></code> observations and gene
+symbols as variables; it carries every gene discovered so far, and a gene keeps
+its column once it appears:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># before 0.8.0: collect per-batch parts, then concatenate them</span>
+<span class="n">parts</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">stream_cell_expression</span><span class="p">(</span><span class="n">sample_ids</span><span class="o">=</span><span class="p">[</span><span class="n">sample_id</span><span class="p">])</span><span class="o">.</span><span class="n">iter_anndata</span><span class="p">()</span>
+<span class="n">combined</span> <span class="o">=</span> <span class="n">ad</span><span class="o">.</span><span class="n">concat</span><span class="p">(</span><span class="n">parts</span><span class="p">,</span> <span class="n">join</span><span class="o">=</span><span class="s2">"outer"</span><span class="p">,</span> <span class="n">fill_value</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+
+<span class="c1"># 0.8.0: consume fixed-size chunks as they are emitted</span>
+<span class="n">chunks</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">stream_cell_expression</span><span class="p">(</span>
+    <span class="n">sample_ids</span><span class="o">=</span><span class="p">[</span><span class="n">sample_id</span><span class="p">],</span>
+<span class="p">)</span><span class="o">.</span><span class="n">iter_anndata</span><span class="p">(</span><span class="n">chunk_obs</span><span class="o">=</span><span class="mi">5_000</span><span class="p">)</span>
+<span class="k">for</span> <span class="n">chunk</span> <span class="ow">in</span> <span class="n">chunks</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">chunk</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span>  <span class="c1"># e.g. (5000, 812), (5000, 830), (1200, 830)</span>
+</pre></div>
+</div>
+<p>Chunks are cut at batch boundaries, so an early chunk cannot contain a gene that
+the server only sends later. Concatenate the chunks with <code class="docutils literal notranslate"><span class="pre">anndata.concat</span></code>
+(<code class="docutils literal notranslate"><span class="pre">join=&quot;outer&quot;</span></code>) or zero-pad the shorter ones when you need one rectangular
+matrix. Use <code class="docutils literal notranslate"><span class="pre">to_anndata()</span></code> when you want the complete matrix without chunk
+bookkeeping.</p>
 </section>
 <section id="get-expression-for-specific-cells">
 <h2>Get expression for specific cells<a class="headerlink" href="#get-expression-for-specific-cells" title="Link to this heading">¶</a></h2>
@@ -569,6 +594,21 @@ Cells come back in the same order:</p>
 <p>This is useful when you have sorted a cell table by expression and want to
 fetch the cells in high-to-low order. Leave out <code class="docutils literal notranslate"><span class="pre">gene_ids</span></code> to get all
 features for each cell.</p>
+<p>For these cells, the conversion methods fetch the metadata once and join it
+into <code class="docutils literal notranslate"><span class="pre">obs</span></code>. Every per-cell field keeps its name, so <code class="docutils literal notranslate"><span class="pre">cell_type</span></code>,
+<code class="docutils literal notranslate"><span class="pre">total_counts</span></code> and any other column returned by the metadata service are
+available directly:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">adata</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">stream_cell_expression</span><span class="p">(</span>
+    <span class="n">cells</span><span class="o">=</span><span class="n">cells</span><span class="p">,</span>
+    <span class="n">gene_ids</span><span class="o">=</span><span class="p">[</span><span class="s2">"CD3D"</span><span class="p">,</span> <span class="s2">"CD3E"</span><span class="p">],</span>
+<span class="p">)</span><span class="o">.</span><span class="n">to_anndata</span><span class="p">()</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">adata</span><span class="o">.</span><span class="n">obs</span><span class="p">[[</span><span class="s2">"cell_type"</span><span class="p">,</span> <span class="s2">"total_counts"</span><span class="p">]]</span><span class="o">.</span><span class="n">head</span><span class="p">())</span>
+</pre></div>
+</div>
+<p>Cells without a metadata row get <code class="docutils literal notranslate"><span class="pre">NaN</span></code>. Pass your own table with
+<code class="docutils literal notranslate"><span class="pre">cell_metadata=</span></code> (a DataFrame or a dict keyed by <code class="docutils literal notranslate"><span class="pre">(sample_id,</span> <span class="pre">cell_id)</span></code>), or
+set <code class="docutils literal notranslate"><span class="pre">include_cell_metadata=False</span></code> to skip the fetch and the join. Call
+<code class="docutils literal notranslate"><span class="pre">enrich()</span></code> when you want to fetch the metadata ahead of time.</p>
 <p>The server needs a cell-major CSR index in the expression store. If the store
 does not have one, the call fails with a clear “not available yet” error
 instead of scanning the whole store.</p>
@@ -847,7 +887,7 @@ API reference for those workflows.</p>
       
     </aside>
   </div>
-</div><script src="_static/documentation_options.js?v=3096642c"></script>
+</div><script src="_static/documentation_options.js?v=cce5339e"></script>
     <script src="_static/doctools.js?v=9a2dae69"></script>
     <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
     <script src="_static/scripts/furo.js?v=46bd48cc"></script>

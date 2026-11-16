@@ -544,30 +544,49 @@ df.aggregate_by([‘organ’, ‘cell_type’])</p>
 <h2>CellExpressionStream<a class="headerlink" href="#cellexpressionstream" title="Link to this heading">¶</a></h2>
 <dl class="py class">
 <dt class="sig sig-object py" id="malva_client.models.CellExpressionStream">
-<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">malva_client.models.</span></span><span class="sig-name descname"><span class="pre">CellExpressionStream</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">batches</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">*</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">client</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">dataset_id</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sample_ids</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">gene_ids</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sample_metadata</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/malva_client/models.html#CellExpressionStream"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#malva_client.models.CellExpressionStream" title="Link to this definition">¶</a></dt>
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">malva_client.models.</span></span><span class="sig-name descname"><span class="pre">CellExpressionStream</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">batches</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">*</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">client</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">dataset_id</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sample_ids</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">gene_ids</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sample_metadata</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cells</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cell_metadata</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">include_cell_metadata</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/malva_client/models.html#CellExpressionStream"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#malva_client.models.CellExpressionStream" title="Link to this definition">¶</a></dt>
 <dd><p>Bases: <a class="reference external" href="https://docs.python.org/3/builtins/functions.html#object" title="(in Python v3.15)"><code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></a></p>
 <p>Iterable wrapper around a server cell-expression stream.</p>
 <p>Iterating the object yields the same pandas DataFrames as before: one frame
 per server batch with <code class="docutils literal notranslate"><span class="pre">sample_id</span></code>, <code class="docutils literal notranslate"><span class="pre">cell_id</span></code>, <code class="docutils literal notranslate"><span class="pre">store_index</span></code>, <code class="docutils literal notranslate"><span class="pre">gene</span></code>
 and <code class="docutils literal notranslate"><span class="pre">value</span></code> columns. The convenience methods materialise those batches as
 standard AnnData objects.</p>
+<p>Per-cell metadata supplied as <code class="docutils literal notranslate"><span class="pre">cell_metadata</span></code> (a DataFrame or a dict keyed
+by <code class="docutils literal notranslate"><span class="pre">(sample_id,</span> <span class="pre">cell_id)</span></code>) is joined into <code class="docutils literal notranslate"><span class="pre">obs</span></code> by every conversion
+method. When the stream was built from an explicit <code class="docutils literal notranslate"><span class="pre">cells</span></code> list and no
+metadata was supplied, the first conversion fetches it once with
+<code class="docutils literal notranslate"><span class="pre">MalvaClient.get_cells_by_metadata</span></code>; <a class="reference internal" href="#malva_client.models.CellExpressionStream.enrich" title="malva_client.models.CellExpressionStream.enrich"><code class="xref py py-meth docutils literal notranslate"><span class="pre">enrich()</span></code></a> shares that state.
+Pass <code class="docutils literal notranslate"><span class="pre">include_cell_metadata=False</span></code> to skip both the fetch and the join.</p>
 <dl class="py method">
 <dt class="sig sig-object py" id="malva_client.models.CellExpressionStream.__init__">
-<span class="sig-name descname"><span class="pre">__init__</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">batches</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">*</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">client</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">dataset_id</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sample_ids</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">gene_ids</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sample_metadata</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/malva_client/models.html#CellExpressionStream.__init__"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#malva_client.models.CellExpressionStream.__init__" title="Link to this definition">¶</a></dt>
+<span class="sig-name descname"><span class="pre">__init__</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">batches</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">*</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">client</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">dataset_id</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sample_ids</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">gene_ids</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sample_metadata</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cells</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cell_metadata</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">include_cell_metadata</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/malva_client/models.html#CellExpressionStream.__init__"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#malva_client.models.CellExpressionStream.__init__" title="Link to this definition">¶</a></dt>
 <dd></dd></dl>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="malva_client.models.CellExpressionStream.enrich">
-<span class="sig-name descname"><span class="pre">enrich</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">sample_metadata</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/malva_client/models.html#CellExpressionStream.enrich"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#malva_client.models.CellExpressionStream.enrich" title="Link to this definition">¶</a></dt>
-<dd><p>Attach local sample metadata used by the AnnData conversion methods.</p>
+<span class="sig-name descname"><span class="pre">enrich</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">sample_metadata</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cell_metadata</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/malva_client/models.html#CellExpressionStream.enrich"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#malva_client.models.CellExpressionStream.enrich" title="Link to this definition">¶</a></dt>
+<dd><p>Attach metadata used by the AnnData conversion methods.</p>
+<p><code class="docutils literal notranslate"><span class="pre">sample_metadata</span></code> is keyed by <code class="docutils literal notranslate"><span class="pre">sample_id</span></code>. <code class="docutils literal notranslate"><span class="pre">cell_metadata</span></code> is a
+DataFrame or dict keyed by <code class="docutils literal notranslate"><span class="pre">(sample_id,</span> <span class="pre">cell_id)</span></code> and is joined into
+<code class="docutils literal notranslate"><span class="pre">obs</span></code>. When the stream was created from an explicit <code class="docutils literal notranslate"><span class="pre">cells</span></code> list and
+no cell metadata is available yet, the client fetches it once for those
+cells with <code class="docutils literal notranslate"><span class="pre">get_cells_by_metadata(...,</span> <span class="pre">include_cell_metadata=True)</span></code>.
+The conversion methods do this automatically; calling <code class="docutils literal notranslate"><span class="pre">enrich</span></code> is only
+needed to supply metadata or fetch it ahead of time.
+<code class="docutils literal notranslate"><span class="pre">include_cell_metadata=False</span></code> skips that fetch.</p>
 </dd></dl>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="malva_client.models.CellExpressionStream.to_anndata">
 <span class="sig-name descname"><span class="pre">to_anndata</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="../_modules/malva_client/models.html#CellExpressionStream.to_anndata"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#malva_client.models.CellExpressionStream.to_anndata" title="Link to this definition">¶</a></dt>
 <dd><p>Materialise the full stream as a cells × genes sparse AnnData.</p>
-<p>Observation names are <code class="docutils literal notranslate"><span class="pre">sample_id:cell_id</span></code> and variables are genes.
-This is a terminal operation: the whole stream is consumed.</p>
+<p>Observation names are <code class="docutils literal notranslate"><span class="pre">sample_id:cell_id</span></code> and variables are genes,
+both in sorted order. The stream is folded into per-batch CSR blocks as
+it arrives, so peak memory stays close to one copy of the expression
+data instead of holding every batch plus a concatenated copy. This is a
+terminal operation: the whole stream is consumed and cannot be
+re-converted. Per-cell metadata resolved on the stream becomes <code class="docutils literal notranslate"><span class="pre">obs</span></code>
+columns unless <code class="docutils literal notranslate"><span class="pre">include_cell_metadata=False</span></code>.</p>
 <dl class="field-list simple">
 <dt class="field-odd">Return type<span class="colon">:</span></dt>
 <dd class="field-odd"><p><span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">AnnData</span></code></span></p>
@@ -581,16 +600,35 @@ This is a terminal operation: the whole stream is consumed.</p>
 <dd><p>Write the stream to <code class="docutils literal notranslate"><span class="pre">path</span></code> with bounded memory.</p>
 <p>The stream is spooled to a temporary SQLite database, then assembled in
 cell chunks of at most <code class="docutils literal notranslate"><span class="pre">cell_chunk_size</span></code> observations. Only one chunk
-is held in memory at a time. Read the result lazily with
-<code class="docutils literal notranslate"><span class="pre">anndata.read_h5ad(path,</span> <span class="pre">backed=&quot;r&quot;)</span></code>.</p>
+is held in memory at a time. Per-cell metadata is joined into <code class="docutils literal notranslate"><span class="pre">obs</span></code>
+for every chunk unless <code class="docutils literal notranslate"><span class="pre">include_cell_metadata=False</span></code>. Read the result
+lazily with <code class="docutils literal notranslate"><span class="pre">anndata.read_h5ad(path,</span> <span class="pre">backed=&quot;r&quot;)</span></code>.</p>
 </dd></dl>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="malva_client.models.CellExpressionStream.iter_anndata">
-<span class="sig-name descname"><span class="pre">iter_anndata</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="../_modules/malva_client/models.html#CellExpressionStream.iter_anndata"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#malva_client.models.CellExpressionStream.iter_anndata" title="Link to this definition">¶</a></dt>
-<dd><p>Yield one sparse AnnData per server batch.</p>
-<p>Parts can be combined with <code class="xref py py-func docutils literal notranslate"><span class="pre">anndata.concat()</span></code>, for example
-<code class="docutils literal notranslate"><span class="pre">ad.concat(stream.iter_anndata(),</span> <span class="pre">join=&quot;outer&quot;,</span> <span class="pre">fill_value=0)</span></code>.</p>
+<span class="sig-name descname"><span class="pre">iter_anndata</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">chunk_obs</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/malva_client/models.html#CellExpressionStream.iter_anndata"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#malva_client.models.CellExpressionStream.iter_anndata" title="Link to this definition">¶</a></dt>
+<dd><p>Yield sparse AnnData parts while the stream is consumed.</p>
+<p><code class="docutils literal notranslate"><span class="pre">chunk_obs=None</span></code> (the default) yields one AnnData per server batch,
+each with its own sorted variable axis. Combine the parts with
+<code class="docutils literal notranslate"><span class="pre">anndata.concat(parts,</span> <span class="pre">join=&quot;outer&quot;,</span> <span class="pre">fill_value=0)</span></code>.</p>
+<p><code class="docutils literal notranslate"><span class="pre">chunk_obs=N</span></code> groups consecutive batches until a chunk holds at least
+<code class="docutils literal notranslate"><span class="pre">N</span></code> cells, yields that chunk, and starts the next one. Chunks share a
+growing variable axis: genes keep the position where they first
+appeared and genes discovered later are appended, so an emitted chunk
+never contains a gene first seen afterwards. To build one matrix from
+several chunks, use <code class="docutils literal notranslate"><span class="pre">anndata.concat(chunks,</span> <span class="pre">join=&quot;outer&quot;,</span>
+<span class="pre">fill_value=0)</span></code> or zero-pad the shorter chunks yourself; concatenation
+is only needed to add the columns discovered later, not to align the
+genes already present. The last chunk may hold fewer than <code class="docutils literal notranslate"><span class="pre">N</span></code> cells.</p>
+<p>Chunks are cut at batch boundaries. A cell whose entries are spread over
+two batches inside one chunk becomes a single observation; if the
+server splits it across a chunk boundary, the cell appears in both
+chunks and the caller decides how to merge it.</p>
+<p>Each part carries <code class="docutils literal notranslate"><span class="pre">uns[&quot;malva&quot;]</span></code> with <code class="docutils literal notranslate"><span class="pre">batch</span></code> or <code class="docutils literal notranslate"><span class="pre">chunk</span></code> set and
+the same per-cell metadata columns in <code class="docutils literal notranslate"><span class="pre">obs</span></code>, unless
+<code class="docutils literal notranslate"><span class="pre">include_cell_metadata=False</span></code>. Either mode is terminal: the stream is
+consumed once.</p>
 </dd></dl>
 
 </dd></dl>
@@ -1635,7 +1673,7 @@ a pandas DataFrame and a simple scatter-plot method.</p>
       
     </aside>
   </div>
-</div><script src="../_static/documentation_options.js?v=3096642c"></script>
+</div><script src="../_static/documentation_options.js?v=cce5339e"></script>
     <script src="../_static/doctools.js?v=9a2dae69"></script>
     <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script src="../_static/scripts/furo.js?v=46bd48cc"></script>
