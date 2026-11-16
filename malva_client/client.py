@@ -7,7 +7,7 @@ import tempfile
 import time
 import warnings
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple, Union
 from urllib.parse import urljoin, urlparse, urlunparse
 
 import anndata as ad
@@ -370,6 +370,119 @@ def _map_stream_gene_names(
     return [names.get(index, f"feature_{index}") for index in positions]
 
 
+class _Unset:
+    """Marker for a ``stream_cell_expression`` option the caller omitted.
+
+    ``None`` already carries meaning for several of these options (no
+    compression, the server's default framing), so a distinct marker is needed
+    to tell "apply the fast-path default" apart from "the caller explicitly
+    turned this off".  Keeping a caller's explicit choice authoritative is the
+    whole point: ``compress=None`` must send uncompressed frames and
+    ``layout="legacy"`` must ask for the default framing.
+    """
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return "UNSET"
+
+
+_UNSET = _Unset()
+
+#: Layout names that mean the released default framing.  They are resolved to
+#: "send no layout field" and are never forwarded to the server.
+_LEGACY_LAYOUT_NAMES = ("legacy", "default", "dense", "none", "0", "false", "off")
+
+
+class _LegacyCellStreamRequired(Exception):
+    """Internal signal to retry a defaulted cell stream without compact framing.
+
+    Raised only before the first batch is yielded, either when the request is
+    rejected as a validation error or when the ``start`` frame advertises the
+    default framing, so the retry never re-delivers data.
+    """
+
+
+def _is_cell_stream_validation_error(response: Any) -> bool:
+    """Whether a failed response says the server rejected the stream options.
+
+    FastAPI and pydantic answer ``422`` for a body the request model rejects,
+    which is what a pre-compact server does when configured to forbid unknown
+    fields.  A ``400`` is only treated as a validation error when its detail
+    names a validation problem, because ``400`` also covers ordinary domain
+    errors (unknown cell, dataset mismatch) that a retry cannot fix.
+    """
+    if response.status_code == 422:
+        return True
+    if response.status_code != 400:
+        return False
+    detail = (getattr(response, "text", "") or "").lower()
+    return any(
+        marker in detail
+        for marker in (
+            "validation error",
+            "extra_forbidden",
+            "extra fields not permitted",
+            "unexpected keyword",
+            "unknown field",
+            "value_error",
+        )
+    )
+
+
+def _resolve_cell_stream_options(
+    compress: Optional[str],
+    layout: Optional[str],
+    values: Optional[str],
+) -> Tuple[Optional[str], Optional[str], Optional[str], bool]:
+    """Resolve the cell-stream options, applying the fast path to omissions.
+
+    Omitted options select the compact framing with zstd compression.  An
+    explicit ``None`` for ``compress`` and ``"legacy"`` for ``layout`` turn the
+    corresponding fast-path feature off, so an explicit choice always wins.
+
+    Returns ``(layout, compress, values, defaulted_layout)``.  The last value
+    marks a compact layout that came from the defaults; only those requests may
+    be transparently retried with the released framing.
+    """
+    defaulted_layout = layout is _UNSET
+    if defaulted_layout:
+        layout = "compact"
+    if compress is _UNSET:
+        compress = "zstd"
+    if values is _UNSET:
+        values = None
+
+    resolved_layout: Optional[str] = None
+    if layout is not None:
+        name = str(layout).strip().lower()
+        if name and name not in _LEGACY_LAYOUT_NAMES:
+            resolved_layout = name
+    if resolved_layout != "compact":
+        # An explicit default/legacy layout (or an unknown one the server is
+        # asked to validate itself) is the caller's choice: never retry it.
+        defaulted_layout = False
+
+    resolved_compress: Optional[str] = None
+    if compress is not None:
+        resolved_compress = str(compress).strip().lower() or None
+        if resolved_compress == "zstandard":
+            resolved_compress = "zstd"
+
+    resolved_values: Optional[str] = None
+    if values is not None:
+        resolved_values = str(values).strip().lower() or None
+    if resolved_values is not None and resolved_layout != "compact":
+        raise ValueError("values= requires layout='compact'")
+    if resolved_values not in (None, "f32"):
+        # Half precision only exists in the compact framing, so a request for it
+        # is authoritative even though ``layout`` came from the defaults: a
+        # retry with the released framing would silently return float32.
+        defaulted_layout = False
+
+    return resolved_layout, resolved_compress, resolved_values, defaulted_layout
+
+
 class MalvaClient:
     """
     Main client for interacting with the Malva API
@@ -447,6 +560,12 @@ class MalvaClient:
         # ``None`` means auto-detection is still pending. An explicit
         # ``MALVA_ENDPOINT_STYLE`` value skips the network probe entirely.
         self._endpoint_style = self._configured_endpoint_style()
+
+        # Base URLs whose server answered a defaulted cell-stream request with
+        # the released framing (or rejected the compact options).  A defaulted
+        # call to one of them skips the compact request, so an older deployment
+        # pays the compatibility probe only once per client.
+        self._cell_stream_legacy_urls: Set[str] = set()
 
         self.session = requests.Session()
         self.session.verify = verify_ssl
@@ -1922,15 +2041,14 @@ class MalvaClient:
         cells: Optional[Iterable[Any]] = None,
         cell_metadata: Optional[Any] = None,
         include_cell_metadata: bool = True,
-        compress: Optional[str] = None,
-        layout: Optional[str] = None,
-        values: Optional[str] = None,
+        compress: Optional[str] = _UNSET,
+        layout: Optional[str] = _UNSET,
+        values: Optional[str] = _UNSET,
     ) -> CellExpressionStream:
         """Stream sparse per-cell expression batches for selected samples.
 
-        By default this returns a :class:`~malva_client.models.CellExpressionStream`
-        that yields one pandas ``DataFrame`` per server batch, exactly like the
-        previous generator API::
+        This returns a :class:`~malva_client.models.CellExpressionStream` that
+        yields one pandas ``DataFrame`` per server batch::
 
             for batch in client.stream_cell_expression(
                 sample_ids=[30064771072],
@@ -1945,26 +2063,44 @@ class MalvaClient:
         ``gene_ids`` is strongly recommended: without it the server must scan
         every non-zero entry in the selected petal stores.
 
-        ``cells`` requests opt into two server-side payload modes that older
-        servers ignore and older clients never ask for, and both return the same
-        DataFrames:
+        ``cells`` requests use the server's fast stream by default. The compact
+        framing sends cell identity once as a bitmask over the request order and
+        each row as fixed-width feature deltas, about 4x smaller than the flat
+        arrays before any compression, and every frame body is compressed with
+        zstd, which brings the reference 19.2 M-value stream from about 460 MB
+        to about 36 MB. Decoding is vectorised, so both changes save time as
+        well as bytes. ``values`` stays ``float32`` unless asked otherwise.
 
-        * ``layout="compact"`` sends cell identity once as a bitmask over the
-          request order and each row as fixed-width feature deltas, about 4x
-          smaller than the flat arrays before any compression.
-        * ``compress="zstd"`` (or ``"zlib"``) compresses every frame body,
-          which brings the reference stream from ~460 MB to ~36 MB.  zstd needs
-          ``zstandard`` or ``numcodecs`` on the client; when neither is
-          installed the request silently falls back to the default framing.
+        Compatibility is automatic and invisible:
 
-        ``values="f16"`` halves the value payload and is lossy (about 1e-3
-        relative), so it has to be asked for explicitly.
+        * A server that rejects the options with a validation error, or whose
+          ``start`` frame advertises the default framing, is retried once
+          without them. The result is remembered for this client and base URL,
+          so later defaulted calls go straight to the released framing. The
+          retry happens before any batch is yielded and is logged at debug.
+        * When neither ``zstandard`` nor ``numcodecs`` zstd is importable, the
+          client keeps the compact framing and drops only compression. Compact
+          uncompressed is still about 4x smaller than the legacy framing, so it
+          remains the faster of the two options.
+        * Decoding follows the ``start`` frame, not the request, so an explicit
+          ``layout="legacy"`` request, a mixed fleet and compressed frames all
+          produce the same DataFrames.
+
+        Every choice is authoritative. ``layout="legacy"`` sends no layout
+        field and asks for the released framing; ``compress=None`` sends
+        uncompressed frames (with the compact framing unless ``layout`` also
+        says otherwise); ``values="f16"`` halves the value payload and is lossy
+        (about 1e-3 relative), so it has to be asked for explicitly.
 
         The wrapper also provides ``to_anndata()``, ``write_h5ad(path)`` and
         ``iter_anndata()`` for standard AnnData workflows. Pass ``cell_metadata``
         to add per-cell ``obs`` columns, or call ``enrich()`` on a stream built
         from ``cells`` to fetch them once from the metadata service. Set
         ``include_cell_metadata=False`` to skip both.
+
+        The stream options only apply to ``cells`` requests; ``sample_ids``
+        streams have a single framing, and passing one of them there raises
+        ``ValueError``.
         """
         dataset_id = self._default_dataset_id(dataset_id)
         gene_list = None
@@ -1979,6 +2115,12 @@ class MalvaClient:
                 raise ValueError("Pass either sample_ids or cells, not both")
             known_cells = _normalise_cell_pairs(cells)
             known_samples = sorted({int(sample_id) for sample_id, _ in known_cells})
+            (
+                stream_layout,
+                stream_compress,
+                stream_values,
+                defaulted_layout,
+            ) = _resolve_cell_stream_options(compress, layout, values)
         else:
             if sample_ids is None:
                 raise ValueError("Pass sample_ids or cells")
@@ -1987,12 +2129,13 @@ class MalvaClient:
             known_samples = [int(sample_id) for sample_id in sample_ids]
             if not known_samples:
                 raise ValueError("sample_ids must contain at least one sample id")
-
-        for name, value in (("compress", compress), ("layout", layout), ("values", values)):
-            if value is not None and cells is None:
-                raise ValueError(f"{name}= requires cells=; the sample_ids stream has one framing")
-        if values is not None and layout is None:
-            raise ValueError("values= requires layout='compact'")
+            for name, value in (("compress", compress), ("layout", layout), ("values", values)):
+                if value is not _UNSET:
+                    raise ValueError(
+                        f"{name}= requires cells=; the sample_ids stream has one framing"
+                    )
+            stream_layout = stream_compress = stream_values = None
+            defaulted_layout = False
 
         return CellExpressionStream(
             lambda: self._iter_cell_expression_batches(
@@ -2002,9 +2145,10 @@ class MalvaClient:
                 max_batch_bytes=max_batch_bytes,
                 chunk_size=chunk_size,
                 cells=known_cells,
-                compress=compress,
-                layout=layout,
-                values=values,
+                compress=stream_compress,
+                layout=stream_layout,
+                values=stream_values,
+                allow_layout_fallback=defaulted_layout,
             ),
             client=self,
             dataset_id=dataset_id,
@@ -2026,9 +2170,17 @@ class MalvaClient:
         compress: Optional[str] = None,
         layout: Optional[str] = None,
         values: Optional[str] = None,
+        allow_layout_fallback: bool = False,
     ):
-        """Yield the raw pandas batches from the server frame stream."""
+        """Yield the raw pandas batches from the server frame stream.
+
+        ``layout``/``compress``/``values`` arrive resolved from
+        :meth:`stream_cell_expression`; ``allow_layout_fallback`` marks a
+        compact layout that came from the defaults and may therefore be retried
+        transparently with the released framing.
+        """
         requested_cells: List[Tuple[int, int]] = []
+        requested_genes: List[str] = []
         if cells is not None:
             if sample_ids is not None:
                 raise ValueError("Pass either sample_ids or cells, not both")
@@ -2059,30 +2211,96 @@ class MalvaClient:
         if gene_ids is not None:
             if isinstance(gene_ids, str):
                 gene_ids = [gene_ids]
-            genes = [str(gene).strip() for gene in gene_ids if str(gene).strip()]
-            if genes:
-                payload["gene_ids"] = genes
-        # Capability fallback: a compression mode the client cannot decode must
-        # never turn into a stream that fails halfway through.  Drop back to the
-        # default framing silently (debug log only), as released clients do.
-        needs_zstd = str(compress or "").strip().lower() in ("zstd", "zstandard")
-        if needs_zstd and not stream_codec.has_zstd():
-            logger.debug(
-                "No zstd decoder is installed; falling back to the legacy cell-expression stream"
+            requested_genes = [str(gene).strip() for gene in gene_ids if str(gene).strip()]
+            if requested_genes:
+                payload["gene_ids"] = requested_genes
+
+        if cells is None:
+            yield from self._stream_cell_frames(
+                payload,
+                requested_cells,
+                requested_genes,
+                chunk_size=chunk_size,
             )
-            compress = None
-            layout = None
-        if compress:
-            payload["compress"] = str(compress)
+            return
+
+        # Capability fallback: a compression mode the client cannot decode must
+        # never turn into a stream that fails halfway through.  Keep the compact
+        # framing (still about 4x smaller than the released framing before any
+        # compression) and drop only the encoding.
+        if str(compress or "").strip().lower() in ("zstd", "zstandard"):
+            if not stream_codec.has_zstd():
+                logger.debug("No zstd decoder is installed; streaming compact frames uncompressed")
+                compress = None
+
+        if allow_layout_fallback and self.base_url in self._cell_stream_legacy_urls:
+            logger.debug(
+                "Using the legacy cell-expression framing for %s (remembered from an earlier stream)",
+                self.base_url,
+            )
+            layout = compress = values = None
+            allow_layout_fallback = False
+
+        try:
+            yield from self._stream_cell_frames(
+                payload,
+                requested_cells,
+                requested_genes,
+                layout=layout,
+                compress=compress,
+                values=values,
+                allow_layout_fallback=allow_layout_fallback,
+                chunk_size=chunk_size,
+            )
+        except _LegacyCellStreamRequired as exc:
+            # The compatibility retry happens before the first batch is yielded,
+            # so a defaulted call never surfaces an error caused by the new
+            # defaults and never re-delivers data.  Remember the outcome per
+            # base URL so only the first defaulted stream pays for the probe.
+            logger.debug(
+                "Server %s did not provide the compact cell framing (%s); "
+                "retrying with the released framing",
+                self.base_url,
+                exc,
+            )
+            self._cell_stream_legacy_urls.add(self.base_url)
+            yield from self._stream_cell_frames(
+                payload,
+                requested_cells,
+                requested_genes,
+                chunk_size=chunk_size,
+            )
+
+    def _stream_cell_frames(
+        self,
+        payload: Dict[str, Any],
+        requested_cells: List[Tuple[int, int]],
+        requested_genes: List[str],
+        layout: Optional[str] = None,
+        compress: Optional[str] = None,
+        values: Optional[str] = None,
+        allow_layout_fallback: bool = False,
+        chunk_size: int = 64 * 1024,
+    ):
+        """Request one cell-expression stream and yield its DataFrames.
+
+        When ``allow_layout_fallback`` is set, a validation error or a ``start``
+        frame that advertises the released framing raises
+        :class:`_LegacyCellStreamRequired` before any batch is yielded, so the
+        caller can retry without the compact options.
+        """
+        request_body = dict(payload)
         if layout:
-            payload["layout"] = str(layout)
+            request_body["layout"] = str(layout)
+        if compress:
+            request_body["compress"] = str(compress)
         if values:
-            payload["values"] = str(values)
+            request_body["values"] = str(values)
 
         url = urljoin(self.base_url + "/", "api/expression/cell-expression-stream")
         response = self.session.post(
             url,
-            json=payload,
+            json=request_body,
             stream=True,
             timeout=(10, self.timeout),
         )
@@ -2093,11 +2311,12 @@ class MalvaClient:
                 raise AuthenticationError("API token is not allowed to stream cell expression")
             if not response.ok:
                 detail = response.text[:500] if response.text else ""
+                if allow_layout_fallback and _is_cell_stream_validation_error(response):
+                    raise _LegacyCellStreamRequired(f"HTTP {response.status_code}: {detail[:200]}")
                 raise MalvaAPIError(
                     f"Cell expression stream failed ({response.status_code}): {detail}"
                 )
 
-            requested_genes = [gene_ids] if isinstance(gene_ids, str) else list(gene_ids or [])
             features_by_store: Dict[int, List[str]] = {}
             encoding: Optional[str] = None
             compact = False
@@ -2129,6 +2348,10 @@ class MalvaClient:
                             compact = frame.get("layout") == stream_codec.COMPACT_LAYOUT
                             values_dtype = str(frame.get("values") or "f32")
                             if layout and not compact:
+                                if allow_layout_fallback:
+                                    raise _LegacyCellStreamRequired(
+                                        "the start frame advertises the released framing"
+                                    )
                                 logger.debug(
                                     "Server did not honour layout=%r; decoding the default framing",
                                     layout,
@@ -2179,6 +2402,8 @@ class MalvaClient:
                                         "value": value_values,
                                     }
                                 )
+                    except _LegacyCellStreamRequired:
+                        raise
                     except Exception as exc:
                         raise MalvaAPIError(
                             "Failed to decode cell-expression frame "

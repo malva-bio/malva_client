@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.1] - 2026-11-16
+### Changed
+- `stream_cell_expression(cells=...)` now uses the compact framing with zstd
+  compression by default. An unchanged call on the reference request (12,838
+  cells, 19,156,722 values) transfers about 36 MB instead of 461 MB and decodes
+  the same DataFrames. The options stay independent: `layout="legacy"` asks for
+  the released framing and `compress=None` sends uncompressed frames, and an
+  explicit choice always wins.
+- A defaulted cells stream is never broken by a server that predates the
+  compact options. A validation error, or a `start` frame that advertises the
+  released framing, triggers one retry without the options before any batch is
+  yielded. The outcome is remembered per client and base URL and logged at
+  debug, so only the first stream pays for the compatibility probe.
+- When no zstd decoder is installed the client keeps the compact framing and
+  drops only compression instead of falling back to the released framing.
+  Compact uncompressed is still about 4x smaller than the released framing, so
+  it remains the faster path.
+### Added
+- Documented `layout="legacy"` together with `compress=None` as the way to
+  force the released request, and the fallback behaviour above in the
+  `stream_cell_expression` docstring and the quick start.
+
 ## [0.9.0] - 2026-11-16
 ### Added
 - `stream_cell_expression(..., layout="compact", compress="zstd")` opts into

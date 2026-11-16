@@ -233,13 +233,21 @@ def _stream_payload(frames, encoding=None):
 class TestClientStreamOptions:
     def _client(self, monkeypatch, mock_client, frames, encoding=None, captured=None):
         client = mock_client
+        calls = []
 
         def fake_post(url, json=None, stream=None, timeout=None):
+            body = dict(json or {})
+            calls.append(body)
             if captured is not None:
-                captured.update(json or {})
-            return _FakeResponse(_stream_payload(frames, encoding))
+                captured.update(body)
+            source = frames(body) if callable(frames) else (frames, encoding)
+            if isinstance(source, _FakeResponse):
+                return source
+            selected, selected_encoding = source
+            return _FakeResponse(_stream_payload(selected, selected_encoding))
 
         monkeypatch.setattr(client.session, "post", fake_post)
+        client._stream_calls = calls
         return client
 
     def _frames(self, layout=None, compression=None, values="f32"):
@@ -326,23 +334,161 @@ class TestClientStreamOptions:
         assert captured["compress"] == "zlib"
         assert frame["value"].tolist() == [1.0, 2.0, 3.0]
 
-    def test_default_request_sends_no_options(self, monkeypatch, mock_client):
+    def test_default_request_asks_for_compact_and_zstd(self, monkeypatch, mock_client):
+        if not stream_codec.has_zstd():  # pragma: no cover - depends on the install
+            pytest.skip("no zstd codec installed")
         captured = {}
-        client = self._client(monkeypatch, mock_client, self._frames(), captured=captured)
+        client = self._client(
+            monkeypatch,
+            mock_client,
+            self._frames("cells_compact_v1", "zstd"),
+            encoding="zstd",
+            captured=captured,
+        )
 
-        list(client.stream_cell_expression(cells=[(7, 10), (7, 11)], dataset_id="ds1"))
+        frame = pd.concat(
+            client.stream_cell_expression(cells=[(7, 10), (7, 11)], dataset_id="ds1"),
+            ignore_index=True,
+        )
 
-        assert "layout" not in captured
-        assert "compress" not in captured
+        assert len(client._stream_calls) == 1
+        assert captured["layout"] == "compact"
+        assert captured["compress"] == "zstd"
         assert "values" not in captured
+        assert frame["cell_id"].tolist() == [10, 10, 11]
+        assert frame["gene"].tolist() == ["G0", "G1", "G1"]
+        assert frame["value"].tolist() == [1.0, 2.0, 3.0]
 
     def test_options_need_a_cell_list(self, mock_client):
         with pytest.raises(ValueError):
             mock_client.stream_cell_expression(sample_ids=[1], compress="zstd")
+        with pytest.raises(ValueError):
+            mock_client.stream_cell_expression(sample_ids=[1], layout="compact")
 
     def test_half_precision_needs_the_compact_layout(self, mock_client):
         with pytest.raises(ValueError):
-            mock_client.stream_cell_expression(cells=[(7, 10)], values="f16")
+            mock_client.stream_cell_expression(cells=[(7, 10)], values="f16", layout="legacy")
+
+    def test_explicit_legacy_sends_the_released_request(self, monkeypatch, mock_client):
+        captured = {}
+        client = self._client(monkeypatch, mock_client, self._frames(), captured=captured)
+
+        frame = pd.concat(
+            client.stream_cell_expression(cells=[(7, 10), (7, 11)], layout="legacy", compress=None),
+            ignore_index=True,
+        )
+
+        assert "layout" not in captured
+        assert "compress" not in captured
+        assert "values" not in captured
+        assert frame["value"].tolist() == [1.0, 2.0, 3.0]
+
+    def test_explicit_no_compression_keeps_compact(self, monkeypatch, mock_client):
+        captured = {}
+        client = self._client(
+            monkeypatch, mock_client, self._frames("cells_compact_v1"), captured=captured
+        )
+
+        frame = pd.concat(
+            client.stream_cell_expression(cells=[(7, 10), (7, 11)], compress=None),
+            ignore_index=True,
+        )
+
+        assert captured["layout"] == "compact"
+        assert "compress" not in captured
+        assert frame["value"].tolist() == [1.0, 2.0, 3.0]
+
+    def test_validation_error_falls_back_and_is_remembered(self, monkeypatch, mock_client, caplog):
+        if not stream_codec.has_zstd():  # pragma: no cover - depends on the install
+            pytest.skip("no zstd codec installed")
+        legacy = self._frames()
+
+        def respond(body):
+            if len(mock_client._stream_calls) == 1:
+                return _FakeResponse(b"", status_code=422)
+            return legacy, None
+
+        client = self._client(monkeypatch, mock_client, respond)
+
+        with caplog.at_level("DEBUG", logger="malva_client"):
+            frame = pd.concat(
+                client.stream_cell_expression(cells=[(7, 10), (7, 11)]),
+                ignore_index=True,
+            )
+
+        assert len(client._stream_calls) == 2
+        assert client._stream_calls[0]["layout"] == "compact"
+        assert client._stream_calls[0]["compress"] == "zstd"
+        assert "layout" not in client._stream_calls[1]
+        assert "compress" not in client._stream_calls[1]
+        assert frame["value"].tolist() == [1.0, 2.0, 3.0]
+        assert client.base_url in client._cell_stream_legacy_urls
+        assert "retrying with the released framing" in caplog.text
+
+        # A later defaulted stream goes straight to the released framing.
+        list(client.stream_cell_expression(cells=[(7, 10), (7, 11)]))
+        assert len(client._stream_calls) == 3
+        assert "layout" not in client._stream_calls[2]
+
+    def test_legacy_start_frame_falls_back_on_the_default_path(
+        self, monkeypatch, mock_client, caplog
+    ):
+        client = self._client(monkeypatch, mock_client, self._frames())
+
+        with caplog.at_level("DEBUG", logger="malva_client"):
+            frame = pd.concat(
+                client.stream_cell_expression(cells=[(7, 10), (7, 11)]),
+                ignore_index=True,
+            )
+
+        assert len(client._stream_calls) == 2
+        assert client._stream_calls[0]["layout"] == "compact"
+        assert "layout" not in client._stream_calls[1]
+        assert frame["gene"].tolist() == ["G0", "G1", "G1"]
+        assert client.base_url in client._cell_stream_legacy_urls
+        assert "retrying with the released framing" in caplog.text
+
+    def test_explicit_compact_is_decoded_but_not_downgraded(self, monkeypatch, mock_client):
+        captured = {}
+        client = self._client(monkeypatch, mock_client, self._frames(), captured=captured)
+
+        frame = pd.concat(
+            client.stream_cell_expression(
+                cells=[(7, 10), (7, 11)], layout="compact", compress=None
+            ),
+            ignore_index=True,
+        )
+
+        assert len(client._stream_calls) == 1
+        assert captured["layout"] == "compact"
+        assert frame["value"].tolist() == [1.0, 2.0, 3.0]
+        assert client.base_url not in client._cell_stream_legacy_urls
+
+    def test_explicit_compact_validation_error_surfaces(self, monkeypatch, mock_client):
+        client = self._client(
+            monkeypatch,
+            mock_client,
+            lambda body: _FakeResponse(b"", status_code=422),
+        )
+
+        with pytest.raises(MalvaAPIError) as excinfo:
+            list(client.stream_cell_expression(cells=[(7, 10)], layout="compact", compress=None))
+
+        assert "422" in str(excinfo.value)
+        assert len(client._stream_calls) == 1
+
+    def test_half_precision_is_not_downgraded_by_the_fallback(self, monkeypatch, mock_client):
+        client = self._client(
+            monkeypatch,
+            mock_client,
+            lambda body: _FakeResponse(b"", status_code=422),
+        )
+
+        with pytest.raises(MalvaAPIError):
+            list(client.stream_cell_expression(cells=[(7, 10)], values="f16"))
+
+        assert len(client._stream_calls) == 1
+        assert "values" in client._stream_calls[0]
 
     @pytest.mark.parametrize("encoding", ["zstd", "zlib"])
     def test_compressed_modes_decode_to_the_same_frame(self, monkeypatch, mock_client, encoding):
@@ -393,23 +539,20 @@ class TestClientStreamOptions:
         assert captured["compress"] == "zlib"
         assert frame["value"].tolist() == [1.0, 2.0, 3.0]
 
-    def test_missing_zstd_decoder_falls_back_to_legacy(self, monkeypatch, mock_client):
+    def test_missing_zstd_decoder_keeps_compact_uncompressed(self, monkeypatch, mock_client):
         captured = {}
-        client = self._client(monkeypatch, mock_client, self._frames(), captured=captured)
+        client = self._client(
+            monkeypatch, mock_client, self._frames("cells_compact_v1"), captured=captured
+        )
         monkeypatch.setattr(stream_codec, "has_zstd", lambda: False)
 
         frame = pd.concat(
-            client.stream_cell_expression(
-                cells=[(7, 10), (7, 11)],
-                dataset_id="ds1",
-                layout="compact",
-                compress="zstd",
-            ),
+            client.stream_cell_expression(cells=[(7, 10), (7, 11)]),
             ignore_index=True,
         )
 
+        assert captured["layout"] == "compact"
         assert "compress" not in captured
-        assert "layout" not in captured
         assert frame["value"].tolist() == [1.0, 2.0, 3.0]
 
     def test_old_server_that_ignores_compact_is_decoded_as_legacy(
@@ -448,14 +591,22 @@ class TestClientStreamOptions:
         client = self._client(monkeypatch, mock_client, frames)
 
         with pytest.raises(MalvaAPIError) as excinfo:
-            list(client.stream_cell_expression(cells=[(7, 10), (7, 11)]))
+            list(
+                client.stream_cell_expression(
+                    cells=[(7, 10), (7, 11)], layout="legacy", compress=None
+                )
+            )
 
         assert "declares 99" in str(excinfo.value)
 
     def test_compact_and_legacy_streams_build_the_same_anndata(self, monkeypatch, mock_client):
         legacy_client = self._client(monkeypatch, mock_client, self._frames())
         legacy = legacy_client.stream_cell_expression(
-            cells=[(7, 10), (7, 11)], dataset_id="ds1", include_cell_metadata=False
+            cells=[(7, 10), (7, 11)],
+            dataset_id="ds1",
+            layout="legacy",
+            compress=None,
+            include_cell_metadata=False,
         ).to_anndata()
 
         compact_client = self._client(monkeypatch, mock_client, self._frames("cells_compact_v1"))
