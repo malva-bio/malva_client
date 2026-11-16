@@ -2065,7 +2065,8 @@ class MalvaClient:
         # Capability fallback: a compression mode the client cannot decode must
         # never turn into a stream that fails halfway through.  Drop back to the
         # default framing silently (debug log only), as released clients do.
-        if compress and not stream_codec.has_zstd():
+        needs_zstd = str(compress or "").strip().lower() in ("zstd", "zstandard")
+        if needs_zstd and not stream_codec.has_zstd():
             logger.debug(
                 "No zstd decoder is installed; falling back to the legacy cell-expression stream"
             )

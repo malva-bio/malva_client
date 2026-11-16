@@ -80,6 +80,8 @@ test = [
     "responses>=0.23",
     "ruff>=0.16.9",
     "ty>=0.0.84",
+    # The compact-stream tests exercise real zstd frame bodies.
+    "zstandard>=0.21",
 ]
 
 [project.urls]

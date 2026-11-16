@@ -89,12 +89,10 @@ class TestDecompression:
             stream_codec.decompress_body(b"abc", "brotli")
 
     def test_zstd_round_trip_when_a_codec_is_installed(self):
-        try:
-            import numcodecs
-        except ImportError:  # pragma: no cover - depends on the install
+        if not stream_codec.has_zstd():  # pragma: no cover - depends on the install
             pytest.skip("no zstd codec installed")
         body = b"y" * 500
-        assert stream_codec.decompress_body(numcodecs.Zstd().encode(body), "zstd") == body
+        assert stream_codec.decompress_body(_compress(body, "zstd"), "zstd") == body
 
 
 class TestCompactFrame:
@@ -370,6 +368,30 @@ class TestClientStreamOptions:
         assert captured["compress"] == encoding
         assert frame["value"].tolist() == [1.0, 2.0, 3.0]
         assert frame["gene"].tolist() == ["G0", "G1", "G1"]
+
+    def test_zlib_does_not_need_a_zstd_decoder(self, monkeypatch, mock_client):
+        captured = {}
+        client = self._client(
+            monkeypatch,
+            mock_client,
+            self._frames("cells_compact_v1", "zlib"),
+            encoding="zlib",
+            captured=captured,
+        )
+        monkeypatch.setattr(stream_codec, "has_zstd", lambda: False)
+
+        frame = pd.concat(
+            client.stream_cell_expression(
+                cells=[(7, 10), (7, 11)],
+                dataset_id="ds1",
+                layout="compact",
+                compress="zlib",
+            ),
+            ignore_index=True,
+        )
+
+        assert captured["compress"] == "zlib"
+        assert frame["value"].tolist() == [1.0, 2.0, 3.0]
 
     def test_missing_zstd_decoder_falls_back_to_legacy(self, monkeypatch, mock_client):
         captured = {}
