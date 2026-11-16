@@ -2137,8 +2137,8 @@ class MalvaClient:
             stream_layout = stream_compress = stream_values = None
             defaulted_layout = False
 
-        return CellExpressionStream(
-            lambda: self._iter_cell_expression_batches(
+        def _batches(*, fast: bool = False):
+            return self._iter_cell_expression_batches(
                 sample_ids=None if known_cells is not None else sample_ids,
                 gene_ids=gene_list,
                 dataset_id=dataset_id,
@@ -2149,7 +2149,12 @@ class MalvaClient:
                 layout=stream_layout,
                 values=stream_values,
                 allow_layout_fallback=defaulted_layout,
-            ),
+                fast=fast,
+            )
+
+        return CellExpressionStream(
+            lambda: _batches(fast=False),
+            fast_batches=lambda: _batches(fast=True),
             client=self,
             dataset_id=dataset_id,
             sample_ids=known_samples,
@@ -2171,13 +2176,18 @@ class MalvaClient:
         layout: Optional[str] = None,
         values: Optional[str] = None,
         allow_layout_fallback: bool = False,
+        fast: bool = False,
     ):
-        """Yield the raw pandas batches from the server frame stream.
+        """Yield the raw batches from the server frame stream.
 
         ``layout``/``compress``/``values`` arrive resolved from
         :meth:`stream_cell_expression`; ``allow_layout_fallback`` marks a
         compact layout that came from the defaults and may therefore be retried
-        transparently with the released framing.
+        transparently with the released framing. With ``fast=True`` and a
+        server that sends a feature list, each data frame is yielded as a
+        :class:`~malva_client.stream_codec.ExpressionBatch` carrying integer
+        feature codes instead of gene names. The public iterator converts those
+        back to the same DataFrames.
         """
         requested_cells: List[Tuple[int, int]] = []
         requested_genes: List[str] = []
@@ -2221,6 +2231,7 @@ class MalvaClient:
                 requested_cells,
                 requested_genes,
                 chunk_size=chunk_size,
+                fast=fast,
             )
             return
 
@@ -2251,6 +2262,7 @@ class MalvaClient:
                 values=values,
                 allow_layout_fallback=allow_layout_fallback,
                 chunk_size=chunk_size,
+                fast=fast,
             )
         except _LegacyCellStreamRequired as exc:
             # The compatibility retry happens before the first batch is yielded,
@@ -2269,6 +2281,7 @@ class MalvaClient:
                 requested_cells,
                 requested_genes,
                 chunk_size=chunk_size,
+                fast=fast,
             )
 
     def _stream_cell_frames(
@@ -2281,6 +2294,7 @@ class MalvaClient:
         values: Optional[str] = None,
         allow_layout_fallback: bool = False,
         chunk_size: int = 64 * 1024,
+        fast: bool = False,
     ):
         """Request one cell-expression stream and yield its DataFrames.
 
@@ -2318,6 +2332,59 @@ class MalvaClient:
                 )
 
             features_by_store: Dict[int, List[str]] = {}
+            # Integer feature codes let the AnnData accumulator skip the
+            # per-entry gene names and the repeated string factorization.
+            feature_names: List[str] = []
+            feature_name_to_code: Dict[str, int] = {}
+            feature_tables: Dict[int, np.ndarray] = {}
+            seen_codes = np.zeros(0, dtype=bool)
+            requested_array = (
+                np.asarray(requested_cells, dtype=np.int64)
+                if requested_cells
+                else np.empty((0, 2), dtype=np.int64)
+            )
+
+            def _feature_table(store_index: int, features: List[str]) -> np.ndarray:
+                """Map panel positions to stable integer codes for one store."""
+                table = np.empty(len(features), dtype=np.int64)
+                for position, name in enumerate(features):
+                    code = feature_name_to_code.get(name)
+                    if code is None:
+                        code = len(feature_names)
+                        feature_name_to_code[name] = code
+                        feature_names.append(name)
+                    table[position] = code
+                feature_tables[store_index] = table
+                return table
+
+            def _codes_for(store_index: int, positions: np.ndarray) -> Optional[np.ndarray]:
+                if not fast:
+                    return None
+                table = feature_tables.get(store_index)
+                if table is None or positions.size == 0:
+                    return None
+                highest = int(positions.max(initial=-1))
+                lowest = int(positions.min(initial=0))
+                if lowest < 0 or highest >= table.size:
+                    return None
+                return table[positions]
+
+            def _new_codes(codes: np.ndarray) -> np.ndarray:
+                nonlocal seen_codes
+                if codes.size and int(codes.max()) >= seen_codes.size:
+                    grown = np.zeros(int(codes.max()) + 1, dtype=bool)
+                    grown[: seen_codes.size] = seen_codes
+                    seen_codes = grown
+                fresh = codes[~seen_codes[codes]]
+                if not fresh.size:
+                    return np.empty(0, dtype=np.int64)
+                unique, first = np.unique(fresh, return_index=True)
+                # First appearance in this frame, not sorted code order, so the
+                # variable axis keeps its first-seen contract.
+                new = unique[np.argsort(first, kind="stable")]
+                seen_codes[new] = True
+                return new
+
             encoding: Optional[str] = None
             compact = False
             values_dtype = "f32"
@@ -2360,25 +2427,38 @@ class MalvaClient:
                         if frame_type == "features":
                             store_index = int(frame.get("store_index", 0))
                             features_by_store[store_index] = list(frame.get("features") or [])
+                            if fast:
+                                _feature_table(store_index, features_by_store[store_index])
                         elif frame_type == "data":
                             count = int(frame.get("n") or 0)
                             if count:
                                 store_index = int(frame.get("store_index", 0))
                                 features = features_by_store.get(store_index, [])
+                                codes = None
+                                gene_names = None
                                 if compact:
                                     (
+                                        _present,
+                                        _nnz,
                                         sample_values,
                                         cell_values,
-                                        gene_names,
+                                        positions,
                                         value_values,
-                                    ) = stream_codec.decode_compact_frame(
-                                        frame, requested_cells, features, values_dtype
+                                    ) = stream_codec.decode_compact_columns(
+                                        frame, requested_array, values_dtype
                                     )
+                                    codes = _codes_for(store_index, positions)
+                                    if codes is None:
+                                        (
+                                            sample_values,
+                                            cell_values,
+                                            gene_names,
+                                            value_values,
+                                        ) = stream_codec.decode_compact_frame(
+                                            frame, requested_cells, features, values_dtype
+                                        )
                                 else:
                                     positions = np.frombuffer(frame["feature_index"], dtype="<i4")
-                                    gene_names = stream_codec.map_gene_names(
-                                        positions, features, requested_genes
-                                    )
                                     sample_values = np.frombuffer(frame["sample_ids"], dtype="<i8")
                                     cell_values = np.frombuffer(frame["cell_ids"], dtype="<i8")
                                     value_values = np.frombuffer(frame["values"], dtype="<f4")
@@ -2393,15 +2473,33 @@ class MalvaClient:
                                                 f"{name} carries {int(column.size)} entries "
                                                 f"but the frame declares {count}"
                                             )
-                                batch = pd.DataFrame(
-                                    {
-                                        "sample_id": sample_values,
-                                        "cell_id": cell_values,
-                                        "store_index": np.full(count, store_index, dtype=np.int32),
-                                        "gene": gene_names,
-                                        "value": value_values,
-                                    }
-                                )
+                                    codes = _codes_for(store_index, positions)
+                                    if codes is None:
+                                        gene_names = stream_codec.map_gene_names(
+                                            positions, features, requested_genes
+                                        )
+                                if codes is not None:
+                                    batch = stream_codec.ExpressionBatch(
+                                        sample_values,
+                                        cell_values,
+                                        codes,
+                                        value_values,
+                                        store_index,
+                                        feature_names,
+                                        _new_codes(codes),
+                                    )
+                                else:
+                                    batch = pd.DataFrame(
+                                        {
+                                            "sample_id": sample_values,
+                                            "cell_id": cell_values,
+                                            "store_index": np.full(
+                                                count, store_index, dtype=np.int32
+                                            ),
+                                            "gene": gene_names,
+                                            "value": value_values,
+                                        }
+                                    )
                     except _LegacyCellStreamRequired:
                         raise
                     except Exception as exc:

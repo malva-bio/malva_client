@@ -13,6 +13,7 @@ import numpy as np
 import pandas as pd
 from scipy import sparse
 
+from malva_client import stream_codec
 from malva_client.exceptions import (
     MalvaAPIError,
 )
@@ -1656,8 +1657,194 @@ def _arrays_to_anndata(
     return result
 
 
+class _ObsAxis:
+    """Observation axis keyed by integer ``(sample_id, cell_id)`` pairs.
+
+    The common case packs the pair into one ``int64`` (a dense sample code in
+    the high 32 bits and the cell id in the low 32 bits), so de-duplication is
+    one ``pd.factorize`` plus a binary search over the keys already seen. No
+    per-cell string is built until :meth:`finish`, and the final
+    ``sample:cell`` names are produced with one NumPy cast. Arbitrary string or
+    float identifiers keep the previous, slower object path.
+    """
+
+    def __init__(self):
+        self._mode: Optional[str] = None
+        self._sorted_keys = np.empty(0, dtype=np.int64)
+        self._sorted_rows = np.empty(0, dtype=np.int64)
+        self._keys_obj = pd.Index([], dtype=object)
+        self._samples_parts: List[np.ndarray] = []
+        self._cells_parts: List[np.ndarray] = []
+        self._sample_codes: Dict[int, int] = {}
+        self._sample_code_values: List[int] = []
+        self._count = 0
+
+    @property
+    def n_obs(self) -> int:
+        return self._count
+
+    @property
+    def mode(self) -> Optional[str]:
+        return self._mode
+
+    @staticmethod
+    def _integer_columns(samples: Any, cells: Any) -> Optional[Tuple[np.ndarray, np.ndarray]]:
+        """Return non-negative int64 columns, or None when the int key cannot hold them."""
+        sample_values = np.asarray(samples)
+        cell_values = np.asarray(cells)
+        if sample_values.dtype.kind not in "iu" or cell_values.dtype.kind not in "iu":
+            return None
+        if sample_values.size == 0:
+            return (
+                np.empty(0, dtype=np.int64),
+                np.empty(0, dtype=np.int64),
+            )
+        limit = np.iinfo(np.int64).max
+        if sample_values.dtype.kind == "u" and int(sample_values.max()) > limit:
+            return None
+        if cell_values.dtype.kind == "u" and int(cell_values.max()) > limit:
+            return None
+        sample_int = sample_values.astype(np.int64, copy=False)
+        cell_int = cell_values.astype(np.int64, copy=False)
+        if int(sample_int.min()) < 0 or int(cell_int.min()) < 0:
+            return None
+        if int(cell_int.max()) >= (1 << 32):
+            return None
+        return sample_int, cell_int
+
+    @staticmethod
+    def _string_keys(samples: Any, cells: Any) -> np.ndarray:
+        sample_keys = pd.Series(samples).astype(str)
+        cell_keys = pd.Series(cells).astype(str)
+        return (sample_keys + ":" + cell_keys).to_numpy(dtype=object)
+
+    def _sample_code(self, value: int) -> int:
+        code = self._sample_codes.get(value)
+        if code is None:
+            code = len(self._sample_code_values)
+            self._sample_codes[value] = code
+            self._sample_code_values.append(value)
+        return code
+
+    def _pack(self, sample_int: np.ndarray, cell_int: np.ndarray) -> np.ndarray:
+        if sample_int.size == 0:
+            return np.empty(0, dtype=np.int64)
+        if int(sample_int.min()) == int(sample_int.max()):
+            sample_codes = np.full(
+                sample_int.size, self._sample_code(int(sample_int[0])), dtype=np.int64
+            )
+        else:
+            local, unique = pd.factorize(sample_int, sort=False)
+            codes = np.fromiter(
+                (self._sample_code(int(value)) for value in unique.tolist()),
+                dtype=np.int64,
+                count=len(unique),
+            )
+            sample_codes = codes[local]
+        return (sample_codes << 32) | cell_int
+
+    def _to_object(self) -> None:
+        """Switch to the exact-string path, preserving rows and their order."""
+        if self._mode == "object":
+            return
+        if self._count:
+            samples = np.concatenate(self._samples_parts)
+            cells = np.concatenate(self._cells_parts)
+            self._keys_obj = pd.Index(self._string_keys(samples, cells), dtype=object)
+            self._samples_parts = [np.asarray(samples, dtype=object)]
+            self._cells_parts = [np.asarray(cells, dtype=object)]
+        else:
+            self._keys_obj = pd.Index([], dtype=object)
+            self._samples_parts = []
+            self._cells_parts = []
+        self._sorted_keys = np.empty(0, dtype=np.int64)
+        self._sorted_rows = np.empty(0, dtype=np.int64)
+        self._mode = "object"
+
+    def _add_object(self, samples: Any, cells: Any) -> np.ndarray:
+        keys = self._string_keys(samples, cells)
+        local, unique = pd.factorize(keys, sort=False)
+        codes = self._keys_obj.get_indexer(unique)
+        new = codes < 0
+        if new.any():
+            _, first_index = np.unique(local, return_index=True)
+            new_slots = np.flatnonzero(new)
+            start = self._count
+            codes[new_slots] = np.arange(start, start + new_slots.size, dtype=np.int64)
+            self._keys_obj = self._keys_obj.append(pd.Index(unique[new], dtype=object))
+            self._samples_parts.append(np.asarray(samples, dtype=object)[first_index[new_slots]])
+            self._cells_parts.append(np.asarray(cells, dtype=object)[first_index[new_slots]])
+            self._count += int(new_slots.size)
+        return np.asarray(codes, dtype=np.int64)[local]
+
+    def add(self, samples: Any, cells: Any) -> np.ndarray:
+        """Append one batch and return the global observation row per entry."""
+        integer_columns = self._integer_columns(samples, cells)
+        if integer_columns is None:
+            self._to_object()
+            return self._add_object(samples, cells)
+        if self._mode == "object":
+            return self._add_object(samples, cells)
+
+        self._mode = "int"
+        sample_int, cell_int = integer_columns
+        keys = self._pack(sample_int, cell_int)
+        local, unique = pd.factorize(keys, sort=False)
+        positions = np.searchsorted(self._sorted_keys, unique)
+        found = np.zeros(unique.size, dtype=bool)
+        if self._sorted_keys.size:
+            clipped = np.minimum(positions, self._sorted_keys.size - 1)
+            found = self._sorted_keys[clipped] == unique
+            positions = clipped
+
+        new = ~found
+        if new.any():
+            _, first_index = np.unique(local, return_index=True)
+            new_slots = np.flatnonzero(new)
+            new_rows = np.arange(self._count, self._count + new_slots.size, dtype=np.int64)
+            all_keys = np.concatenate([self._sorted_keys, unique[new]])
+            all_rows = np.concatenate([self._sorted_rows, new_rows])
+            order = np.argsort(all_keys, kind="stable")
+            self._sorted_keys = all_keys[order]
+            self._sorted_rows = all_rows[order]
+            self._samples_parts.append(sample_int[first_index[new_slots]])
+            self._cells_parts.append(cell_int[first_index[new_slots]])
+            self._count += int(new_slots.size)
+            positions = np.searchsorted(self._sorted_keys, unique)
+
+        return self._sorted_rows[positions][local]
+
+    def finish(self, *, sort: bool) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """Return names, samples, cells, and the row order for ``sort``."""
+        count = self._count
+        if count == 0:
+            empty = np.empty(0, dtype=object)
+            return (
+                empty,
+                np.empty(0, dtype=np.int64),
+                np.empty(0, dtype=np.int64),
+                np.empty(0, dtype=np.int64),
+            )
+        samples = np.concatenate(self._samples_parts)
+        cells = np.concatenate(self._cells_parts)
+        if self._mode == "int":
+            raw = np.char.add(
+                np.char.add(samples.astype(str), ":"),
+                cells.astype(str),
+            ).astype(object)
+        else:
+            raw = self._keys_obj.to_numpy()
+        order = np.argsort(raw, kind="stable") if sort else np.arange(count)
+        ordered_raw = raw[order]
+        if self._mode == "int":
+            names = ordered_raw
+        else:
+            names = np.asarray(_make_unique_names(ordered_raw), dtype=object)
+        return names, samples[order], cells[order], order
+
+
 class _AnnDataAccumulator:
-    """Fold long-format expression batches into one cells × genes CSR matrix.
+    """Fold expression batches into one cells × genes CSR matrix.
 
     The accumulator is the single implementation behind
     :meth:`CellExpressionStream.to_anndata` and the chunked mode of
@@ -1669,10 +1856,15 @@ class _AnnDataAccumulator:
     * one CSR block per ingested batch with ``cells_in_batch`` rows and every
       gene discovered so far as columns.
 
-    Blocks are widened by metadata only when a batch introduces new genes and
-    stacked with a single :func:`scipy.sparse.vstack` in :meth:`finish`, so the
-    stream never materialises a concatenated copy of all batches. Cells split
-    across server batches are folded into one observation row at that point.
+    Compact streams hand over :class:`~malva_client.stream_codec.ExpressionBatch`
+    objects whose genes are integer codes, so a batch costs numeric array work
+    only: no per-cell strings, no repeated string factorization, and no full
+    ``var`` re-factorization. Plain DataFrames keep the same behaviour through
+    the array path below. Blocks are widened by metadata only when a batch
+    introduces new genes and stacked with one :func:`scipy.sparse.vstack` in
+    :meth:`finish`, so the stream never materialises a concatenated copy of all
+    batches. Cells split across server batches are folded into one observation
+    row at that point.
     """
 
     def __init__(
@@ -1683,22 +1875,24 @@ class _AnnDataAccumulator:
     ):
         self._sample_metadata = sample_metadata
         self._uns = uns
-        self._obs_keys = pd.Index([], dtype=object)
-        self._obs_samples: List[np.ndarray] = []
-        self._obs_cells: List[np.ndarray] = []
-        self._var_names = pd.Index([], dtype=object)
+        self._obs = _ObsAxis()
+        self._var_names: List[str] = []
+        self._var_name_to_code: Dict[str, int] = {}
+        # Client feature code -> accumulator column. Codes arrive in
+        # first-appearance order, so the table only ever grows.
+        self._client_code_map = np.empty(0, dtype=np.int64)
         self._blocks: List[sparse.csr_matrix] = []
         self._block_rows: List[np.ndarray] = []
 
     @property
     def n_obs(self) -> int:
         """Number of distinct observations ingested so far."""
-        return int(self._obs_keys.size)
+        return self._obs.n_obs
 
     @property
     def n_vars(self) -> int:
         """Number of distinct genes discovered so far."""
-        return int(self._var_names.size)
+        return len(self._var_names)
 
     @property
     def bytes_estimate(self) -> int:
@@ -1712,9 +1906,117 @@ class _AnnDataAccumulator:
         )
         return int(sparse_bytes + 64 * self.n_obs + 64 * self.n_vars)
 
-    def add(self, batch: Optional[pd.DataFrame]) -> "_AnnDataAccumulator":
-        """Ingest one long-format batch without iterating its rows in Python."""
-        if batch is None or batch.empty:
+    def _var_column(self, name: str) -> int:
+        column = self._var_name_to_code.get(name)
+        if column is None:
+            column = len(self._var_names)
+            self._var_name_to_code[name] = column
+            self._var_names.append(name)
+        return column
+
+    def _client_columns(self, batch: stream_codec.ExpressionBatch) -> np.ndarray:
+        """Map a compact batch's client codes to accumulator columns."""
+        new_codes = batch.new_codes
+        highest = int(new_codes.max()) if new_codes.size else -1
+        if batch.gene_codes.size:
+            highest = max(highest, int(batch.gene_codes.max()))
+        if highest >= self._client_code_map.size:
+            grown = np.full(highest + 1, -1, dtype=np.int64)
+            grown[: self._client_code_map.size] = self._client_code_map
+            self._client_code_map = grown
+        if new_codes.size:
+            for code in new_codes.tolist():
+                name = str(batch.gene_names[code])
+                column = self._var_column(name)
+                self._client_code_map[code] = column
+        return self._client_code_map[batch.gene_codes]
+
+    def _dataframe_columns(self, batch: pd.DataFrame) -> np.ndarray:
+        """Map a DataFrame's gene strings to accumulator columns."""
+        genes = batch["gene"].astype(str)
+        local, unique = pd.factorize(genes, sort=False)
+        columns = np.fromiter(
+            (self._var_column(str(name)) for name in unique),
+            dtype=np.int64,
+            count=len(unique),
+        )
+        return columns[local]
+
+    @staticmethod
+    def _block_shape(obs_rows: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        """Return distinct block rows and the local row per entry.
+
+        Compact frames carry complete cells in request order, so their global
+        rows are usually non-decreasing and grouped. That path avoids a hash
+        pass and uses the run boundaries directly. Anything else falls back to
+        ``np.unique``.
+        """
+        if obs_rows.size == 0:
+            return np.empty(0, dtype=np.int64), np.empty(0, dtype=np.int64)
+        if np.all(obs_rows[1:] >= obs_rows[:-1]):
+            changes = np.flatnonzero(obs_rows[1:] != obs_rows[:-1]) + 1
+            starts = np.concatenate(([0], changes))
+            block_rows = obs_rows[starts]
+            counts = np.diff(np.append(starts, obs_rows.size))
+            local_rows = np.repeat(np.arange(block_rows.size, dtype=np.int64), counts)
+            return block_rows, local_rows
+        block_rows, local_rows = np.unique(obs_rows, return_inverse=True)
+        return block_rows.astype(np.int64, copy=False), local_rows.astype(np.int64, copy=False)
+
+    @staticmethod
+    def _csr_block(
+        obs_rows: np.ndarray,
+        var_columns: np.ndarray,
+        values: np.ndarray,
+        n_vars: int,
+    ) -> Tuple[sparse.csr_matrix, np.ndarray]:
+        """Build one block from row pointers without sorting its columns.
+
+        The server does not promise that feature positions arrive in ascending
+        order within a cell, and the final variable axis is only known after
+        the last batch. Sorting every block here and sorting again for the
+        final column permutation would scan the indices twice. The block is
+        therefore left non-canonical; :meth:`finish` sorts and sums duplicate
+        entries exactly once, after the columns have reached their final order.
+        """
+        block_rows, local_rows = _AnnDataAccumulator._block_shape(obs_rows)
+        n_rows = int(block_rows.size)
+        counts = np.bincount(local_rows, minlength=n_rows)
+        indptr = np.empty(n_rows + 1, dtype=np.int64)
+        indptr[0] = 0
+        np.cumsum(counts, out=indptr[1:])
+        index_dtype = np.int32 if n_vars < (1 << 31) else np.int64
+        block = sparse.csr_matrix(
+            (
+                values.astype(np.float32, copy=False),
+                var_columns.astype(index_dtype, copy=False),
+                indptr,
+            ),
+            shape=(n_rows, n_vars),
+            copy=False,
+        )
+        return block, block_rows
+
+    def add(self, batch: Any) -> "_AnnDataAccumulator":
+        """Ingest one batch without iterating its rows in Python."""
+        if batch is None:
+            return self
+        if isinstance(batch, stream_codec.ExpressionBatch):
+            if batch.values.size == 0:
+                return self
+            obs_rows = self._obs.add(batch.sample_ids, batch.cell_ids)
+            var_columns = self._client_columns(batch)
+            if var_columns.size and bool((var_columns < 0).any()):
+                raise ValueError("Expression batch references an unknown feature code")
+            if self._blocks and self._blocks[0].shape[1] != self.n_vars:
+                self._widen_blocks(self.n_vars)
+            block, block_rows = self._csr_block(obs_rows, var_columns, batch.values, self.n_vars)
+            self._blocks.append(block)
+            self._block_rows.append(block_rows)
+            return self
+        if not isinstance(batch, pd.DataFrame):
+            raise TypeError("Expression batches must be DataFrames or ExpressionBatch objects")
+        if batch.empty:
             return self
         required = {"sample_id", "cell_id", "gene", "value"}
         missing = required.difference(batch.columns)
@@ -1724,39 +2026,19 @@ class _AnnDataAccumulator:
                 f"columns (missing: {', '.join(sorted(missing))})"
             )
 
-        obs_keys = batch["sample_id"].astype(str) + ":" + batch["cell_id"].astype(str)
-        local_obs, unique_obs = pd.factorize(obs_keys, sort=False)
-        obs_codes = self._obs_keys.get_indexer(unique_obs)
-        new_obs = obs_codes < 0
-        if new_obs.any():
-            # ``unique_obs`` and the first occurrence of each key follow the same
-            # row order, so the raw identifiers can be selected with one mask.
-            first = batch.loc[~obs_keys.duplicated(), ["sample_id", "cell_id"]]
-            obs_codes[new_obs] = np.arange(self.n_obs, self.n_obs + int(new_obs.sum()))
-            self._obs_keys = self._obs_keys.append(pd.Index(unique_obs[new_obs], dtype=object))
-            self._obs_samples.append(first["sample_id"].to_numpy()[new_obs])
-            self._obs_cells.append(first["cell_id"].to_numpy()[new_obs])
-
-        genes = batch["gene"].astype(str)
-        local_var, unique_genes = pd.factorize(genes, sort=False)
-        var_codes = self._var_names.get_indexer(unique_genes)
-        new_var = var_codes < 0
-        if new_var.any():
-            var_codes[new_var] = np.arange(self.n_vars, self.n_vars + int(new_var.sum()))
-            self._var_names = self._var_names.append(pd.Index(unique_genes[new_var], dtype=object))
+        obs_rows = self._obs.add(
+            batch["sample_id"].to_numpy(copy=False),
+            batch["cell_id"].to_numpy(copy=False),
+        )
+        var_columns = self._dataframe_columns(batch)
+        if self._blocks and self._blocks[0].shape[1] != self.n_vars:
             self._widen_blocks(self.n_vars)
-
         values = pd.to_numeric(batch["value"], errors="coerce").fillna(0.0)
-        block = sparse.coo_matrix(
-            (
-                values.to_numpy(dtype=np.float32),
-                (local_obs, var_codes[local_var]),
-            ),
-            shape=(len(unique_obs), self.n_vars),
-            dtype=np.float32,
-        ).tocsr()
+        block, block_rows = self._csr_block(
+            obs_rows, var_columns, values.to_numpy(dtype=np.float32), self.n_vars
+        )
         self._blocks.append(block)
-        self._block_rows.append(np.asarray(obs_codes, dtype=np.int64))
+        self._block_rows.append(block_rows)
         return self
 
     def _widen_blocks(self, n_vars: int) -> None:
@@ -1779,7 +2061,11 @@ class _AnnDataAccumulator:
     def _stack(self) -> sparse.csr_matrix:
         matrix = sparse.vstack(self._blocks, format="csr", dtype=np.float32)
         if matrix.shape[0] == self.n_obs:
-            return matrix
+            rows = np.concatenate(self._block_rows) if self._block_rows else np.empty(0)
+            if rows.size == self.n_obs and np.array_equal(
+                rows, np.arange(self.n_obs, dtype=np.int64)
+            ):
+                return matrix
         # A cell whose entries arrived in more than one batch owns one row per
         # block. Sum those rows back into the single observation row.
         rows = np.concatenate(self._block_rows)
@@ -1790,6 +2076,25 @@ class _AnnDataAccumulator:
         )
         return (selector @ matrix).tocsr()
 
+    @staticmethod
+    def _reorder_columns(matrix: sparse.csr_matrix, order: np.ndarray) -> sparse.csr_matrix:
+        """Permute CSR columns and canonicalise the result in one pass.
+
+        ``sum_duplicates`` sorts each row and sums duplicate gene entries, which
+        covers both the column permutation and any duplicate ``(cell, gene)``
+        pair that arrived in one batch or in several stores.
+        """
+        if order.size and not np.array_equal(order, np.arange(order.size)):
+            inverse = np.empty(order.size, dtype=matrix.indices.dtype)
+            inverse[order] = np.arange(order.size, dtype=matrix.indices.dtype)
+            matrix = sparse.csr_matrix(
+                (matrix.data, inverse[matrix.indices], matrix.indptr),
+                shape=matrix.shape,
+                copy=False,
+            )
+        matrix.sum_duplicates()
+        return matrix
+
     def finish(self, *, sort: bool = False) -> ad.AnnData:
         """Return the AnnData for everything ingested so far.
 
@@ -1799,30 +2104,31 @@ class _AnnDataAccumulator:
         """
         if self.n_obs == 0 or self.n_vars == 0:
             return _empty_anndata()
-        obs_keys = self._obs_keys.to_numpy()
-        obs_order = np.arange(self.n_obs)
-        var_order = np.arange(self.n_vars)
-        if sort:
-            obs_order = np.argsort(obs_keys, kind="stable")
-            var_order = np.argsort(self._var_names.to_numpy(), kind="stable")
+        names, samples, cells, obs_order = self._obs.finish(sort=sort)
+        var_names = np.asarray(self._var_names, dtype=object)
+        var_order = (
+            np.argsort(var_names, kind="stable")
+            if sort
+            else np.arange(var_names.size, dtype=np.int64)
+        )
 
         matrix = self._stack()
-        if sort:
-            matrix = matrix[obs_order][:, var_order]
+        if sort and not np.array_equal(obs_order, np.arange(obs_order.size)):
+            matrix = matrix[obs_order]
+        matrix = self._reorder_columns(matrix, var_order)
 
-        sample_values = np.concatenate(self._obs_samples)[obs_order]
-        cell_values = np.concatenate(self._obs_cells)[obs_order]
         obs = pd.DataFrame(
-            {"sample_id": sample_values, "cell_id": cell_values},
-            index=pd.Index(_make_unique_names(obs_keys[obs_order]), name="obs_names"),
+            {"sample_id": samples, "cell_id": cells},
+            index=pd.Index(names, name="obs_names"),
         )
         if self._sample_metadata is not None:
             obs = _merge_sample_metadata(obs.reset_index(), self._sample_metadata)
             obs = obs.set_index("obs_names")
-        obs["sample_id"] = _coerce_obs_id(obs["sample_id"])
-        obs["cell_id"] = _coerce_obs_id(obs["cell_id"])
+        if self._obs.mode != "int":
+            obs["sample_id"] = _coerce_obs_id(obs["sample_id"])
+            obs["cell_id"] = _coerce_obs_id(obs["cell_id"])
 
-        var = pd.DataFrame(index=pd.Index(self._var_names.to_numpy()[var_order], name="gene"))
+        var = pd.DataFrame(index=pd.Index(var_names[var_order], name="gene"))
         result = ad.AnnData(X=matrix, obs=obs, var=var)
         if self._uns:
             result.uns["malva"] = _json_safe(self._uns)
@@ -1836,9 +2142,7 @@ class _AnnDataAccumulator:
         the end.
         """
         chunk = self.finish()
-        self._obs_keys = pd.Index([], dtype=object)
-        self._obs_samples = []
-        self._obs_cells = []
+        self._obs = _ObsAxis()
         self._blocks = []
         self._block_rows = []
         return chunk
@@ -1872,8 +2176,10 @@ class CellExpressionStream:
         cells: Optional[Iterable[Any]] = None,
         cell_metadata: Optional[Any] = None,
         include_cell_metadata: bool = True,
+        fast_batches: Optional[Any] = None,
     ):
         self._batches = batches
+        self._fast_batches = fast_batches
         self.client = client
         self.dataset_id = dataset_id
         self.sample_ids = list(sample_ids) if sample_ids is not None else None
@@ -1886,8 +2192,52 @@ class CellExpressionStream:
         self._enriched = False
 
     def __iter__(self):
-        source = self._batches() if callable(self._batches) else self._batches
+        for batch in self._iter_raw():
+            if isinstance(batch, stream_codec.ExpressionBatch):
+                yield batch.to_frame()
+            else:
+                yield batch
+
+    def _iter_raw(self):
+        """Yield the internal batches: expression arrays when the stream has them."""
+        if self._fast_batches is not None:
+            source = self._fast_batches()
+        else:
+            source = self._batches
+        source = source() if callable(source) else source
         return iter(source)
+
+    def _batch_to_anndata(
+        self,
+        batch: Any,
+        *,
+        uns: Optional[Dict[str, Any]] = None,
+    ) -> ad.AnnData:
+        """Convert one internal batch, using the array path when available."""
+        if isinstance(batch, stream_codec.ExpressionBatch):
+            accumulator = _AnnDataAccumulator(
+                sample_metadata=self._sample_metadata,
+                uns=uns,
+            )
+            # A standalone batch has no earlier accumulator to seed its code
+            # table, so every code it uses counts as new for this conversion.
+            accumulator.add(
+                stream_codec.ExpressionBatch(
+                    batch.sample_ids,
+                    batch.cell_ids,
+                    batch.gene_codes,
+                    batch.values,
+                    batch.store_index,
+                    batch.gene_names,
+                    np.unique(batch.gene_codes),
+                )
+            )
+            return accumulator.finish(sort=True)
+        return _frame_to_anndata(
+            batch,
+            sample_metadata=self._sample_metadata,
+            uns=uns,
+        )
 
     def __repr__(self) -> str:
         return f"CellExpressionStream(dataset_id={self.dataset_id!r})"
@@ -2022,7 +2372,7 @@ class CellExpressionStream:
             sample_metadata=self._sample_metadata,
             uns=self._uns(),
         )
-        for batch in self:
+        for batch in self._iter_raw():
             accumulator.add(batch)
         return self._with_cell_metadata(accumulator.finish(sort=True))
 
@@ -2055,18 +2405,14 @@ class CellExpressionStream:
         """
         self._ensure_enriched()
         if chunk_obs is None:
-            for batch in self:
-                if batch is None or batch.empty:
+            for batch in self._iter_raw():
+                if batch is None:
+                    continue
+                if isinstance(batch, pd.DataFrame) and batch.empty:
                     continue
                 uns = self._uns()
                 uns["batch"] = True
-                yield self._with_cell_metadata(
-                    _frame_to_anndata(
-                        batch,
-                        sample_metadata=self._sample_metadata,
-                        uns=uns,
-                    )
-                )
+                yield self._with_cell_metadata(self._batch_to_anndata(batch, uns=uns))
             return
 
         if isinstance(chunk_obs, bool) or not isinstance(chunk_obs, int) or chunk_obs < 1:
@@ -2077,7 +2423,7 @@ class CellExpressionStream:
             sample_metadata=self._sample_metadata,
             uns=uns,
         )
-        for batch in self:
+        for batch in self._iter_raw():
             accumulator.add(batch)
             if accumulator.n_obs >= chunk_obs:
                 yield self._with_cell_metadata(accumulator.flush())

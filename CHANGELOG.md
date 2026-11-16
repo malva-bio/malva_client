@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.2] - 2026-11-16
+### Changed
+- `to_anndata()` and `iter_anndata()` now assemble compact streams from
+  integer columns. Observation identities are int64 keys until the final
+  `sample_id:cell_id` names are built with one NumPy string cast, and genes are
+  carried as integer feature codes with one append-only name table instead of
+  being re-factorized for every batch. Duplicate gene entries are summed once,
+  after the final variable order is known, so each matrix index is sorted in a
+  single pass. On the 12,838-cell reference stream this cuts AnnData assembly
+  from about 11.6 s to about 1.5 s while keeping the observation order,
+  variable order, values, dtypes and `uns["malva"]` identical. Peak memory for
+  a 20,000-cell stream also falls relative to 0.9.1.
+### Added
+- `stream_codec.ExpressionBatch` carries one decoded server frame as numeric
+  arrays plus a gene-code table. The public iterator still yields the same
+  pandas DataFrames, and callers that build their own accumulator can use the
+  numeric form directly.
+
 ## [0.9.1] - 2026-11-16
 ### Changed
 - `stream_cell_expression(cells=...)` now uses the compact framing with zstd
