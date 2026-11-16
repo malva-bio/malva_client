@@ -265,6 +265,7 @@
 <span></span><span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">logging</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">struct</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">tarfile</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">tempfile</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">time</span>
@@ -611,6 +612,24 @@
 
 <span class="n">logging</span><span class="o">.</span><span class="n">basicConfig</span><span class="p">(</span><span class="n">level</span><span class="o">=</span><span class="n">logging</span><span class="o">.</span><span class="n">INFO</span><span class="p">)</span>
 <span class="n">logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="vm">__name__</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_map_stream_gene_names</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">int</span><span class="p">],</span> <span class="n">features</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span> <span class="n">requested_genes</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">"""Map streamed feature indices to gene names.</span>
+
+<span class="sd">    Current servers send positions within the requested panel; older servers</span>
+<span class="sd">    send store ordinals. Resolve the former directly, and the latter by</span>
+<span class="sd">    matching the distinct ordinals, in panel order, to the requested genes.</span>
+<span class="sd">    """</span>
+    <span class="n">unique</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="nb">dict</span><span class="o">.</span><span class="n">fromkeys</span><span class="p">(</span><span class="n">positions</span><span class="p">))</span>
+    <span class="n">names</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
+    <span class="k">if</span> <span class="n">unique</span> <span class="ow">and</span> <span class="nb">all</span><span class="p">(</span><span class="mi">0</span> <span class="o">&lt;=</span> <span class="n">index</span> <span class="o">&lt;</span> <span class="nb">len</span><span class="p">(</span><span class="n">features</span><span class="p">)</span> <span class="k">for</span> <span class="n">index</span> <span class="ow">in</span> <span class="n">unique</span><span class="p">):</span>
+        <span class="n">names</span> <span class="o">=</span> <span class="p">{</span><span class="n">index</span><span class="p">:</span> <span class="n">features</span><span class="p">[</span><span class="n">index</span><span class="p">]</span> <span class="k">for</span> <span class="n">index</span> <span class="ow">in</span> <span class="n">unique</span><span class="p">}</span>
+    <span class="k">elif</span> <span class="n">requested_genes</span> <span class="ow">and</span> <span class="nb">len</span><span class="p">(</span><span class="n">unique</span><span class="p">)</span> <span class="o">==</span> <span class="nb">len</span><span class="p">(</span><span class="n">requested_genes</span><span class="p">):</span>
+        <span class="n">names</span> <span class="o">=</span> <span class="p">{</span><span class="n">index</span><span class="p">:</span> <span class="n">requested_genes</span><span class="p">[</span><span class="n">k</span><span class="p">]</span> <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">index</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">unique</span><span class="p">)}</span>
+    <span class="k">return</span> <span class="p">[</span><span class="n">names</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">index</span><span class="p">,</span> <span class="sa">f</span><span class="s2">"feature_</span><span class="si">{</span><span class="n">index</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span> <span class="k">for</span> <span class="n">index</span> <span class="ow">in</span> <span class="n">positions</span><span class="p">]</span>
 
 
 <div class="viewcode-block" id="MalvaClient">
@@ -2334,6 +2353,7 @@
                     <span class="sa">f</span><span class="s2">"Cell expression stream failed (</span><span class="si">{</span><span class="n">response</span><span class="o">.</span><span class="n">status_code</span><span class="si">}</span><span class="s2">): </span><span class="si">{</span><span class="n">detail</span><span class="si">}</span><span class="s2">"</span>
                 <span class="p">)</span>
 
+            <span class="n">requested_genes</span> <span class="o">=</span> <span class="p">[</span><span class="n">gene_ids</span><span class="p">]</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">gene_ids</span><span class="p">,</span> <span class="nb">str</span><span class="p">)</span> <span class="k">else</span> <span class="nb">list</span><span class="p">(</span><span class="n">gene_ids</span> <span class="ow">or</span> <span class="p">[])</span>
             <span class="n">features_by_store</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]]</span> <span class="o">=</span> <span class="p">{}</span>
             <span class="n">buffer</span> <span class="o">=</span> <span class="nb">bytearray</span><span class="p">()</span>
             <span class="k">for</span> <span class="n">chunk</span> <span class="ow">in</span> <span class="n">response</span><span class="o">.</span><span class="n">iter_content</span><span class="p">(</span><span class="n">chunk_size</span><span class="o">=</span><span class="n">chunk_size</span><span class="p">):</span>
@@ -2360,12 +2380,8 @@
                     <span class="n">store_index</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">frame</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"store_index"</span><span class="p">,</span> <span class="mi">0</span><span class="p">))</span>
                     <span class="n">feature_index</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">frombuffer</span><span class="p">(</span><span class="n">frame</span><span class="p">[</span><span class="s2">"feature_index"</span><span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><span class="s2">"&lt;i4"</span><span class="p">)</span>
                     <span class="n">features</span> <span class="o">=</span> <span class="n">features_by_store</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">store_index</span><span class="p">,</span> <span class="p">[])</span>
-                    <span class="n">gene_names</span> <span class="o">=</span> <span class="p">[</span>
-                        <span class="n">features</span><span class="p">[</span><span class="nb">int</span><span class="p">(</span><span class="n">index</span><span class="p">)]</span>
-                        <span class="k">if</span> <span class="mi">0</span> <span class="o">&lt;=</span> <span class="nb">int</span><span class="p">(</span><span class="n">index</span><span class="p">)</span> <span class="o">&lt;</span> <span class="nb">len</span><span class="p">(</span><span class="n">features</span><span class="p">)</span>
-                        <span class="k">else</span> <span class="sa">f</span><span class="s2">"feature_</span><span class="si">{</span><span class="nb">int</span><span class="p">(</span><span class="n">index</span><span class="p">)</span><span class="si">}</span><span class="s2">"</span>
-                        <span class="k">for</span> <span class="n">index</span> <span class="ow">in</span> <span class="n">feature_index</span>
-                    <span class="p">]</span>
+                    <span class="n">positions</span> <span class="o">=</span> <span class="p">[</span><span class="nb">int</span><span class="p">(</span><span class="n">index</span><span class="p">)</span> <span class="k">for</span> <span class="n">index</span> <span class="ow">in</span> <span class="n">feature_index</span><span class="p">]</span>
+                    <span class="n">gene_names</span> <span class="o">=</span> <span class="n">_map_stream_gene_names</span><span class="p">(</span><span class="n">positions</span><span class="p">,</span> <span class="n">features</span><span class="p">,</span> <span class="n">requested_genes</span><span class="p">)</span>
                     <span class="k">yield</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">(</span>
                         <span class="p">{</span>
                             <span class="s2">"sample_id"</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">frombuffer</span><span class="p">(</span><span class="n">frame</span><span class="p">[</span><span class="s2">"sample_ids"</span><span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><span class="s2">"&lt;i8"</span><span class="p">),</span>
@@ -4786,9 +4802,9 @@
 <span class="w">        </span><span class="sd">"""</span>
 <span class="sd">        Run a full coexpression analysis for a search job on a dataset.</span>
 
-<span class="sd">        Calls ``POST /api/coexpression/query-by-job`` with all enrichment</span>
-<span class="sd">        options enabled (GO enrichment, UMAP scores, cell-type enrichment,</span>
-<span class="sd">        tissue breakdown).</span>
+<span class="sd">        Calls ``POST /api/coexpression/by-job`` (falling back to the legacy</span>
+<span class="sd">        ``/api/coexpression/query-by-job``) with all enrichment options enabled</span>
+<span class="sd">        (GO enrichment, UMAP scores, cell-type enrichment, tissue breakdown).</span>
 
 <span class="sd">        Args:</span>
 <span class="sd">            job_id: Job ID from a previous search</span>
@@ -4813,7 +4829,12 @@
         <span class="n">data</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">kwargs</span><span class="p">)</span>
         <span class="n">response</span><span class="p">,</span> <span class="n">endpoint</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_request_first_available</span><span class="p">(</span>
             <span class="s2">"POST"</span><span class="p">,</span>
-            <span class="p">[</span><span class="s2">"/api/coexpression/query-by-job"</span><span class="p">,</span> <span class="s2">"/query-by-job"</span><span class="p">],</span>
+            <span class="p">[</span>
+                <span class="s2">"/api/coexpression/by-job"</span><span class="p">,</span>
+                <span class="s2">"/query/by-job"</span><span class="p">,</span>
+                <span class="s2">"/api/coexpression/query-by-job"</span><span class="p">,</span>
+                <span class="s2">"/query-by-job"</span><span class="p">,</span>
+            <span class="p">],</span>
             <span class="n">json</span><span class="o">=</span><span class="n">data</span><span class="p">,</span>
         <span class="p">)</span>
         <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_coexpression_from_response</span><span class="p">(</span>
@@ -4868,7 +4889,12 @@
         <span class="n">data</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">kwargs</span><span class="p">)</span>
         <span class="n">response</span><span class="p">,</span> <span class="n">endpoint</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_request_first_available</span><span class="p">(</span>
             <span class="s2">"POST"</span><span class="p">,</span>
-            <span class="p">[</span><span class="s2">"/api/coexpression/query-by-job"</span><span class="p">,</span> <span class="s2">"/query-by-job"</span><span class="p">],</span>
+            <span class="p">[</span>
+                <span class="s2">"/api/coexpression/by-job"</span><span class="p">,</span>
+                <span class="s2">"/query/by-job"</span><span class="p">,</span>
+                <span class="s2">"/api/coexpression/query-by-job"</span><span class="p">,</span>
+                <span class="s2">"/query-by-job"</span><span class="p">,</span>
+            <span class="p">],</span>
             <span class="n">json</span><span class="o">=</span><span class="n">data</span><span class="p">,</span>
         <span class="p">)</span>
         <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_coexpression_from_response</span><span class="p">(</span>
@@ -4920,8 +4946,11 @@
 <span class="sd">            :class:`~malva_client.models.MetacellMatchResult`, a DataFrame-like</span>
 <span class="sd">            object with ``to_dataframe()``, ``enrich()`` and ``assign_labels()``.</span>
 <span class="sd">            Its columns are ``cluster``, ``rank``, ``metacell_id``, ``sample_id``,</span>
-<span class="sd">            ``cell_type``, ``n_cells``, ``similarity``, ``distance``, and</span>
-<span class="sd">            ``enrichment_score`` (plus any local sample metadata columns).</span>
+<span class="sd">            ``sample_uuid``, ``cell_type``, ``n_cells``, ``similarity``,</span>
+<span class="sd">            ``distance``, and ``enrichment_score`` (plus any local sample</span>
+<span class="sd">            metadata columns). ``sample_uuid`` is the catalog UUID accepted by</span>
+<span class="sd">            ``get_sample_details()`` and the sample-download APIs, while the</span>
+<span class="sd">            integer ``sample_id`` is kept for backward compatibility.</span>
 <span class="sd">        """</span>
         <span class="n">method</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">method</span> <span class="ow">or</span> <span class="s2">"cosine"</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span>
         <span class="k">if</span> <span class="n">method</span> <span class="ow">not</span> <span class="ow">in</span> <span class="p">{</span><span class="s2">"cosine"</span><span class="p">,</span> <span class="s2">"hellinger"</span><span class="p">,</span> <span class="s2">"panel_lda"</span><span class="p">}:</span>
@@ -5016,7 +5045,12 @@
             <span class="n">payload</span><span class="p">[</span><span class="s2">"space"</span><span class="p">]</span> <span class="o">=</span> <span class="n">method</span>
         <span class="n">response</span><span class="p">,</span> <span class="n">_endpoint</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_request_first_available</span><span class="p">(</span>
             <span class="s2">"POST"</span><span class="p">,</span>
-            <span class="p">[</span><span class="s2">"/api/coexpression/clusters-to-metacells"</span><span class="p">,</span> <span class="s2">"/query/clusters-to-metacells"</span><span class="p">],</span>
+            <span class="p">[</span>
+                <span class="s2">"/api/coexpression/metacells/nearest"</span><span class="p">,</span>
+                <span class="s2">"/query/metacells/nearest"</span><span class="p">,</span>
+                <span class="s2">"/api/coexpression/clusters-to-metacells"</span><span class="p">,</span>
+                <span class="s2">"/query/clusters-to-metacells"</span><span class="p">,</span>
+            <span class="p">],</span>
             <span class="n">json</span><span class="o">=</span><span class="n">payload</span><span class="p">,</span>
         <span class="p">)</span>
 
@@ -5041,6 +5075,7 @@
             <span class="s2">"rank"</span><span class="p">,</span>
             <span class="s2">"metacell_id"</span><span class="p">,</span>
             <span class="s2">"sample_id"</span><span class="p">,</span>
+            <span class="s2">"sample_uuid"</span><span class="p">,</span>
             <span class="s2">"cell_type"</span><span class="p">,</span>
             <span class="s2">"n_cells"</span><span class="p">,</span>
             <span class="s2">"similarity"</span><span class="p">,</span>
@@ -5056,6 +5091,7 @@
                         <span class="s2">"rank"</span><span class="p">:</span> <span class="n">neighbor</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"rank"</span><span class="p">),</span>
                         <span class="s2">"metacell_id"</span><span class="p">:</span> <span class="n">neighbor</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"metacell_id"</span><span class="p">),</span>
                         <span class="s2">"sample_id"</span><span class="p">:</span> <span class="n">neighbor</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"sample_id"</span><span class="p">),</span>
+                        <span class="s2">"sample_uuid"</span><span class="p">:</span> <span class="n">neighbor</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"sample_uuid"</span><span class="p">),</span>
                         <span class="s2">"cell_type"</span><span class="p">:</span> <span class="n">neighbor</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"cell_type"</span><span class="p">),</span>
                         <span class="s2">"n_cells"</span><span class="p">:</span> <span class="n">neighbor</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"n_cells"</span><span class="p">),</span>
                         <span class="s2">"similarity"</span><span class="p">:</span> <span class="n">neighbor</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"similarity"</span><span class="p">),</span>
@@ -5333,7 +5369,7 @@
       
     </aside>
   </div>
-</div><script src="../../_static/documentation_options.js?v=b9678aa1"></script>
+</div><script src="../../_static/documentation_options.js?v=1027fec7"></script>
     <script src="../../_static/doctools.js?v=9a2dae69"></script>
     <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script src="../../_static/scripts/furo.js?v=46bd48cc"></script>

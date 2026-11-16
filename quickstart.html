@@ -663,9 +663,11 @@ cell.</p>
 <p>The result is a small <code class="docutils literal notranslate"><span class="pre">MetacellMatchResult</span></code> object with one row per cluster
 and ranked metacell. Use <code class="docutils literal notranslate"><span class="pre">to_dataframe()</span></code> whenever you want a plain pandas
 table. Columns are <code class="docutils literal notranslate"><span class="pre">cluster</span></code>, <code class="docutils literal notranslate"><span class="pre">rank</span></code>, <code class="docutils literal notranslate"><span class="pre">metacell_id</span></code>, <code class="docutils literal notranslate"><span class="pre">sample_id</span></code>,
-<code class="docutils literal notranslate"><span class="pre">cell_type</span></code>, <code class="docutils literal notranslate"><span class="pre">n_cells</span></code>, <code class="docutils literal notranslate"><span class="pre">similarity</span></code> (cosine), <code class="docutils literal notranslate"><span class="pre">distance</span></code>
-(<code class="docutils literal notranslate"><span class="pre">1</span> <span class="pre">-</span> <span class="pre">similarity</span></code>), and <code class="docutils literal notranslate"><span class="pre">enrichment_score</span></code> (a per-cluster z-score of
-similarity across all metacells).</p>
+<code class="docutils literal notranslate"><span class="pre">sample_uuid</span></code>, <code class="docutils literal notranslate"><span class="pre">cell_type</span></code>, <code class="docutils literal notranslate"><span class="pre">n_cells</span></code>, <code class="docutils literal notranslate"><span class="pre">similarity</span></code> (cosine),
+<code class="docutils literal notranslate"><span class="pre">distance</span></code> (<code class="docutils literal notranslate"><span class="pre">1</span> <span class="pre">-</span> <span class="pre">similarity</span></code>), and <code class="docutils literal notranslate"><span class="pre">enrichment_score</span></code> (a per-cluster
+z-score of similarity across all metacells). <code class="docutils literal notranslate"><span class="pre">sample_uuid</span></code> is the catalog UUID
+accepted by <code class="docutils literal notranslate"><span class="pre">get_sample_details()</span></code> and the sample-download APIs;
+<code class="docutils literal notranslate"><span class="pre">sample_id</span></code> remains the internal integer id for backward compatibility.</p>
 <p>Sample metadata is merged locally when you already have it, so no extra
 metadata request is made:</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">sample_meta</span> <span class="o">=</span> <span class="n">my_sample_table</span><span class="o">.</span><span class="n">set_index</span><span class="p">(</span><span class="s2">"sample_id"</span><span class="p">)</span>  <span class="c1"># your own table</span>
@@ -698,6 +700,20 @@ and number of supporting metacells. Pass
 <span class="nb">print</span><span class="p">(</span><span class="n">adata</span><span class="o">.</span><span class="n">obs</span><span class="p">[[</span><span class="s2">"leiden"</span><span class="p">,</span> <span class="s2">"malva_cell_type"</span><span class="p">,</span> <span class="s2">"malva_confidence"</span><span class="p">]]</span><span class="o">.</span><span class="n">head</span><span class="p">())</span>
 </pre></div>
 </div>
+<p>By default the assigned label is the atlas metacell <code class="docutils literal notranslate"><span class="pre">cell_type</span></code>. Any
+categorical sample-metadata column merged through <code class="docutils literal notranslate"><span class="pre">find_metacells(...,</span>
+<span class="pre">sample_metadata=...)</span></code> / <code class="docutils literal notranslate"><span class="pre">enrich()</span></code> can be projected instead with
+<code class="docutils literal notranslate"><span class="pre">label_column</span></code> — for example <code class="docutils literal notranslate"><span class="pre">disease</span></code> or <code class="docutils literal notranslate"><span class="pre">patient</span></code>:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">labels</span> <span class="o">=</span> <span class="n">matches</span><span class="o">.</span><span class="n">assign_labels</span><span class="p">(</span>
+    <span class="n">adata</span><span class="p">,</span>
+    <span class="n">column</span><span class="o">=</span><span class="s2">"malva_disease"</span><span class="p">,</span>
+    <span class="n">label_column</span><span class="o">=</span><span class="s2">"disease"</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">adata</span><span class="o">.</span><span class="n">obs</span><span class="p">[[</span><span class="s2">"leiden"</span><span class="p">,</span> <span class="s2">"malva_disease"</span><span class="p">]]</span><span class="o">.</span><span class="n">head</span><span class="p">())</span>
+</pre></div>
+</div>
+<p>Server per-cell-type scores only describe <code class="docutils literal notranslate"><span class="pre">cell_type</span></code>, so other
+<code class="docutils literal notranslate"><span class="pre">label_column</span></code> values are projected by aggregating the neighbour weights.</p>
 <p><code class="docutils literal notranslate"><span class="pre">compare_clusters_to_metacells()</span></code> remains available as a deprecated alias for
 <code class="docutils literal notranslate"><span class="pre">find_metacells()</span></code>.</p>
 </section>
@@ -831,7 +847,7 @@ API reference for those workflows.</p>
       
     </aside>
   </div>
-</div><script src="_static/documentation_options.js?v=b9678aa1"></script>
+</div><script src="_static/documentation_options.js?v=1027fec7"></script>
     <script src="_static/doctools.js?v=9a2dae69"></script>
     <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
     <script src="_static/scripts/furo.js?v=46bd48cc"></script>

@@ -847,9 +847,9 @@ min_abs_correlation.</p></li>
 <dt class="sig sig-object py" id="malva_client.client.MalvaClient.get_coexpression">
 <span class="sig-name descname"><span class="pre">get_coexpression</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">job_id</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">dataset_id</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">filter_sample_ids</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">poll_interval</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">2</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_wait</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">300</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/malva_client/client.html#MalvaClient.get_coexpression"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#malva_client.client.MalvaClient.get_coexpression" title="Link to this definition">¶</a></dt>
 <dd><p>Run a full coexpression analysis for a search job on a dataset.</p>
-<p>Calls <code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/api/coexpression/query-by-job</span></code> with all enrichment
-options enabled (GO enrichment, UMAP scores, cell-type enrichment,
-tissue breakdown).</p>
+<p>Calls <code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/api/coexpression/by-job</span></code> (falling back to the legacy
+<code class="docutils literal notranslate"><span class="pre">/api/coexpression/query-by-job</span></code>) with all enrichment options enabled
+(GO enrichment, UMAP scores, cell-type enrichment, tissue breakdown).</p>
 <dl class="field-list simple">
 <dt class="field-odd">Parameters<span class="colon">:</span></dt>
 <dd class="field-odd"><ul class="simple">
@@ -936,8 +936,11 @@ locally after the response; no metadata is requested from Malva.</p></li>
 <dd class="field-odd"><p><a class="reference internal" href="malva_client.models.html#malva_client.models.MetacellMatchResult" title="malva_client.models.MetacellMatchResult"><code class="xref py py-class docutils literal notranslate"><span class="pre">MetacellMatchResult</span></code></a>, a DataFrame-like
 object with <code class="docutils literal notranslate"><span class="pre">to_dataframe()</span></code>, <code class="docutils literal notranslate"><span class="pre">enrich()</span></code> and <code class="docutils literal notranslate"><span class="pre">assign_labels()</span></code>.
 Its columns are <code class="docutils literal notranslate"><span class="pre">cluster</span></code>, <code class="docutils literal notranslate"><span class="pre">rank</span></code>, <code class="docutils literal notranslate"><span class="pre">metacell_id</span></code>, <code class="docutils literal notranslate"><span class="pre">sample_id</span></code>,
-<code class="docutils literal notranslate"><span class="pre">cell_type</span></code>, <code class="docutils literal notranslate"><span class="pre">n_cells</span></code>, <code class="docutils literal notranslate"><span class="pre">similarity</span></code>, <code class="docutils literal notranslate"><span class="pre">distance</span></code>, and
-<code class="docutils literal notranslate"><span class="pre">enrichment_score</span></code> (plus any local sample metadata columns).</p>
+<code class="docutils literal notranslate"><span class="pre">sample_uuid</span></code>, <code class="docutils literal notranslate"><span class="pre">cell_type</span></code>, <code class="docutils literal notranslate"><span class="pre">n_cells</span></code>, <code class="docutils literal notranslate"><span class="pre">similarity</span></code>,
+<code class="docutils literal notranslate"><span class="pre">distance</span></code>, and <code class="docutils literal notranslate"><span class="pre">enrichment_score</span></code> (plus any local sample
+metadata columns). <code class="docutils literal notranslate"><span class="pre">sample_uuid</span></code> is the catalog UUID accepted by
+<code class="docutils literal notranslate"><span class="pre">get_sample_details()</span></code> and the sample-download APIs, while the
+integer <code class="docutils literal notranslate"><span class="pre">sample_id</span></code> is kept for backward compatibility.</p>
 </dd>
 </dl>
 </dd></dl>
@@ -1696,7 +1699,7 @@ only an <code class="docutils literal notranslate"><span class="pre">auto</span>
       
     </aside>
   </div>
-</div><script src="../_static/documentation_options.js?v=b9678aa1"></script>
+</div><script src="../_static/documentation_options.js?v=1027fec7"></script>
     <script src="../_static/doctools.js?v=9a2dae69"></script>
     <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script src="../_static/scripts/furo.js?v=46bd48cc"></script>

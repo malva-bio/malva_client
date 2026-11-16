@@ -638,14 +638,21 @@ is held in memory at a time. Read the result lazily with
 
 <dl class="py method">
 <dt class="sig sig-object py" id="malva_client.models.MetacellMatchResult.assign_labels">
-<span class="sig-name descname"><span class="pre">assign_labels</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">adata</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">groupby</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">*</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">column</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'malva_cell_type'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">confidence_column</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">weight</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'auto'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">write_to_obs</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/malva_client/models.html#MetacellMatchResult.assign_labels"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#malva_client.models.MetacellMatchResult.assign_labels" title="Link to this definition">¶</a></dt>
-<dd><p>Assign one Malva cell-type label per local cluster.</p>
+<span class="sig-name descname"><span class="pre">assign_labels</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">adata</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">groupby</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">*</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">column</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'malva_cell_type'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">confidence_column</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">weight</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'auto'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">write_to_obs</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">label_column</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'cell_type'</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/malva_client/models.html#MetacellMatchResult.assign_labels"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#malva_client.models.MetacellMatchResult.assign_labels" title="Link to this definition">¶</a></dt>
+<dd><p>Assign one Malva label per local cluster.</p>
+<p>By default the label is the metacell <code class="docutils literal notranslate"><span class="pre">cell_type</span></code>. Any categorical
+sample-metadata column present on the matches can be projected instead
+by passing <code class="docutils literal notranslate"><span class="pre">label_column</span></code> — e.g. <code class="docutils literal notranslate"><span class="pre">label_column=&quot;disease&quot;</span></code> or
+<code class="docutils literal notranslate"><span class="pre">label_column=&quot;patient&quot;</span></code> after <a class="reference internal" href="#malva_client.models.MetacellMatchResult.enrich" title="malva_client.models.MetacellMatchResult.enrich"><code class="xref py py-meth docutils literal notranslate"><span class="pre">enrich()</span></code></a>. Labels are chosen by
+summing the neighbour weights per value of <code class="docutils literal notranslate"><span class="pre">label_column</span></code> for each
+cluster. Confidence is the winning share of the total weight.</p>
 <p>With the new <code class="docutils literal notranslate"><span class="pre">method=&quot;hellinger&quot;</span></code> / <code class="docutils literal notranslate"><span class="pre">&quot;panel_lda&quot;</span></code> spaces the server
 returns per-cell-type top-k scores. <code class="docutils literal notranslate"><span class="pre">weight=&quot;auto&quot;</span></code> (the default) uses
 those scores when present and falls back to the legacy similarity sum
 for raw-cosine results. Pass <code class="docutils literal notranslate"><span class="pre">weight=&quot;similarity&quot;</span></code> or <code class="docutils literal notranslate"><span class="pre">weight=&quot;rank&quot;</span></code>
-to force the legacy neighbour aggregation. Confidence is the winning
-share of the positive scores/weights.</p>
+to force the legacy neighbour aggregation. Server scores are specific to
+metacell <code class="docutils literal notranslate"><span class="pre">cell_type</span></code>, so any other <code class="docutils literal notranslate"><span class="pre">label_column</span></code> always uses the
+neighbour aggregation.</p>
 <p>When <code class="docutils literal notranslate"><span class="pre">adata</span></code> is supplied (and <code class="docutils literal notranslate"><span class="pre">write_to_obs</span></code> is true), the labels
 are written to <code class="docutils literal notranslate"><span class="pre">adata.obs[column]</span></code>.</p>
 <dl class="field-list simple">
@@ -1628,7 +1635,7 @@ a pandas DataFrame and a simple scatter-plot method.</p>
       
     </aside>
   </div>
-</div><script src="../_static/documentation_options.js?v=b9678aa1"></script>
+</div><script src="../_static/documentation_options.js?v=1027fec7"></script>
     <script src="../_static/doctools.js?v=9a2dae69"></script>
     <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script src="../_static/scripts/furo.js?v=46bd48cc"></script>
