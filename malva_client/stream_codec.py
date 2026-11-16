@@ -139,19 +139,24 @@ def _feature_names(positions: np.ndarray, features: Sequence[str]) -> np.ndarray
     return np.asarray([f"feature_{p}" for p in positions.tolist()], dtype=object)
 
 
-def decode_compact_frame(
+def decode_compact_columns(
     frame: Dict[str, Any],
-    requested: Sequence[Tuple[int, int]],
-    features: Sequence[str],
+    requested: Any,
     values_dtype: str = "f32",
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Expand one compact data frame into the default framing's four arrays.
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Expand a compact frame into aligned columns, without naming features.
 
-    Returns ``(sample_ids, cell_ids, feature_names, values)``, each one entry
-    per non-zero, in the order the default framing would have emitted them
-    (request order, ascending features within a cell).
+    Returns ``(present, nnz, sample_ids, cell_ids, positions, values)``.
+    ``present`` indexes the request order and ``nnz`` is its per-cell non-zero
+    count. ``requested`` may be a sequence of pairs or a pre-built ``(n, 2)``
+    integer array; the latter avoids re-converting it for every frame.
     """
-    n_requested = len(requested)
+    requested_array = (
+        requested
+        if isinstance(requested, np.ndarray) and requested.ndim == 2
+        else np.asarray(requested, dtype=np.int64)
+    )
+    n_requested = int(requested_array.shape[0])
     raw_mask = np.frombuffer(frame["cells"], dtype=np.uint8)
     if int(raw_mask.size) * 8 < n_requested:
         raise ValueError(
@@ -167,9 +172,16 @@ def decode_compact_frame(
     declared = int(frame.get("n") or 0)
     if declared and declared != total:
         raise ValueError(f"compact frame declares n={declared} but its counts sum to {total}")
+    empty = np.empty(0, dtype=np.int64)
     if total == 0:
-        empty = np.empty(0, dtype=np.int64)
-        return empty, empty, np.empty(0, dtype=object), np.empty(0, dtype=np.float32)
+        return (
+            present,
+            nnz,
+            empty,
+            empty,
+            empty,
+            np.empty(0, dtype=np.float32),
+        )
     width = int(frame.get("feature_width", 4))
     if width not in (2, 4):
         raise ValueError(f"unsupported compact feature width {width}")
@@ -184,13 +196,86 @@ def decode_compact_frame(
         raise ValueError(f"compact frame declares {total} values but carries {values.size}")
     if values_dtype == "f16":
         values = values.astype(np.float32)
-    samples = np.repeat(
-        np.fromiter((requested[i][0] for i in present.tolist()), np.int64, present.size), nnz
-    )
-    cells = np.repeat(
-        np.fromiter((requested[i][1] for i in present.tolist()), np.int64, present.size), nnz
+    samples = np.repeat(requested_array[present, 0], nnz)
+    cells = np.repeat(requested_array[present, 1], nnz)
+    return present, nnz, samples, cells, positions, values
+
+
+def decode_compact_frame(
+    frame: Dict[str, Any],
+    requested: Sequence[Tuple[int, int]],
+    features: Sequence[str],
+    values_dtype: str = "f32",
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Expand one compact data frame into the default framing's four arrays.
+
+    Returns ``(sample_ids, cell_ids, feature_names, values)``, each one entry
+    per non-zero, in the order the default framing would have emitted them
+    (request order, ascending features within a cell).
+    """
+    _present, _nnz, samples, cells, positions, values = decode_compact_columns(
+        frame, requested, values_dtype
     )
     return samples, cells, _feature_names(positions, features), values
+
+
+class ExpressionBatch:
+    """One decoded server frame with feature codes instead of repeated names.
+
+    Every non-zero entry carries its cell in ``sample_ids``/``cell_ids`` and its
+    gene as an integer code into ``gene_names``. That keeps the per-entry cost
+    to three numeric arrays; names are resolved once per batch when a caller
+    asks for the public DataFrame or when the AnnData accumulator needs a new
+    gene. ``new_codes`` lists the codes that have not appeared in an earlier
+    batch of the same stream, in first-appearance order.
+    """
+
+    __slots__ = (
+        "sample_ids",
+        "cell_ids",
+        "gene_codes",
+        "values",
+        "store_index",
+        "gene_names",
+        "new_codes",
+    )
+
+    def __init__(
+        self,
+        sample_ids: np.ndarray,
+        cell_ids: np.ndarray,
+        gene_codes: np.ndarray,
+        values: np.ndarray,
+        store_index: int,
+        gene_names: Sequence[str],
+        new_codes: np.ndarray,
+    ):
+        self.sample_ids = sample_ids
+        self.cell_ids = cell_ids
+        self.gene_codes = gene_codes
+        self.values = values
+        self.store_index = int(store_index)
+        self.gene_names = gene_names
+        self.new_codes = new_codes
+
+    def __len__(self) -> int:
+        return int(self.values.size)
+
+    def to_frame(self) -> Any:
+        """Return the public long-format DataFrame for this frame."""
+        import pandas as pd
+
+        names = np.asarray(self.gene_names, dtype=object)[self.gene_codes]
+        count = int(self.values.size)
+        return pd.DataFrame(
+            {
+                "sample_id": self.sample_ids,
+                "cell_id": self.cell_ids,
+                "store_index": np.full(count, self.store_index, dtype=np.int32),
+                "gene": names,
+                "value": self.values,
+            }
+        )
 
 
 def map_gene_names(
