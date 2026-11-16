@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.2] - 2026-11-16
+### Fixed
+- `stream_cell_expression()` no longer fails with `NameError`: the frame parser
+  imports `struct`.
+- Streamed cell frames report the requested gene names when the server sends
+  store ordinals instead of panel positions.
+- `SearchResult.to_dataframe()` loads a lazy result instead of returning an
+  empty frame for cached jobs.
+- `CoexpressionResult` exposes empty containers instead of `None` for omitted
+  sections.
+### Changed
+- The federation workflow no longer runs on a nightly schedule.
+
 ## [0.7.1] - 2026-11-13
 ### Added
 - `find_metacells()` results include a `sample_uuid` column: the catalog UUID
