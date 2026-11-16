@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] - 2026-11-16
+### Added
+- `stream_cell_expression(..., layout="compact", compress="zstd")` opts into
+  the server's compact cell framing and per-frame zstd compression. On the
+  reference lung-cancer request the stream falls from 461 MB to 36 MB and the
+  decoded `(sample_id, cell_id, gene, value)` set is byte-identical. Decoding is
+  vectorised (`np.frombuffer` plus `np.repeat`/`np.cumsum`) and does not loop
+  over values. Both options are opt-in; without them the request and the
+  DataFrames are exactly what 0.8.0 produces.
+- `zstandard` is available as the optional `malva-client[zstd]` extra. When no
+  zstd decoder is installed the client silently falls back to the default
+  framing instead of failing mid-stream, and a frame that does not decode raises
+  a `MalvaAPIError` naming the frame and the reason.
+### Changed
+- The default framing maps feature positions to gene names with one NumPy
+  fancy index instead of a Python loop over every non-zero, which removes most
+  of the client-side CPU from a legacy stream.
+
 ## [0.8.0] - 2026-11-16
 ### Added
 - `CellExpressionStream` joins per-cell metadata into `obs` in `to_anndata()`,

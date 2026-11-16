@@ -7,7 +7,7 @@ try:
 
     __version__ = _get_version("malva_client")
 except Exception:
-    __version__ = "0.7.1"
+    __version__ = "0.9.0"
 __author__ = "Malva Team"
 __email__ = "hello@malva.bio"
 
