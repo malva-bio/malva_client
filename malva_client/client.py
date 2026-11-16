@@ -17,6 +17,7 @@ import pandas as pd
 import requests
 
 from malva_client import __version__ as _CLIENT_VERSION
+from malva_client import stream_codec
 from malva_client.config import Config
 from malva_client.exceptions import (
     AuthenticationError,
@@ -1921,6 +1922,9 @@ class MalvaClient:
         cells: Optional[Iterable[Any]] = None,
         cell_metadata: Optional[Any] = None,
         include_cell_metadata: bool = True,
+        compress: Optional[str] = None,
+        layout: Optional[str] = None,
+        values: Optional[str] = None,
     ) -> CellExpressionStream:
         """Stream sparse per-cell expression batches for selected samples.
 
@@ -1940,6 +1944,19 @@ class MalvaClient:
         ``(sample_id, cell_id, gene)`` combinations are zero. Passing
         ``gene_ids`` is strongly recommended: without it the server must scan
         every non-zero entry in the selected petal stores.
+
+        ``cells`` requests opt into two server-side payload modes that older
+        servers ignore and older clients never ask for, and both return the same
+        DataFrames:
+
+        * ``layout="compact"`` sends cell identity once as a bitmask over the
+          request order and each row as varint feature deltas, about 4.4x
+          smaller than the flat arrays before any compression.
+        * ``compress="zstd"`` (or ``"zlib"``) compresses every frame body.  zstd
+          needs ``zstandard`` or ``numcodecs`` on the client.
+
+        ``values="f16"`` halves the value payload and is lossy (about 1e-3
+        relative), so it has to be asked for explicitly.
 
         The wrapper also provides ``to_anndata()``, ``write_h5ad(path)`` and
         ``iter_anndata()`` for standard AnnData workflows. Pass ``cell_metadata``
@@ -1969,6 +1986,10 @@ class MalvaClient:
             if not known_samples:
                 raise ValueError("sample_ids must contain at least one sample id")
 
+        for name, value in (("compress", compress), ("layout", layout), ("values", values)):
+            if value is not None and cells is None:
+                raise ValueError(f"{name}= requires cells=; the sample_ids stream has one framing")
+
         return CellExpressionStream(
             lambda: self._iter_cell_expression_batches(
                 sample_ids=None if known_cells is not None else sample_ids,
@@ -1977,6 +1998,9 @@ class MalvaClient:
                 max_batch_bytes=max_batch_bytes,
                 chunk_size=chunk_size,
                 cells=known_cells,
+                compress=compress,
+                layout=layout,
+                values=values,
             ),
             client=self,
             dataset_id=dataset_id,
@@ -1995,15 +2019,21 @@ class MalvaClient:
         max_batch_bytes: int = 4 * 1024 * 1024,
         chunk_size: int = 64 * 1024,
         cells: Optional[Iterable[Any]] = None,
+        compress: Optional[str] = None,
+        layout: Optional[str] = None,
+        values: Optional[str] = None,
     ):
         """Yield the raw pandas batches from the server frame stream."""
+        requested_cells: List[Tuple[int, int]] = []
         if cells is not None:
             if sample_ids is not None:
                 raise ValueError("Pass either sample_ids or cells, not both")
+            pairs = _normalise_cell_pairs(cells)
             cell_payload: List[Dict[str, int]] = [
                 {"sample_id": int(sample_id), "cell_id": int(cell_id)}
-                for sample_id, cell_id in _normalise_cell_pairs(cells)
+                for sample_id, cell_id in pairs
             ]
+            requested_cells = [(int(sample_id), int(cell_id)) for sample_id, cell_id in pairs]
             payload: Dict[str, Any] = {
                 "cells": cell_payload,
                 "max_batch_bytes": int(max_batch_bytes),
@@ -2028,6 +2058,12 @@ class MalvaClient:
             genes = [str(gene).strip() for gene in gene_ids if str(gene).strip()]
             if genes:
                 payload["gene_ids"] = genes
+        if compress:
+            payload["compress"] = str(compress)
+        if layout:
+            payload["layout"] = str(layout)
+        if values:
+            payload["values"] = str(values)
 
         url = urljoin(self.base_url + "/", "api/expression/cell-expression-stream")
         response = self.session.post(
@@ -2049,6 +2085,10 @@ class MalvaClient:
 
             requested_genes = [gene_ids] if isinstance(gene_ids, str) else list(gene_ids or [])
             features_by_store: Dict[int, List[str]] = {}
+            encoding: Optional[str] = None
+            compact = False
+            values_dtype = "f32"
+            started = False
             buffer = bytearray()
             for chunk in response.iter_content(chunk_size=chunk_size):
                 if not chunk:
@@ -2058,8 +2098,18 @@ class MalvaClient:
                     frame_size = struct.unpack(">Q", buffer[:8])[0]
                     if len(buffer) < 8 + frame_size:
                         break
-                    frame = msgpack.unpackb(bytes(buffer[8 : 8 + frame_size]), raw=False)
+                    body = bytes(buffer[8 : 8 + frame_size])
                     del buffer[: 8 + frame_size]
+                    if started:
+                        body = stream_codec.decompress_body(body, encoding)
+                    frame = msgpack.unpackb(body, raw=False)
+                    if not started:
+                        # The first frame is never compressed and advertises how
+                        # the rest of the stream is encoded.
+                        started = True
+                        encoding = frame.get("compression") or None
+                        compact = frame.get("layout") == stream_codec.COMPACT_LAYOUT
+                        values_dtype = str(frame.get("values") or "f32")
                     frame_type = frame.get("type")
                     if frame_type == "features":
                         store_index = int(frame.get("store_index", 0))
@@ -2072,17 +2122,28 @@ class MalvaClient:
                     if count == 0:
                         continue
                     store_index = int(frame.get("store_index", 0))
-                    feature_index = np.frombuffer(frame["feature_index"], dtype="<i4")
                     features = features_by_store.get(store_index, [])
-                    positions = [int(index) for index in feature_index]
-                    gene_names = _map_stream_gene_names(positions, features, requested_genes)
+                    if compact:
+                        sample_values, cell_values, gene_names, value_values = (
+                            stream_codec.decode_compact_frame(
+                                frame, requested_cells, features, values_dtype
+                            )
+                        )
+                    else:
+                        positions = np.frombuffer(frame["feature_index"], dtype="<i4")
+                        gene_names = stream_codec.map_gene_names(
+                            positions, features, requested_genes
+                        )
+                        sample_values = np.frombuffer(frame["sample_ids"], dtype="<i8")
+                        cell_values = np.frombuffer(frame["cell_ids"], dtype="<i8")
+                        value_values = np.frombuffer(frame["values"], dtype="<f4")
                     yield pd.DataFrame(
                         {
-                            "sample_id": np.frombuffer(frame["sample_ids"], dtype="<i8"),
-                            "cell_id": np.frombuffer(frame["cell_ids"], dtype="<i8"),
+                            "sample_id": sample_values,
+                            "cell_id": cell_values,
                             "store_index": np.full(count, store_index, dtype=np.int32),
                             "gene": gene_names,
-                            "value": np.frombuffer(frame["values"], dtype="<f4"),
+                            "value": value_values,
                         }
                     )
         finally:
