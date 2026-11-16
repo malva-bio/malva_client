@@ -381,6 +381,33 @@ This is useful when you have sorted a cell table by expression and want to
 fetch the cells in high-to-low order. Leave out ``gene_ids`` to get all
 features for each cell.
 
+``cells`` streams use the server's compact framing with zstd compression by
+default. The compact framing sends cell identity once and row deltas instead of
+four flat arrays, and compression brings the reference 19.2 M-value request from
+about 460 MB to about 36 MB. The defaults are transparent: a server that rejects
+the options, or whose start frame advertises the released framing, is retried
+once without them, and the client remembers that outcome. Every choice can be
+made explicit, and an explicit choice always wins:
+
+.. code-block:: python
+
+   # released framing and no compression: the exact 0.8.0 request
+   client.stream_cell_expression(cells=cells, layout="legacy", compress=None)
+
+   # compact framing with uncompressed frames
+   client.stream_cell_expression(cells=cells, compress=None)
+
+   # released framing with compressed frames (newer servers only)
+   client.stream_cell_expression(cells=cells, layout="legacy")
+
+Values stay ``float32`` unless you ask for ``values="f16"``, which halves the
+value payload at about ``1e-3`` relative error and requires the compact layout.
+Compression needs ``zstandard`` or ``numcodecs`` on the client: install
+``malva-client[zstd]`` to be sure. If neither is importable the client keeps the
+compact framing and drops only compression, which is still smaller and faster
+than the released framing. Decoding always follows the start frame, so mixed
+server versions produce the same DataFrames.
+
 For these cells, the conversion methods fetch the metadata once and join it
 into ``obs``. Every per-cell field keeps its name, so ``cell_type``,
 ``total_counts`` and any other column returned by the metadata service are

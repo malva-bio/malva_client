@@ -1,8 +1,8 @@
-"""Decoders for the opt-in cell-expression stream encodings.
+"""Decoders for the cell-expression stream encodings.
 
-The server's default framing is four flat little-endian arrays per data frame
-(``sample_ids``/``cell_ids``/``feature_index``/``values``).  Two opt-in modes
-shrink it, and both are advertised in the stream's ``start`` frame rather than
+The server's released framing is four flat little-endian arrays per data frame
+(``sample_ids``/``cell_ids``/``feature_index``/``values``).  Two encodings shrink
+it, and both are advertised in the stream's ``start`` frame rather than
 negotiated up front:
 
 ``layout="compact"``
@@ -15,11 +15,12 @@ negotiated up front:
 ``compress="zstd"|"zlib"``
     Every frame body after the ``start`` frame is compressed as one blob.
 
-Nothing here runs for a default request: the client only decodes these forms
-when the server says it produced them, so released servers and clients keep
-working unchanged.  Decoding stays vectorised: every compact field is one
-``np.frombuffer`` over the raw column plus ``np.repeat``/``np.cumsum``, with no
-Python loop over values.
+``stream_cell_expression(cells=...)`` asks for compact plus zstd by default;
+``layout="legacy"`` and ``compress=None`` restore the released framing.  The
+decoder is driven by the ``start`` frame, never by the request, so a server that
+ignores the options still decodes correctly.  Decoding stays vectorised: every
+compact field is one ``np.frombuffer`` over the raw column plus
+``np.repeat``/``np.cumsum``, with no Python loop over values.
 """
 
 from __future__ import annotations
@@ -96,8 +97,9 @@ def has_zstd() -> bool:
     """Whether this install can decode zstd frame bodies.
 
     ``zstandard`` is preferred; ``numcodecs`` (already present with the zarr
-    stack most users have) ships the same codec.  When neither is importable the
-    client asks for the uncompressed stream instead of failing mid-transfer.
+    stack most users have) ships the same codec.  When neither is importable a
+    defaulted request keeps the compact framing and sends no compression, which
+    is still smaller and faster than the released framing.
     """
     return _zstd_decoder()[0] is not None
 
