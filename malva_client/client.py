@@ -1950,10 +1950,12 @@ class MalvaClient:
         DataFrames:
 
         * ``layout="compact"`` sends cell identity once as a bitmask over the
-          request order and each row as varint feature deltas, about 4.4x
+          request order and each row as fixed-width feature deltas, about 4x
           smaller than the flat arrays before any compression.
-        * ``compress="zstd"`` (or ``"zlib"``) compresses every frame body.  zstd
-          needs ``zstandard`` or ``numcodecs`` on the client.
+        * ``compress="zstd"`` (or ``"zlib"``) compresses every frame body,
+          which brings the reference stream from ~460 MB to ~36 MB.  zstd needs
+          ``zstandard`` or ``numcodecs`` on the client; when neither is
+          installed the request silently falls back to the default framing.
 
         ``values="f16"`` halves the value payload and is lossy (about 1e-3
         relative), so it has to be asked for explicitly.
@@ -1989,6 +1991,8 @@ class MalvaClient:
         for name, value in (("compress", compress), ("layout", layout), ("values", values)):
             if value is not None and cells is None:
                 raise ValueError(f"{name}= requires cells=; the sample_ids stream has one framing")
+        if values is not None and layout is None:
+            raise ValueError("values= requires layout='compact'")
 
         return CellExpressionStream(
             lambda: self._iter_cell_expression_batches(
@@ -2058,6 +2062,15 @@ class MalvaClient:
             genes = [str(gene).strip() for gene in gene_ids if str(gene).strip()]
             if genes:
                 payload["gene_ids"] = genes
+        # Capability fallback: a compression mode the client cannot decode must
+        # never turn into a stream that fails halfway through.  Drop back to the
+        # default framing silently (debug log only), as released clients do.
+        if compress and not stream_codec.has_zstd():
+            logger.debug(
+                "No zstd decoder is installed; falling back to the legacy cell-expression stream"
+            )
+            compress = None
+            layout = None
         if compress:
             payload["compress"] = str(compress)
         if layout:
@@ -2089,6 +2102,7 @@ class MalvaClient:
             compact = False
             values_dtype = "f32"
             started = False
+            frame_index = 0
             buffer = bytearray()
             for chunk in response.iter_content(chunk_size=chunk_size):
                 if not chunk:
@@ -2100,52 +2114,80 @@ class MalvaClient:
                         break
                     body = bytes(buffer[8 : 8 + frame_size])
                     del buffer[: 8 + frame_size]
-                    if started:
-                        body = stream_codec.decompress_body(body, encoding)
-                    frame = msgpack.unpackb(body, raw=False)
-                    if not started:
-                        # The first frame is never compressed and advertises how
-                        # the rest of the stream is encoded.
-                        started = True
-                        encoding = frame.get("compression") or None
-                        compact = frame.get("layout") == stream_codec.COMPACT_LAYOUT
-                        values_dtype = str(frame.get("values") or "f32")
-                    frame_type = frame.get("type")
-                    if frame_type == "features":
-                        store_index = int(frame.get("store_index", 0))
-                        features_by_store[store_index] = list(frame.get("features") or [])
-                        continue
-                    if frame_type != "data":
-                        continue
-
-                    count = int(frame.get("n") or 0)
-                    if count == 0:
-                        continue
-                    store_index = int(frame.get("store_index", 0))
-                    features = features_by_store.get(store_index, [])
-                    if compact:
-                        sample_values, cell_values, gene_names, value_values = (
-                            stream_codec.decode_compact_frame(
-                                frame, requested_cells, features, values_dtype
-                            )
-                        )
-                    else:
-                        positions = np.frombuffer(frame["feature_index"], dtype="<i4")
-                        gene_names = stream_codec.map_gene_names(
-                            positions, features, requested_genes
-                        )
-                        sample_values = np.frombuffer(frame["sample_ids"], dtype="<i8")
-                        cell_values = np.frombuffer(frame["cell_ids"], dtype="<i8")
-                        value_values = np.frombuffer(frame["values"], dtype="<f4")
-                    yield pd.DataFrame(
-                        {
-                            "sample_id": sample_values,
-                            "cell_id": cell_values,
-                            "store_index": np.full(count, store_index, dtype=np.int32),
-                            "gene": gene_names,
-                            "value": value_values,
-                        }
-                    )
+                    frame_type = None
+                    batch = None
+                    try:
+                        if started:
+                            body = stream_codec.decompress_body(body, encoding)
+                        frame = msgpack.unpackb(body, raw=False)
+                        if not started:
+                            # The first frame is never compressed and advertises
+                            # how the rest of the stream is encoded.
+                            started = True
+                            encoding = frame.get("compression") or None
+                            compact = frame.get("layout") == stream_codec.COMPACT_LAYOUT
+                            values_dtype = str(frame.get("values") or "f32")
+                            if layout and not compact:
+                                logger.debug(
+                                    "Server did not honour layout=%r; decoding the default framing",
+                                    layout,
+                                )
+                        frame_type = frame.get("type")
+                        if frame_type == "features":
+                            store_index = int(frame.get("store_index", 0))
+                            features_by_store[store_index] = list(frame.get("features") or [])
+                        elif frame_type == "data":
+                            count = int(frame.get("n") or 0)
+                            if count:
+                                store_index = int(frame.get("store_index", 0))
+                                features = features_by_store.get(store_index, [])
+                                if compact:
+                                    (
+                                        sample_values,
+                                        cell_values,
+                                        gene_names,
+                                        value_values,
+                                    ) = stream_codec.decode_compact_frame(
+                                        frame, requested_cells, features, values_dtype
+                                    )
+                                else:
+                                    positions = np.frombuffer(frame["feature_index"], dtype="<i4")
+                                    gene_names = stream_codec.map_gene_names(
+                                        positions, features, requested_genes
+                                    )
+                                    sample_values = np.frombuffer(frame["sample_ids"], dtype="<i8")
+                                    cell_values = np.frombuffer(frame["cell_ids"], dtype="<i8")
+                                    value_values = np.frombuffer(frame["values"], dtype="<f4")
+                                    for name, column in (
+                                        ("sample_ids", sample_values),
+                                        ("cell_ids", cell_values),
+                                        ("feature_index", positions),
+                                        ("values", value_values),
+                                    ):
+                                        if int(column.size) != count:
+                                            raise ValueError(
+                                                f"{name} carries {int(column.size)} entries "
+                                                f"but the frame declares {count}"
+                                            )
+                                batch = pd.DataFrame(
+                                    {
+                                        "sample_id": sample_values,
+                                        "cell_id": cell_values,
+                                        "store_index": np.full(count, store_index, dtype=np.int32),
+                                        "gene": gene_names,
+                                        "value": value_values,
+                                    }
+                                )
+                    except Exception as exc:
+                        raise MalvaAPIError(
+                            "Failed to decode cell-expression frame "
+                            f"{frame_index} (type={frame_type!r}, layout="
+                            f"{stream_codec.COMPACT_LAYOUT if compact else 'default'}, "
+                            f"encoding={encoding!r}, {frame_size} bytes): {exc}"
+                        ) from exc
+                    frame_index += 1
+                    if batch is not None:
+                        yield batch
         finally:
             response.close()
 

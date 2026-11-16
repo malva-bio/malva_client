@@ -9,7 +9,7 @@ include = ["malva_client*"]
 
 [project]
 name = "malva-client"
-version = "0.8.0"
+version = "0.9.0"
 description = "Python client for Malva Index"
 readme = "README.md"
 license = "BSD-3-Clause-Clear"
@@ -70,6 +70,9 @@ docs = [
 ]
 zarr = [
     "zarr>=2.18,<3",
+]
+zstd = [
+    "zstandard>=0.21",
 ]
 test = [
     "pytest>=7.0",

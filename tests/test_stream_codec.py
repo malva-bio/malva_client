@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 import struct
 import zlib
 
@@ -12,6 +13,7 @@ import pytest
 
 from malva_client import stream_codec
 from malva_client.client import _map_stream_gene_names
+from malva_client.exceptions import MalvaAPIError
 
 
 def _leb128_encode(values) -> bytes:
@@ -206,12 +208,26 @@ class _FakeResponse:
         return None
 
 
+def _compress(body: bytes, encoding: str) -> bytes:
+    if encoding == "zlib":
+        return zlib.compress(body)
+    if encoding == "zstd":
+        try:
+            zstandard = importlib.import_module("zstandard")
+        except ImportError:  # pragma: no cover - depends on the install
+            import numcodecs
+
+            return bytes(numcodecs.Zstd().encode(body))
+        return zstandard.ZstdCompressor(level=1).compress(body)
+    raise ValueError(encoding)
+
+
 def _stream_payload(frames, encoding=None):
     out = bytearray()
     for index, frame in enumerate(frames):
         body = msgpack.packb(frame, use_bin_type=True)
-        if index and encoding == "zlib":
-            body = zlib.compress(body)
+        if index and encoding:
+            body = _compress(body, encoding)
         out += struct.pack(">Q", len(body)) + body
     return bytes(out)
 
@@ -325,3 +341,166 @@ class TestClientStreamOptions:
     def test_options_need_a_cell_list(self, mock_client):
         with pytest.raises(ValueError):
             mock_client.stream_cell_expression(sample_ids=[1], compress="zstd")
+
+    def test_half_precision_needs_the_compact_layout(self, mock_client):
+        with pytest.raises(ValueError):
+            mock_client.stream_cell_expression(cells=[(7, 10)], values="f16")
+
+    @pytest.mark.parametrize("encoding", ["zstd", "zlib"])
+    def test_compressed_modes_decode_to_the_same_frame(self, monkeypatch, mock_client, encoding):
+        captured = {}
+        client = self._client(
+            monkeypatch,
+            mock_client,
+            self._frames("cells_compact_v1", encoding),
+            encoding=encoding,
+            captured=captured,
+        )
+
+        frame = pd.concat(
+            client.stream_cell_expression(
+                cells=[(7, 10), (7, 11)],
+                dataset_id="ds1",
+                layout="compact",
+                compress=encoding,
+            ),
+            ignore_index=True,
+        )
+
+        assert captured["compress"] == encoding
+        assert frame["value"].tolist() == [1.0, 2.0, 3.0]
+        assert frame["gene"].tolist() == ["G0", "G1", "G1"]
+
+    def test_missing_zstd_decoder_falls_back_to_legacy(self, monkeypatch, mock_client):
+        captured = {}
+        client = self._client(monkeypatch, mock_client, self._frames(), captured=captured)
+        monkeypatch.setattr(stream_codec, "has_zstd", lambda: False)
+
+        frame = pd.concat(
+            client.stream_cell_expression(
+                cells=[(7, 10), (7, 11)],
+                dataset_id="ds1",
+                layout="compact",
+                compress="zstd",
+            ),
+            ignore_index=True,
+        )
+
+        assert "compress" not in captured
+        assert "layout" not in captured
+        assert frame["value"].tolist() == [1.0, 2.0, 3.0]
+
+    def test_old_server_that_ignores_compact_is_decoded_as_legacy(
+        self, monkeypatch, mock_client, caplog
+    ):
+        captured = {}
+        client = self._client(monkeypatch, mock_client, self._frames(), captured=captured)
+
+        with caplog.at_level("DEBUG", logger="malva_client"):
+            frame = pd.concat(
+                client.stream_cell_expression(
+                    cells=[(7, 10), (7, 11)], dataset_id="ds1", layout="compact"
+                ),
+                ignore_index=True,
+            )
+
+        assert captured["layout"] == "compact"
+        assert frame["gene"].tolist() == ["G0", "G1", "G1"]
+        assert "did not honour layout" in caplog.text
+
+    def test_corrupt_compact_frame_raises_a_clear_error(self, monkeypatch, mock_client):
+        frames = self._frames("cells_compact_v1")
+        frames[2] = dict(frames[2], feature_width=3)
+        client = self._client(monkeypatch, mock_client, frames)
+
+        with pytest.raises(MalvaAPIError) as excinfo:
+            list(client.stream_cell_expression(cells=[(7, 10), (7, 11)], layout="compact"))
+
+        message = str(excinfo.value)
+        assert "frame 2" in message
+        assert "feature width" in message
+
+    def test_declared_count_mismatch_raises(self, monkeypatch, mock_client):
+        frames = self._frames()
+        frames[2] = dict(frames[2], n=99)
+        client = self._client(monkeypatch, mock_client, frames)
+
+        with pytest.raises(MalvaAPIError) as excinfo:
+            list(client.stream_cell_expression(cells=[(7, 10), (7, 11)]))
+
+        assert "declares 99" in str(excinfo.value)
+
+    def test_compact_and_legacy_streams_build_the_same_anndata(self, monkeypatch, mock_client):
+        legacy_client = self._client(monkeypatch, mock_client, self._frames())
+        legacy = legacy_client.stream_cell_expression(
+            cells=[(7, 10), (7, 11)], dataset_id="ds1", include_cell_metadata=False
+        ).to_anndata()
+
+        compact_client = self._client(monkeypatch, mock_client, self._frames("cells_compact_v1"))
+        compact = compact_client.stream_cell_expression(
+            cells=[(7, 10), (7, 11)],
+            dataset_id="ds1",
+            layout="compact",
+            include_cell_metadata=False,
+        ).to_anndata()
+
+        assert legacy.obs_names.tolist() == compact.obs_names.tolist()
+        assert legacy.var_names.tolist() == compact.var_names.tolist()
+        np.testing.assert_array_equal(legacy.X.toarray(), compact.X.toarray())
+        assert compact.X.dtype == legacy.X.dtype
+
+
+class TestDecodeValidation:
+    def test_values_count_mismatch_is_rejected(self):
+        requested = [(1, 2)]
+        frame = {
+            "type": "data",
+            "n": 2,
+            "cells": np.packbits(np.array([True])).tobytes(),
+            "nnz": _leb128_encode([2]),
+            "feature_width": 2,
+            "feature_mode": "absolute",
+            "features": np.asarray([0, 1], dtype="<u2").tobytes(),
+            "values": np.asarray([1.0], dtype="<f4").tobytes(),
+        }
+        with pytest.raises(ValueError):
+            stream_codec.decode_compact_frame(frame, requested, ["G0", "G1"])
+
+    def test_position_beyond_the_panel_is_rejected(self):
+        requested = [(1, 2)]
+        frame = {
+            "type": "data",
+            "n": 1,
+            "cells": np.packbits(np.array([True])).tobytes(),
+            "nnz": _leb128_encode([1]),
+            "feature_width": 2,
+            "feature_mode": "absolute",
+            "features": np.asarray([9], dtype="<u2").tobytes(),
+            "values": np.asarray([1.0], dtype="<f4").tobytes(),
+        }
+        with pytest.raises(ValueError):
+            stream_codec.decode_compact_frame(frame, requested, ["G0", "G1"])
+
+    def test_negative_positions_are_not_wrapped_by_the_names(self):
+        got = stream_codec.map_gene_names(np.asarray([-1], dtype=np.int64), ["G0", "G1"], [])
+        assert list(got) == ["feature_-1"]
+
+    def test_large_feature_indices_decode(self):
+        requested = [(1, 2), (3, 4)]
+        values = np.asarray([1.0, 2.0], dtype="<f4")
+        features = np.asarray([65_536, 65_537], dtype="<u4")
+        frame = {
+            "type": "data",
+            "n": 2,
+            "cells": np.packbits(np.array([True, True])).tobytes(),
+            "nnz": _leb128_encode([1, 1]),
+            "feature_width": 4,
+            "feature_mode": "delta",
+            "features": features.tobytes(),
+            "values": values.tobytes(),
+        }
+        _s, _c, genes, decoded = stream_codec.decode_compact_frame(
+            frame, requested, [f"G{i}" for i in range(65_538)]
+        )
+        assert list(genes) == ["G65536", "G65537"]
+        np.testing.assert_array_equal(decoded, values)
